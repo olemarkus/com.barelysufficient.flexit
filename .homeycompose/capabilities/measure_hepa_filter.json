@@ -1,0 +1,13 @@
+{
+    "type": "number",
+    "title": {
+        "en": "Filter Life"
+    },
+    "units": {
+        "en": "%"
+    },
+    "decimals": 1,
+    "getable": true,
+    "setable": false,
+    "insights": true
+}

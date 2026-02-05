@@ -1,0 +1,13 @@
+{
+    "type": "number",
+    "title": {
+        "en": "Fan Speed %"
+    },
+    "units": {
+        "en": "%"
+    },
+    "decimals": 0,
+    "getable": true,
+    "setable": false,
+    "insights": true
+}

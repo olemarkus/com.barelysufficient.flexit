@@ -1,0 +1,36 @@
+{
+  "id": "com.barelysufficient.flexit",
+  "version": "1.0.0",
+  "compatibility": ">=12.2.0",
+  "platforms": [
+    "local"
+  ],
+  "sdk": 3,
+  "name": {
+    "en": "Flexit GO BACnet"
+  },
+  "description": {
+    "en": "Discovers Flexit Nordic units on LAN and controls home air temperature setpoint via BACnet/IP."
+  },
+  "images": {
+    "small": "/assets/images/small.png",
+    "large": "/assets/images/large.png"
+  },
+  "brandColor": "#2a4050",
+  "category": "climate",
+  "tags": {
+    "en": [
+      "flexit",
+      "nordic",
+      "ventilation",
+      "bacnet"
+    ]
+  },
+  "permissions": [
+    "homey:manager:api"
+  ],
+  "author": {
+    "name": "Ole Markus With",
+    "email": "olemarkus@gmail.com"
+  }
+}

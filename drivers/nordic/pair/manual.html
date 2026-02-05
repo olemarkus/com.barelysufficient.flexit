@@ -1,0 +1,135 @@
+<!doctype html>
+<html>
+
+<head>
+  <meta charset="utf-8" />
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      padding: 12px;
+    }
+
+    .row {
+      margin: 10px 0;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 4px;
+    }
+
+    input {
+      width: 100%;
+      font-size: 14px;
+      padding: 6px;
+    }
+
+    button {
+      font-size: 14px;
+      padding: 8px 10px;
+      cursor: pointer;
+    }
+
+    .muted {
+      color: #666;
+      font-size: 13px;
+    }
+
+    .bar {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+    }
+  </style>
+</head>
+
+<body>
+  <h3>Manual add</h3>
+
+  <div class="row">
+    <label>Serial (e.g. 800131-008843)</label>
+    <input id="serial" placeholder="######-######" />
+  </div>
+
+  <div class="row">
+    <label>IP</label>
+    <input id="ip" placeholder="192.168.x.x" />
+  </div>
+
+  <div class="row">
+    <label>BACnet Port</label>
+    <input id="port" value="47808" />
+    <div class="muted">Leave at 47808 unless your unit reports something else.</div>
+  </div>
+
+  <div class="bar">
+    <button id="back">Back</button>
+    <button id="add">Add device</button>
+  </div>
+
+  <script>
+    document.getElementById('back').addEventListener('click', () => Homey.showView('discover'));
+
+    document.getElementById('add').addEventListener('click', async () => {
+      const serial = String(document.getElementById('serial').value || '').trim();
+      const ip = String(document.getElementById('ip').value || '').trim();
+      const bacnetPort = Number(document.getElementById('port').value || 47808);
+
+      if (!/\b\d{6}-\d{6}\b/.test(serial)) {
+        return Homey.alert('Serial must match ######-######', 'error');
+      }
+      if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) {
+        return Homey.alert('Invalid IP', 'error');
+      }
+
+      const serialNormalized = serial.replace(/[^0-9]/g, '');
+      const thermostatDev = {
+        name: `Flexit (${serial}) Heating`,
+        data: {
+          id: serialNormalized + "_thermostat",
+          unitId: serialNormalized,
+          role: "thermostat"
+        },
+        settings: { ip, bacnetPort, serial },
+        class: "thermostat",
+        capabilities: [
+          "target_temperature",
+          "measure_temperature",
+          "measure_temperature.outdoor",
+          "measure_temperature.extract",
+          "measure_power"
+        ]
+      };
+
+      const fanDev = {
+        name: `Flexit (${serial}) Fan`,
+        data: {
+          id: serialNormalized + "_fan",
+          unitId: serialNormalized,
+          role: "fan"
+        },
+        settings: { ip, bacnetPort, serial },
+        class: "fan",
+        capabilities: [
+          "fan_mode",
+          "measure_humidity",
+          "measure_motor_rpm",
+          "measure_motor_rpm.extract",
+          "measure_fan_speed_percent",
+          "measure_fan_speed_percent.extract",
+          "measure_hepa_filter"
+        ]
+      };
+
+      try {
+        await Homey.createDevice(thermostatDev);
+        await Homey.createDevice(fanDev);
+        await Homey.done();
+      } catch (e) {
+        Homey.alert(String(e), 'error');
+      }
+    });
+  </script>
+</body>
+
+</html>

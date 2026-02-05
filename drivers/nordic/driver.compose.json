@@ -1,0 +1,167 @@
+{
+  "name": {
+    "en": "Nordic"
+  },
+  "class": "airtreatment",
+  "images": {
+    "small": "/drivers/nordic/assets/images/small.png",
+    "large": "/drivers/nordic/assets/images/large.png"
+  },
+  "capabilities": [
+    "measure_humidity",
+    "measure_power",
+    "measure_temperature",
+    "measure_temperature.outdoor",
+    "measure_temperature.extract",
+    "target_temperature",
+    "fan_mode",
+    "measure_motor_rpm",
+    "measure_motor_rpm.extract",
+    "measure_fan_speed_percent",
+    "measure_fan_speed_percent.extract",
+    "measure_hepa_filter"
+  ],
+  "capabilitiesOptions": {
+    "measure_humidity": {
+      "title": {
+        "en": "Extract air humidity"
+      }
+    },
+    "measure_power": {
+      "title": {
+        "en": "Heating coil power usage"
+      }
+    },
+    "measure_temperature": {
+      "title": {
+        "en": "Supply air temperature"
+      }
+    },
+    "measure_temperature.outdoor": {
+      "title": {
+        "en": "Outdoor air temperature"
+      }
+    },
+    "measure_temperature.extract": {
+      "title": {
+        "en": "Extract air temperature"
+      }
+    },
+    "target_temperature": {
+      "title": {
+        "en": "Supply air target temperature"
+      },
+      "min": 10,
+      "max": 30,
+      "step": 0.5
+    },
+    "measure_motor_rpm": {
+      "title": {
+        "en": "Supply Fan RPM"
+      }
+    },
+    "measure_motor_rpm.extract": {
+      "title": {
+        "en": "Extract Fan RPM"
+      }
+    },
+    "measure_fan_speed_percent": {
+      "title": {
+        "en": "Supply Fan Speed"
+      },
+      "units": {
+        "en": "%"
+      }
+    },
+    "measure_fan_speed_percent.extract": {
+      "title": {
+        "en": "Extract Fan Speed"
+      },
+      "units": {
+        "en": "%"
+      }
+    },
+    "measure_hepa_filter": {
+      "title": {
+        "en": "Filter Life Remaining"
+      },
+      "units": {
+        "en": "%"
+      }
+    },
+    "fan_mode": {
+      "values": [
+        {
+          "id": "home",
+          "title": {
+            "en": "Home"
+          }
+        },
+        {
+          "id": "away",
+          "title": {
+            "en": "Away"
+          }
+        },
+        {
+          "id": "high",
+          "title": {
+            "en": "High"
+          }
+        },
+        {
+          "id": "fireplace",
+          "title": {
+            "en": "Fireplace"
+          }
+        }
+      ]
+    }
+  },
+  "platforms": [
+    "local"
+  ],
+  "pair": [
+    {
+      "id": "discover"
+    },
+    {
+      "id": "manual",
+      "navigation": {
+        "prev": "discover"
+      }
+    }
+  ],
+  "settings": [
+    {
+      "id": "ip",
+      "type": "text",
+      "label": {
+        "en": "Device IP"
+      }
+    },
+    {
+      "id": "bacnetPort",
+      "type": "number",
+      "label": {
+        "en": "BACnet Port"
+      },
+      "value": 47808
+    },
+    {
+      "id": "serial",
+      "type": "text",
+      "label": {
+        "en": "Serial"
+      }
+    },
+    {
+      "id": "mac",
+      "type": "text",
+      "label": {
+        "en": "MAC (optional)"
+      },
+      "value": ""
+    }
+  ]
+}
