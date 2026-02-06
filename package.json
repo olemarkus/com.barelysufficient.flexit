@@ -49,9 +49,9 @@
       "test/**",
       "**/*.d.ts"
     ],
-    "lines": 30,
-    "statements": 30,
-    "functions": 30,
-    "branches": 20
+    "lines": 50,
+    "statements": 50,
+    "functions": 50,
+    "branches": 40
   }
 }

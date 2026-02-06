@@ -1,0 +1,68 @@
+<!--?xml version="1.0" encoding="UTF-8"?-->
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="960" viewBox="0 0 960 960">
+  <!-- Homey driver icon: monochrome, transparent bg, right-side angle -->
+  <g fill="none" stroke="#000">
+
+    <!-- ===== OUTLINE (40) ===== -->
+    <g stroke-width="40" stroke-linecap="butt" stroke-linejoin="miter" stroke-miterlimit="3">
+      <!-- Front face (maximized on canvas) -->
+      <path d="M45 235 L795 235 L795 925 L45 925 Z"></path>
+
+      <!-- Top plane (more depth) : dx=140 dy=-80 -->
+      <path d="M45 235 L185 155 L935 155 L795 235"></path>
+
+      <!-- Right face silhouette -->
+      <path d="M935 155 L935 845 L795 925"></path>
+
+      <!-- Explicit frontTR->backTR edge (keeps perspective crisp) -->
+      <path d="M795 235 L935 155"></path>
+    </g>
+
+    <!-- ===== DETAILS (20) ===== -->
+    <g stroke-width="20" stroke-linecap="butt" stroke-linejoin="miter" stroke-miterlimit="3">
+      <!-- Front panel seam -->
+      <path d="M660 305 L660 855"></path>
+
+      <!-- IDENTICAL FRONT HANDLES -->
+      <!-- Handle geometry: outer 46x310 -->
+      <!-- Left handle -->
+      <path d="M80 385 L126 385 L126 695 L80 695 Z"></path>
+      <path d="M96 440 L110 440 L110 640 L96 640 Z"></path>
+
+      <!-- Right handle (identical) -->
+      <path d="M714 385 L760 385 L760 695 L714 695 Z"></path>
+      <path d="M730 440 L744 440 L744 640 L730 640 Z"></path>
+    </g>
+
+    <!-- ===== MINOR (10) ===== -->
+    <g stroke-width="10" stroke-linecap="butt" stroke-linejoin="miter" stroke-miterlimit="3">
+      <!-- Small identical notches on both handles -->
+      <path d="M96 410 L110 410"></path>
+      <path d="M730 410 L744 410"></path>
+
+      <!-- Subtle top rim line on the front -->
+      <path d="M115 315 L620 315"></path>
+    </g>
+
+    <!-- ===== TOP PORTS (detail + minor inner ring) ===== -->
+    <g stroke-linecap="butt" stroke-linejoin="miter" stroke-miterlimit="3">
+      <g stroke-width="20">
+        <ellipse cx="320" cy="185" rx="60" ry="34"></ellipse>
+        <ellipse cx="440" cy="185" rx="60" ry="34"></ellipse>
+        <ellipse cx="600" cy="185" rx="60" ry="34"></ellipse>
+        <ellipse cx="720" cy="185" rx="60" ry="34"></ellipse>
+        <!-- small cap between groups -->
+        <ellipse cx="520" cy="188" rx="22" ry="14"></ellipse>
+      </g>
+      <g stroke-width="10">
+        <ellipse cx="320" cy="185" rx="42" ry="24"></ellipse>
+        <ellipse cx="440" cy="185" rx="42" ry="24"></ellipse>
+        <ellipse cx="600" cy="185" rx="42" ry="24"></ellipse>
+        <ellipse cx="720" cy="185" rx="42" ry="24"></ellipse>
+        <ellipse cx="520" cy="188" rx="15" ry="9"></ellipse>
+      </g>
+    </g>
+
+  </g>
+</svg>
+

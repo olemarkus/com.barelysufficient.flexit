@@ -1,17 +1,3 @@
-Flexit Nordic (Homey Pro) - scaffold
+This app integrates Flexit Nordic ventilation units with Homey Pro. It discovers supported units on the local network and adds each unit as a single Homey device. You can set supply air target temperature, change ventilation mode, and view temperatures, humidity, fan data, heater power, and filter status.
 
-What this scaffold does
-- Discovers Flexit units using proprietary multicast discovery:
-  - TX: 224.0.0.180:30000 (src port 30000, TTL=1)
-  - RX: 224.0.0.181:30001 (IGMP join on selected interface, TTL=1)
-- Adds a Homey device with stable ID derived from serial.
-- Writes the "Home air temperature setpoint" via BACnet/IP using bacstack:
-  - Object: AV 2:1994
-  - Property: presentValue (85)
-  - Application tag: REAL
-  - Plain write (no options argument to writeProperty).
-
-Notes
-- bacstack MUST be in dependencies (not devDependencies) so it exists on Homey at runtime.
-- Some bacstack versions crash if you pass an options argument (even undefined) to writeProperty.
-  This scaffold uses the no-options ("plain write") signature.
+Homey Pro and the Flexit unit must be on the same local network for discovery and control. The app communicates locally and does not require a cloud service.

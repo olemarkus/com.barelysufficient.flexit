@@ -1,9 +1,9 @@
 # Agent Notes for com.barelysufficient.flexit
 
 ## Purpose
-This Homey app discovers Flexit Nordic units on the LAN and exposes them as two Homey devices per unit:
-- Thermostat (setpoint + temperature/power sensors)
-- Fan (fan mode + humidity/fan/filter sensors)
+This Homey app discovers Flexit Nordic units on the LAN and exposes each as a single Homey device
+with class `airtreatment`, combining thermostat controls (setpoint, temperatures, heater power)
+and fan controls (fan mode, humidity, RPM, filter life) in one device per physical unit.
 
 The goals are reliability, clean code, and correct BACnet/IP behavior.
 

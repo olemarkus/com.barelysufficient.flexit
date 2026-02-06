@@ -1,5 +1,8 @@
+import { getNordicModelFromSerial } from './flexitModel';
+
 export interface DiscoveredFlexitUnit {
   name: string;
+  model?: string;
   serial: string;
   serialNormalized: string;
   ip: string;
@@ -33,6 +36,7 @@ export function parseFlexitReply(payload: Buffer, rinfoAddress: string): Discove
   const serial = serialMatch[0];
   const serialNormalized = serial.replace(/[^0-9]/g, '');
   if (!isNordicSerial(serialNormalized)) return null;
+  const model = getNordicModelFromSerial(serialNormalized);
 
   const endpointMatch = ascii.match(/\b(\d{1,3}(?:\.\d{1,3}){3}):(\d{2,5})\b/);
   const ip = endpointMatch?.[1] ?? rinfoAddress;
@@ -42,13 +46,14 @@ export function parseFlexitReply(payload: Buffer, rinfoAddress: string): Discove
 
   // Best-effort "friendly name"
   const tokens = ascii.split(/\s+/).filter(Boolean);
-  const name = tokens.find((t) => t.includes('_') && !t.includes('.') && !t.includes(':') && t.length >= 4)
+  const friendlyName = tokens.find((t) => t.includes('_') && !t.includes('.') && !t.includes(':') && t.length >= 4)
     ?? tokens.find((t) => /^[A-Za-z][A-Za-z0-9_]{3,}$/.test(t) && !t.includes(':') && !t.includes('.'))
     ?? 'Flexit Unit';
+  const name = model ? `Nordic ${model}` : friendlyName;
 
   const fw = ascii.match(/\bFW[:=]?[A-Za-z0-9._-]+\b/i)?.[0];
 
   return {
-    name, serial, serialNormalized, ip, bacnetPort, mac, fw,
+    name, model: model ?? undefined, serial, serialNormalized, ip, bacnetPort, mac, fw,
   };
 }

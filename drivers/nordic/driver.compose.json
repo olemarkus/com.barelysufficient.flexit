@@ -5,7 +5,8 @@
   "class": "airtreatment",
   "images": {
     "small": "/drivers/nordic/assets/images/small.png",
-    "large": "/drivers/nordic/assets/images/large.png"
+    "large": "/drivers/nordic/assets/images/large.png",
+    "xlarge": "/drivers/nordic/assets/images/xlarge.png"
   },
   "capabilities": [
     "measure_humidity",
@@ -123,13 +124,15 @@
   ],
   "pair": [
     {
-      "id": "discover"
+      "id": "list_devices",
+      "template": "list_devices",
+      "navigation": {
+        "next": "add_devices"
+      }
     },
     {
-      "id": "manual",
-      "navigation": {
-        "prev": "discover"
-      }
+      "id": "add_devices",
+      "template": "add_devices"
     }
   ],
   "settings": [

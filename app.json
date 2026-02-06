@@ -8,16 +8,17 @@
   ],
   "sdk": 3,
   "name": {
-    "en": "Flexit GO BACnet"
+    "en": "Flexit GO"
   },
   "description": {
-    "en": "Discovers Flexit Nordic units on LAN and controls home air temperature setpoint via BACnet/IP."
+    "en": "Better indoor climate"
   },
   "images": {
     "small": "/assets/images/small.png",
-    "large": "/assets/images/large.png"
+    "large": "/assets/images/large.png",
+    "xlarge": "/assets/images/xlarge.png"
   },
-  "brandColor": "#2a4050",
+  "brandColor": "#23465F",
   "category": "climate",
   "tags": {
     "en": [
@@ -34,6 +35,12 @@
     "name": "Ole Markus With",
     "email": "olemarkus@gmail.com"
   },
+  "homepage": "https://github.com/olemarkus/com.barelysufficient.flexit",
+  "source": "https://github.com/olemarkus/com.barelysufficient.flexit",
+  "bugs": {
+    "url": "https://github.com/olemarkus/com.barelysufficient.flexit/issues"
+  },
+  "support": "https://github.com/olemarkus/com.barelysufficient.flexit/issues",
   "drivers": [
     {
       "name": {
@@ -42,7 +49,8 @@
       "class": "airtreatment",
       "images": {
         "small": "/drivers/nordic/assets/images/small.png",
-        "large": "/drivers/nordic/assets/images/large.png"
+        "large": "/drivers/nordic/assets/images/large.png",
+        "xlarge": "/drivers/nordic/assets/images/xlarge.png"
       },
       "capabilities": [
         "measure_humidity",
@@ -160,13 +168,15 @@
       ],
       "pair": [
         {
-          "id": "discover"
+          "id": "list_devices",
+          "template": "list_devices",
+          "navigation": {
+            "next": "add_devices"
+          }
         },
         {
-          "id": "manual",
-          "navigation": {
-            "prev": "discover"
-          }
+          "id": "add_devices",
+          "template": "add_devices"
         }
       ],
       "settings": [
@@ -214,19 +224,6 @@
         "en": "%"
       },
       "decimals": 0,
-      "getable": true,
-      "setable": false,
-      "insights": true
-    },
-    "measure_hepa_filter": {
-      "type": "number",
-      "title": {
-        "en": "Filter Life"
-      },
-      "units": {
-        "en": "%"
-      },
-      "decimals": 1,
       "getable": true,
       "setable": false,
       "insights": true
