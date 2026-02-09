@@ -28,9 +28,6 @@
       "bacnet"
     ]
   },
-  "permissions": [
-    "homey:manager:api"
-  ],
   "author": {
     "name": "Ole Markus With",
     "email": "olemarkus@gmail.com"
