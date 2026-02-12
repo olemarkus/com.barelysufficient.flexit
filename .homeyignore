@@ -1,0 +1,18 @@
+# Keep Homey publish artifacts runtime-only
+/.homeybuild/
+/coverage/
+/localdocs/
+/test/
+/scripts/
+/dump*
+
+# Development/config docs
+/AGENTS.md
+/CODE_OF_CONDUCT.md
+/CONTRIBUTING.md
+/README.txt
+/README.md
+/LICENSE
+/.gitignore
+/.eslintrc.json
+/tsconfig*.json
