@@ -1,4 +1,4 @@
-import { getBacnetClient, BacnetEnums } from './bacnetClient';
+import { getBacnetClient, BacnetEnums, setBacnetLogger } from './bacnetClient';
 import { discoverFlexitUnits } from './flexitDiscovery';
 
 // Helper to clamp values
@@ -156,6 +156,12 @@ interface UnitState {
   available: boolean;
 }
 
+interface RegistryLogger {
+  log(...args: any[]): void;
+  error(...args: any[]): void;
+  warn?(...args: any[]): void;
+}
+
 // The core poll request — only objects that drive device capabilities.
 function buildPollRequest() {
   return [
@@ -198,6 +204,56 @@ function buildPollRequest() {
 
 export class UnitRegistry {
     private units: Map<string, UnitState> = new Map();
+    private logger?: RegistryLogger;
+
+    setLogger(logger: RegistryLogger) {
+      this.logger = logger;
+      this.syncBacnetLogger();
+    }
+
+    private syncBacnetLogger() {
+      if (typeof setBacnetLogger === 'function') {
+        setBacnetLogger({
+          error: (...args: any[]) => this.error(...args),
+        });
+      }
+    }
+
+    private getAnyDevice(): FlexitDevice | undefined {
+      for (const unit of this.units.values()) {
+        const first = unit.devices.values().next();
+        if (!first.done) return first.value;
+      }
+      return undefined;
+    }
+
+    private log(...args: any[]) {
+      if (this.logger?.log) {
+        this.logger.log(...args);
+        return;
+      }
+      this.getAnyDevice()?.log(...args);
+    }
+
+    private warn(...args: any[]) {
+      if (this.logger?.warn) {
+        this.logger.warn(...args);
+        return;
+      }
+      if (this.logger?.log) {
+        this.logger.log(...args);
+        return;
+      }
+      this.getAnyDevice()?.log(...args);
+    }
+
+    private error(...args: any[]) {
+      if (this.logger?.error) {
+        this.logger.error(...args);
+        return;
+      }
+      this.getAnyDevice()?.error(...args);
+    }
 
     register(unitId: string, device: FlexitDevice) {
       let unit = this.units.get(unitId);
@@ -236,6 +292,7 @@ export class UnitRegistry {
         unit.pollInterval = setInterval(() => this.pollUnit(unitId), POLL_INTERVAL_MS);
       }
       unit.devices.add(device);
+      if (!this.logger) this.syncBacnetLogger();
     }
 
     unregister(unitId: string, device: FlexitDevice) {
@@ -274,14 +331,14 @@ export class UnitRegistry {
         priority: DEFAULT_WRITE_PRIORITY,
       };
 
-      console.log(`[UnitRegistry] Writing setpoint ${v} to ${unitId} (${unit.ip})`);
+      this.log(`[UnitRegistry] Writing setpoint ${v} to ${unitId} (${unit.ip})`);
 
       unit.writeQueue = unit.writeQueue.then(async () => new Promise<void>((resolve, reject) => {
         let handled = false;
         const tm = setTimeout(() => {
           if (!handled) {
             handled = true;
-            console.error(`[UnitRegistry] Timeout writing setpoint to ${unitId}`);
+            this.error(`[UnitRegistry] Timeout writing setpoint to ${unitId}`);
             reject(new Error('Timeout'));
           }
         }, 5000);
@@ -301,11 +358,11 @@ export class UnitRegistry {
               clearTimeout(tm);
 
               if (err) {
-                console.error(`[UnitRegistry] Failed to write setpoint to ${unitId}:`, err);
+                this.error(`[UnitRegistry] Failed to write setpoint to ${unitId}:`, err);
                 reject(err);
                 return;
               }
-              console.log(`[UnitRegistry] Successfully wrote setpoint ${v} to ${unitId}`);
+              this.log(`[UnitRegistry] Successfully wrote setpoint ${v} to ${unitId}`);
               resolve();
             },
           );
@@ -313,7 +370,7 @@ export class UnitRegistry {
           if (!handled) {
             handled = true;
             clearTimeout(tm);
-            console.error(`[UnitRegistry] Sync error writing setpoint to ${unitId}:`, e);
+            this.error(`[UnitRegistry] Sync error writing setpoint to ${unitId}:`, e);
             reject(e);
           }
         }
@@ -335,11 +392,11 @@ export class UnitRegistry {
             if (err) {
               const isTimeout = err?.code === 'ERR_TIMEOUT' || String(err?.message || '').includes('ERR_TIMEOUT');
               if (isTimeout && attempt === 0) {
-                console.warn(`[UnitRegistry] Poll timeout for ${unitId}, retrying once...`);
+                this.warn(`[UnitRegistry] Poll timeout for ${unitId}, retrying once...`);
                 setTimeout(() => pollOnce(1), 1000);
                 return;
               }
-              console.error(`[UnitRegistry] Poll error for ${unitId}:`, err);
+              this.error(`[UnitRegistry] Poll error for ${unitId}:`, err);
               this.handlePollFailure(unit);
               return;
             }
@@ -387,14 +444,14 @@ export class UnitRegistry {
                   const key = objectKey(type, instance);
                   const pending = unit.pendingWriteErrors.get(key);
                   if (pending && valuesMatch(val, pending.value)) {
-                    console.warn(
+                    this.warn(
                       `[UnitRegistry] Write error cleared for ${key}: now ${val} (was code ${pending.code})`,
                     );
                     unit.pendingWriteErrors.delete(key);
                   } else if (key === objectKey(BACNET_OBJECTS.ventilationMode.type, BACNET_OBJECTS.ventilationMode.instance) && unit.writeContext) {
                     const ctx = unit.writeContext.get(key);
                     if (ctx && ctx.value !== val && pollTime - ctx.at < 60000) {
-                      console.warn(
+                      this.warn(
                         `[UnitRegistry] Ventilation mode mismatch after write: expected ${ctx.value} for '${ctx.mode}', got ${val}`,
                       );
                       unit.writeContext.delete(key);
@@ -412,11 +469,11 @@ export class UnitRegistry {
                 this.distributeData(unit, data);
               }
             } catch (e) {
-              console.error(`[UnitRegistry] Parse error for ${unitId}:`, e);
+              this.error(`[UnitRegistry] Parse error for ${unitId}:`, e);
             }
           });
         } catch (error) {
-          console.error(`[UnitRegistry] Synchronous internal error checking ${unitId}:`, error);
+          this.error(`[UnitRegistry] Synchronous internal error checking ${unitId}:`, error);
           this.handlePollFailure(unit);
         }
       };
@@ -428,7 +485,7 @@ export class UnitRegistry {
       unit.consecutiveFailures++;
       if (unit.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES && unit.available) {
         unit.available = false;
-        console.warn(`[UnitRegistry] Unit ${unit.unitId} marked unavailable after ${unit.consecutiveFailures} consecutive failures`);
+        this.warn(`[UnitRegistry] Unit ${unit.unitId} marked unavailable after ${unit.consecutiveFailures} consecutive failures`);
         for (const device of unit.devices) {
           device.setUnavailable('Device unreachable — will auto-reconnect when found').catch(() => { });
         }
@@ -440,7 +497,7 @@ export class UnitRegistry {
       unit.consecutiveFailures = 0;
       if (!unit.available) {
         unit.available = true;
-        console.log(`[UnitRegistry] Unit ${unit.unitId} is available again at ${unit.ip}`);
+        this.log(`[UnitRegistry] Unit ${unit.unitId} is available again at ${unit.ip}`);
         for (const device of unit.devices) {
           device.setAvailable().catch(() => { });
         }
@@ -450,7 +507,7 @@ export class UnitRegistry {
 
     private startRediscovery(unit: UnitState) {
       if (unit.rediscoverInterval) return; // already running
-      console.log(`[UnitRegistry] Starting rediscovery for ${unit.unitId} (serial ${unit.serial})`);
+      this.log(`[UnitRegistry] Starting rediscovery for ${unit.unitId} (serial ${unit.serial})`);
 
       const doRediscovery = async () => {
         try {
@@ -462,7 +519,7 @@ export class UnitRegistry {
           const portChanged = match.bacnetPort !== unit.bacnetPort;
 
           if (ipChanged || portChanged) {
-            console.log(
+            this.log(
               `[UnitRegistry] Rediscovered ${unit.unitId} at ${match.ip}:${match.bacnetPort}`
               + ` (was ${unit.ip}:${unit.bacnetPort})`,
             );
@@ -474,13 +531,13 @@ export class UnitRegistry {
               device.setSetting({ ip: match.ip, bacnetPort: match.bacnetPort }).catch(() => { });
             }
           } else {
-            console.log(`[UnitRegistry] Rediscovered ${unit.unitId} at same address, retrying poll`);
+            this.log(`[UnitRegistry] Rediscovered ${unit.unitId} at same address, retrying poll`);
           }
 
           // Trigger an immediate poll to verify connectivity
           this.pollUnit(unit.unitId);
         } catch (e) {
-          console.error(`[UnitRegistry] Rediscovery error for ${unit.unitId}:`, e);
+          this.error(`[UnitRegistry] Rediscovery error for ${unit.unitId}:`, e);
         }
       };
 
@@ -526,7 +583,7 @@ export class UnitRegistry {
         if (unit.deferredMode === 'fireplace' && !tempOpActive && data['rapid_active'] !== 1) {
           unit.deferredMode = undefined;
           unit.deferredSince = undefined;
-          console.warn(`[UnitRegistry] Retrying deferred fireplace for ${unit.unitId}`);
+          this.warn(`[UnitRegistry] Retrying deferred fireplace for ${unit.unitId}`);
           this.setFanMode(unit.unitId, 'fireplace').catch(() => { });
         }
 
@@ -564,7 +621,7 @@ export class UnitRegistry {
             if (unit.lastMismatchKey !== mismatchKey) {
               unit.lastMismatchKey = mismatchKey;
               const delay = data['comfort_delay'] ?? 'unknown';
-              console.warn(
+              this.warn(
                 `[UnitRegistry] Away pending for ${unit.unitId}: delay active (configured ${delay} min)`,
               );
             }
@@ -572,7 +629,7 @@ export class UnitRegistry {
             const mismatchKey = `${expectedMode}->${mode}`;
             if (unit.lastMismatchKey !== mismatchKey) {
               unit.lastMismatchKey = mismatchKey;
-              console.warn(
+              this.warn(
                 `[UnitRegistry] Mode mismatch for ${unit.unitId}: expected '${expectedMode}' got '${mode}'`,
               );
             }
@@ -609,7 +666,7 @@ export class UnitRegistry {
       const unit = this.units.get(unitId);
       if (!unit) throw new Error('Unit not found');
 
-      console.log(`[UnitRegistry] Setting fan mode to '${mode}' for ${unitId}`);
+      this.log(`[UnitRegistry] Setting fan mode to '${mode}' for ${unitId}`);
       const writeOptions = {
         maxSegments: BacnetEnums.MaxSegmentsAccepted.SEGMENTS_0,
         maxApdu: BacnetEnums.MaxApduLengthAccepted.OCTETS_1476,
@@ -632,7 +689,7 @@ export class UnitRegistry {
         const writeUpdate = async (up: { objectId: { type: number; instance: number }; tag: number; value: number; priority?: number | null }) => {
           const writeKey = objectKey(up.objectId.type, up.objectId.instance);
           if (unit.blockedWrites.has(writeKey)) {
-            console.warn(`[UnitRegistry] Skipping write ${writeKey} (write access denied previously)`);
+            this.warn(`[UnitRegistry] Skipping write ${writeKey} (write access denied previously)`);
             return false;
           }
           return new Promise<boolean>((resolve) => {
@@ -640,13 +697,13 @@ export class UnitRegistry {
             const tm = setTimeout(() => {
               if (!handled) {
                 handled = true;
-                console.error(`[UnitRegistry] Timeout writing ${up.objectId.type}:${up.objectId.instance}`);
+                this.error(`[UnitRegistry] Timeout writing ${up.objectId.type}:${up.objectId.instance}`);
                 resolve(false);
               }
             }, 5000);
 
             try {
-              console.log(`[UnitRegistry] Writing ${up.objectId.type}:${up.objectId.instance} = ${up.value}`);
+              this.log(`[UnitRegistry] Writing ${up.objectId.type}:${up.objectId.instance} = ${up.value}`);
               const options: { maxSegments: number; maxApdu: number; priority?: number } = {
                 maxSegments: writeOptions.maxSegments,
                 maxApdu: writeOptions.maxApdu,
@@ -672,20 +729,20 @@ export class UnitRegistry {
                     if (code === 37) {
                       unit.lastWriteValues.set(writeKey, { value: up.value, at: now });
                       unit.pendingWriteErrors.set(writeKey, { value: up.value, code });
-                      console.warn(`[UnitRegistry] Write returned Code:37 for ${writeKey}; will verify on next poll.`);
+                      this.warn(`[UnitRegistry] Write returned Code:37 for ${writeKey}; will verify on next poll.`);
                       resolve(true);
                       return;
                     }
                     if (message.includes('Code:40') || message.includes('Code:9')) {
                       unit.lastWriteValues.set(writeKey, { value: up.value, at: now });
                       if (NEVER_BLOCK_KEYS.has(writeKey)) {
-                        console.warn(`[UnitRegistry] Write denied for ${writeKey}, but will keep retrying.`);
+                        this.warn(`[UnitRegistry] Write denied for ${writeKey}, but will keep retrying.`);
                       } else {
                         unit.blockedWrites.add(writeKey);
-                        console.warn(`[UnitRegistry] Disabling writes for ${writeKey} due to device error.`);
+                        this.warn(`[UnitRegistry] Disabling writes for ${writeKey} due to device error.`);
                       }
                     } else {
-                      console.error(
+                      this.error(
                         `[UnitRegistry] Failed to write ${up.objectId.type}:${up.objectId.instance} to ${up.value}`,
                         err,
                       );
@@ -693,7 +750,7 @@ export class UnitRegistry {
                     resolve(false);
                   } else {
                     unit.lastWriteValues.set(writeKey, { value: up.value, at: now });
-                    console.log(`[UnitRegistry] Successfully wrote ${up.objectId.type}:${up.objectId.instance} to ${up.value}`);
+                    this.log(`[UnitRegistry] Successfully wrote ${up.objectId.type}:${up.objectId.instance} to ${up.value}`);
                     resolve(true);
                   }
                 },
@@ -702,7 +759,7 @@ export class UnitRegistry {
               if (!handled) {
                 handled = true;
                 clearTimeout(tm);
-                console.error(`[UnitRegistry] Sync error writing ${up.objectId.type}:${up.objectId.instance}:`, e);
+                this.error(`[UnitRegistry] Sync error writing ${up.objectId.type}:${up.objectId.instance}:`, e);
                 resolve(false);
               }
             }
@@ -733,7 +790,7 @@ export class UnitRegistry {
           const key = comfortButtonKey;
           const current = unit.probeValues.get(key);
           if (!opts?.force && shouldSkipWrite(key, current, value)) {
-            console.log(`[UnitRegistry] Comfort button already ${value}, skipping write.`);
+            this.log(`[UnitRegistry] Comfort button already ${value}, skipping write.`);
             return true;
           }
           return writeUpdate({
@@ -747,7 +804,7 @@ export class UnitRegistry {
         const writeVentMode = async (value: number, opts?: { force?: boolean }) => {
           const current = unit.probeValues.get(ventilationModeKey);
           if (!opts?.force && shouldSkipWrite(ventilationModeKey, current, value)) {
-            console.log(`[UnitRegistry] Ventilation mode already ${value}, skipping write.`);
+            this.log(`[UnitRegistry] Ventilation mode already ${value}, skipping write.`);
             return true;
           }
           const ok = await writeUpdate({
@@ -782,7 +839,7 @@ export class UnitRegistry {
         }
 
         if (mode === 'fireplace' && (rapidActive || tempVentActive)) {
-          console.warn(
+          this.warn(
             `[UnitRegistry] Fireplace requested while temporary ventilation is active (rapid=${rapidActive} temp=${tempVentActive}); proceeding anyway.`,
           );
         }
@@ -816,7 +873,7 @@ export class UnitRegistry {
           if (!unit.blockedWrites.has(ventilationModeKey) && comfortOk) {
             await writeVentMode(VENTILATION_MODE_VALUES.HIGH);
           } else if (unit.blockedWrites.has(ventilationModeKey)) {
-            console.warn('[UnitRegistry] Ventilation mode write blocked; cannot set high mode.');
+            this.warn('[UnitRegistry] Ventilation mode write blocked; cannot set high mode.');
           }
         } else if (mode === 'fireplace') {
           const comfortState = unit.probeValues.get(objectKey(OBJECT_TYPE.BINARY_VALUE, 50));
