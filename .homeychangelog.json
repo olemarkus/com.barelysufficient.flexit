@@ -4,5 +4,8 @@
   },
   "1.0.1": {
     "en": "Removed unused manager api permissions"
+  },
+  "1.0.4": {
+    "en": "Essentially revert back to version 1.0.1."
   }
 }
