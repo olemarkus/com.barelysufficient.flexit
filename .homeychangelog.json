@@ -10,5 +10,8 @@
   },
   "1.0.3": {
     "en": "Adding more logging to detect why devices may not initiate."
+  },
+  "1.0.5": {
+    "en": "No user-facing changes. Only code dependency updates."
   }
 }
