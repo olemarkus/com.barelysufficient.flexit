@@ -4,5 +4,8 @@
   },
   "1.0.1": {
     "en": "Removed unused manager api permissions"
+  },
+  "1.0.2": {
+    "en": "Fix a bug where the app report no data on extract air. Also add exhaust air data."
   }
 }
