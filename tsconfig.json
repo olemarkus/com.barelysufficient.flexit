@@ -10,6 +10,8 @@
     "skipLibCheck": true
   },
   "include": [
-    "./**/*.ts"
+    "./app.ts",
+    "./lib/**/*.ts",
+    "./drivers/**/*.ts"
   ]
 }

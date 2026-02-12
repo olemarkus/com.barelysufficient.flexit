@@ -2,6 +2,9 @@
   "name": "com.barelysufficient.flexit.nordic",
   "version": "0.0.1",
   "private": true,
+  "engines": {
+    "node": "22.x"
+  },
   "main": "app.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
