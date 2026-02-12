@@ -7,5 +7,8 @@
   },
   "1.0.2": {
     "en": "Fix a bug where the app report no data on extract air. Also add exhaust air data."
+  },
+  "1.0.3": {
+    "en": "Adding more logging to detect why devices may not initiate."
   }
 }
