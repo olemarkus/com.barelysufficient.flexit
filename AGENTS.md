@@ -28,7 +28,9 @@ Used in `lib/UnitRegistry.ts`:
 - AV 2:1994 -> Setpoint (REAL)
 - AI 0:4 -> Supply Temp (REAL)
 - AI 0:1 -> Outdoor Temp (REAL)
-- AI 0:95 -> Extract Temp (REAL)
+- AI 0:11 -> Exhaust Temp (REAL)
+- AI 0:59 -> Extract Temp (REAL, primary on some models)
+- AI 0:95 -> Extract Temp (REAL, alternate on some models)
 - AI 0:96 -> Humidity (REAL)
 - AV 2:194 -> Heater Power (REAL, kW; multiply by 1000)
 - AI 0:5 -> Fan RPM Supply

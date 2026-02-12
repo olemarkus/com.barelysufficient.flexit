@@ -50,12 +50,13 @@
         "xlarge": "/drivers/nordic/assets/images/xlarge.png"
       },
       "capabilities": [
-        "measure_humidity",
-        "measure_power",
         "measure_temperature",
         "measure_temperature.outdoor",
+        "measure_temperature.exhaust",
         "measure_temperature.extract",
         "target_temperature",
+        "measure_humidity",
+        "measure_power",
         "fan_mode",
         "measure_motor_rpm",
         "measure_motor_rpm.extract",
@@ -82,6 +83,11 @@
         "measure_temperature.outdoor": {
           "title": {
             "en": "Outdoor air temperature"
+          }
+        },
+        "measure_temperature.exhaust": {
+          "title": {
+            "en": "Exhaust air temperature"
           }
         },
         "measure_temperature.extract": {
