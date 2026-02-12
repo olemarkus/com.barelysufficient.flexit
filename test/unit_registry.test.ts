@@ -34,6 +34,13 @@ const BACNET_ENUMS = {
   },
 };
 
+function makeReadObject(type: number, instance: number, value: number) {
+  return {
+    objectId: { type, instance },
+    values: [{ id: 85, value: [{ type: BACNET_ENUMS.ApplicationTags.REAL, value }] }],
+  };
+}
+
 describe('UnitRegistry', () => {
   let UnitRegistryClass: any;
   let registry: any;
@@ -238,5 +245,86 @@ describe('UnitRegistry', () => {
     registry.destroy();
 
     expect((registry as any).units.size).to.equal(0);
+  });
+
+  it('polls both extract air temperature object variants', () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    expect(mockClient.readPropertyMultiple.called).to.equal(true);
+    const requestArray = mockClient.readPropertyMultiple.firstCall.args[1] as any[];
+    const objectIds = requestArray.map((entry) => `${entry.objectId.type}:${entry.objectId.instance}`);
+
+    expect(objectIds).to.include('0:11');
+    expect(objectIds).to.include('0:59');
+    expect(objectIds).to.include('0:95');
+  });
+
+  it('maps exhaust air temperature from AI 11 to capability', () => {
+    const mockDevice = makeMockDevice();
+    mockClient.readPropertyMultiple.callsFake((_ip: string, _requestArray: any[], cb: any) => {
+      cb(null, {
+        values: [
+          makeReadObject(BACNET_ENUMS.ObjectType.ANALOG_INPUT, 11, 2.1),
+        ],
+      });
+    });
+
+    registry.register('test_unit', mockDevice);
+    (registry as any).pollUnit('test_unit');
+
+    const exhaustTempCalls = mockDevice.setCapabilityValue
+      .getCalls()
+      .filter((call: any) => call.args[0] === 'measure_temperature.exhaust');
+
+    expect(exhaustTempCalls.length).to.be.greaterThan(0);
+    const lastCall = exhaustTempCalls[exhaustTempCalls.length - 1];
+    expect(lastCall.args[1]).to.equal(2.1);
+  });
+
+  it('prefers extract air temperature from AI 59 when present', () => {
+    const mockDevice = makeMockDevice();
+    mockClient.readPropertyMultiple.callsFake((_ip: string, _requestArray: any[], cb: any) => {
+      cb(null, {
+        values: [
+          makeReadObject(BACNET_ENUMS.ObjectType.ANALOG_INPUT, 59, 21.4),
+          makeReadObject(BACNET_ENUMS.ObjectType.ANALOG_INPUT, 95, 0),
+        ],
+      });
+    });
+
+    registry.register('test_unit', mockDevice);
+    (registry as any).pollUnit('test_unit');
+
+    const extractTempCalls = mockDevice.setCapabilityValue
+      .getCalls()
+      .filter((call: any) => call.args[0] === 'measure_temperature.extract');
+
+    expect(extractTempCalls.length).to.be.greaterThan(0);
+    const lastCall = extractTempCalls[extractTempCalls.length - 1];
+    expect(lastCall.args[1]).to.equal(21.4);
+  });
+
+  it('falls back to extract air temperature from AI 95 when AI 59 is zero', () => {
+    const mockDevice = makeMockDevice();
+    mockClient.readPropertyMultiple.callsFake((_ip: string, _requestArray: any[], cb: any) => {
+      cb(null, {
+        values: [
+          makeReadObject(BACNET_ENUMS.ObjectType.ANALOG_INPUT, 59, 0),
+          makeReadObject(BACNET_ENUMS.ObjectType.ANALOG_INPUT, 95, 20.8),
+        ],
+      });
+    });
+
+    registry.register('test_unit', mockDevice);
+    (registry as any).pollUnit('test_unit');
+
+    const extractTempCalls = mockDevice.setCapabilityValue
+      .getCalls()
+      .filter((call: any) => call.args[0] === 'measure_temperature.extract');
+
+    expect(extractTempCalls.length).to.be.greaterThan(0);
+    const lastCall = extractTempCalls[extractTempCalls.length - 1];
+    expect(lastCall.args[1]).to.equal(20.8);
   });
 });

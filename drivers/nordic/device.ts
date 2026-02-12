@@ -1,10 +1,20 @@
 import Homey from 'homey';
 import { Registry, FlexitDevice } from '../../lib/UnitRegistry';
 
+const EXHAUST_TEMP_CAPABILITY = 'measure_temperature.exhaust';
+
 export = class FlexitNordicDevice extends Homey.Device {
   async onInit() {
     this.log('Nordic device init', this.getName());
     await this.setClass('airtreatment');
+    if (!this.hasCapability(EXHAUST_TEMP_CAPABILITY)) {
+      try {
+        await this.addCapability(EXHAUST_TEMP_CAPABILITY);
+        this.log(`Added missing capability '${EXHAUST_TEMP_CAPABILITY}'`);
+      } catch (e) {
+        this.error(`Failed adding capability '${EXHAUST_TEMP_CAPABILITY}':`, e);
+      }
+    }
 
     const { unitId } = this.getData();
     try {

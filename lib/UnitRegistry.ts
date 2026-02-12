@@ -25,6 +25,8 @@ const DEFAULT_WRITE_PRIORITY = 13;
 const POLL_INTERVAL_MS = 10_000;
 const REDISCOVERY_INTERVAL_MS = 60_000;
 const MAX_CONSECUTIVE_FAILURES = 3;
+const EXTRACT_AIR_TEMPERATURE_PRIMARY_INSTANCE = 59;
+const EXTRACT_AIR_TEMPERATURE_ALT_INSTANCE = 95;
 
 const VENTILATION_MODE_VALUES = {
   STOP: 1,
@@ -120,6 +122,16 @@ function valuesMatch(actual: number, expected: number) {
   return Math.abs(actual - expected) < 0.01;
 }
 
+function selectExtractTemperature(primary?: number, alternate?: number): number | undefined {
+  const primaryIsNumber = typeof primary === 'number' && Number.isFinite(primary);
+  const alternateIsNumber = typeof alternate === 'number' && Number.isFinite(alternate);
+
+  if (primaryIsNumber && primary !== 0) return primary;
+  if (alternateIsNumber) return alternate;
+  if (primaryIsNumber) return primary;
+  return undefined;
+}
+
 interface UnitState {
   unitId: string;
   serial: string;
@@ -151,7 +163,9 @@ function buildPollRequest() {
     { objectId: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 1994 }, properties: [{ id: PRESENT_VALUE_ID }] }, // Setpoint
     { objectId: { type: OBJECT_TYPE.ANALOG_INPUT, instance: 4 }, properties: [{ id: PRESENT_VALUE_ID }] }, // Supply Temp
     { objectId: { type: OBJECT_TYPE.ANALOG_INPUT, instance: 1 }, properties: [{ id: PRESENT_VALUE_ID }] }, // Outdoor Temp
-    { objectId: { type: OBJECT_TYPE.ANALOG_INPUT, instance: 95 }, properties: [{ id: PRESENT_VALUE_ID }] }, // Extract Temp
+    { objectId: { type: OBJECT_TYPE.ANALOG_INPUT, instance: 11 }, properties: [{ id: PRESENT_VALUE_ID }] }, // Exhaust Temp
+    { objectId: { type: OBJECT_TYPE.ANALOG_INPUT, instance: EXTRACT_AIR_TEMPERATURE_PRIMARY_INSTANCE }, properties: [{ id: PRESENT_VALUE_ID }] }, // Extract Temp (primary mapping)
+    { objectId: { type: OBJECT_TYPE.ANALOG_INPUT, instance: EXTRACT_AIR_TEMPERATURE_ALT_INSTANCE }, properties: [{ id: PRESENT_VALUE_ID }] }, // Extract Temp (alternate mapping)
     { objectId: { type: OBJECT_TYPE.ANALOG_INPUT, instance: 96 }, properties: [{ id: PRESENT_VALUE_ID }] }, // Humidity
     { objectId: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 194 }, properties: [{ id: PRESENT_VALUE_ID }] }, // Heater Power
 
@@ -336,6 +350,8 @@ export class UnitRegistry {
                 unit.lastPollAt = Date.now();
                 const data: any = {};
                 const pollTime = unit.lastPollAt;
+                let extractTempPrimary: number | undefined;
+                let extractTempAlt: number | undefined;
                 value.values.forEach((obj: any) => {
                   const { type, instance } = obj.objectId;
                   const val = this.extractValue(obj);
@@ -344,7 +360,9 @@ export class UnitRegistry {
                   if (type === OBJECT_TYPE.ANALOG_VALUE && instance === 1994) data.target_temperature = val;
                   if (type === OBJECT_TYPE.ANALOG_INPUT && instance === 4) data['measure_temperature'] = val;
                   if (type === OBJECT_TYPE.ANALOG_INPUT && instance === 1) data['measure_temperature.outdoor'] = val;
-                  if (type === OBJECT_TYPE.ANALOG_INPUT && instance === 95) data['measure_temperature.extract'] = val;
+                  if (type === OBJECT_TYPE.ANALOG_INPUT && instance === 11) data['measure_temperature.exhaust'] = val;
+                  if (type === OBJECT_TYPE.ANALOG_INPUT && instance === EXTRACT_AIR_TEMPERATURE_PRIMARY_INSTANCE) extractTempPrimary = val;
+                  if (type === OBJECT_TYPE.ANALOG_INPUT && instance === EXTRACT_AIR_TEMPERATURE_ALT_INSTANCE) extractTempAlt = val;
                   if (type === OBJECT_TYPE.ANALOG_INPUT && instance === 96) data['measure_humidity'] = val;
                   if (type === OBJECT_TYPE.ANALOG_VALUE && instance === 194) data['measure_power'] = val * 1000;
 
@@ -387,6 +405,9 @@ export class UnitRegistry {
 
                   unit.probeValues.set(key, val);
                 });
+
+                const extractTemp = selectExtractTemperature(extractTempPrimary, extractTempAlt);
+                if (extractTemp !== undefined) data['measure_temperature.extract'] = extractTemp;
 
                 this.distributeData(unit, data);
               }
@@ -567,6 +588,7 @@ export class UnitRegistry {
         if (data.target_temperature !== undefined) device.setCapabilityValue('target_temperature', data.target_temperature).catch(() => { });
         if (data['measure_temperature'] !== undefined) device.setCapabilityValue('measure_temperature', data['measure_temperature']).catch(() => { });
         if (data['measure_temperature.outdoor'] !== undefined) device.setCapabilityValue('measure_temperature.outdoor', data['measure_temperature.outdoor']).catch(() => { });
+        if (data['measure_temperature.exhaust'] !== undefined) device.setCapabilityValue('measure_temperature.exhaust', data['measure_temperature.exhaust']).catch(() => { });
         if (data['measure_temperature.extract'] !== undefined) device.setCapabilityValue('measure_temperature.extract', data['measure_temperature.extract']).catch(() => { });
         if (data['measure_power'] !== undefined) device.setCapabilityValue('measure_power', data['measure_power']).catch(() => { });
 
