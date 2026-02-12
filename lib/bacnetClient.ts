@@ -5,8 +5,16 @@
 const Bacnet = require('bacstack');
 
 type BacnetClient = any;
+type BacnetLogger = {
+  error(...args: any[]): void;
+};
 
 const clientsByPort = new Map<number, BacnetClient>();
+let bacnetLogger: BacnetLogger | undefined;
+
+export function setBacnetLogger(logger: BacnetLogger) {
+  bacnetLogger = logger;
+}
 
 export function getBacnetClient(port: number): BacnetClient {
   const p = Number(port) || 47808;
@@ -22,7 +30,7 @@ export function getBacnetClient(port: number): BacnetClient {
 
   // Prevent unhandled error events from crashing the app
   client.on('error', (err: any) => {
-    console.error(`[BacnetClient:${p}] Error:`, err);
+    bacnetLogger?.error(`[BacnetClient:${p}] Error:`, err);
   });
 
   clientsByPort.set(p, client);
