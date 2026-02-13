@@ -16,5 +16,8 @@
   },
   "1.0.6": {
     "en": "No user-facing changes. Only optimising build size."
+  },
+  "1.0.7": {
+    "en": "Updated app metadata and app images."
   }
 }
