@@ -819,18 +819,18 @@ export class UnitRegistry {
           return ok;
         };
 
-        const writeFireplaceTrigger = async (value: number, opts?: { priority?: number | null }) => writeUpdate({
+        const writeFireplaceTrigger = async (value: number) => writeUpdate({
           objectId: BACNET_OBJECTS.fireplaceVentilationTrigger,
           tag: BacnetEnums.ApplicationTags.UNSIGNED_INTEGER,
           value,
-          priority: opts?.priority,
+          priority: 13,
         });
 
-        const writeRapidTrigger = async (value: number, opts?: { priority?: number | null }) => writeUpdate({
+        const writeRapidTrigger = async (value: number) => writeUpdate({
           objectId: BACNET_OBJECTS.rapidVentilationTrigger,
           tag: BacnetEnums.ApplicationTags.UNSIGNED_INTEGER,
           value,
-          priority: opts?.priority,
+          priority: 13,
         });
 
         if (mode !== 'fireplace') {
@@ -851,7 +851,7 @@ export class UnitRegistry {
         const fireplaceActive = (unit.probeValues.get(objectKey(OBJECT_TYPE.BINARY_VALUE, 400)) ?? 0) === 1;
         const temporaryRapidActive = rapidActive || tempVentActive;
         if (mode !== 'fireplace' && fireplaceActive) {
-          await writeFireplaceTrigger(TRIGGER_VALUE, { priority: null });
+          await writeFireplaceTrigger(TRIGGER_VALUE);
         }
 
         if (mode === 'home') {
@@ -860,13 +860,13 @@ export class UnitRegistry {
             await writeVentMode(VENTILATION_MODE_VALUES.HOME, { force: true });
           }
           if (temporaryRapidActive) {
-            await writeRapidTrigger(TRIGGER_VALUE, { priority: null });
+            await writeRapidTrigger(TRIGGER_VALUE);
           }
         } else if (mode === 'away') {
           const force = fireplaceActive;
           await writeComfort(0, { force });
           if (temporaryRapidActive) {
-            await writeRapidTrigger(TRIGGER_VALUE, { priority: null });
+            await writeRapidTrigger(TRIGGER_VALUE);
           }
         } else if (mode === 'high') {
           const comfortOk = await writeComfort(1);
