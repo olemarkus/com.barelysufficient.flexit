@@ -1,5 +1,10 @@
+/* eslint-disable import/extensions */
 import { expect } from 'chai';
-import { parseFlexitReply } from '../lib/flexitReplyParser';
+import { createRequire } from 'module';
+
+const require = createRequire(import.meta.url);
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { parseFlexitReply } = require('../lib/flexitReplyParser.ts');
 
 describe('flexitReplyParser', () => {
   it('uses model-based name when serial maps to a known model', () => {

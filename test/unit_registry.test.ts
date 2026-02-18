@@ -129,6 +129,7 @@ describe('UnitRegistry', () => {
     if (!comfort || !ventilation) throw new Error('Expected comfort and ventilation writes');
 
     expect(comfort[3][0].value).to.equal(1);
+    expect(comfort[4].priority).to.equal(13);
     expect(ventilation[3][0].type).to.equal(2); // UNSIGNED_INTEGER
     expect(ventilation[3][0].value).to.equal(4);
     expect(ventilation[4].priority).to.equal(13);
@@ -154,10 +155,37 @@ describe('UnitRegistry', () => {
     if (!runtime || !trigger || !comfort) throw new Error('Expected comfort, runtime, and trigger writes');
 
     expect(comfort[3][0].value).to.equal(1);
+    expect(comfort[4].priority).to.equal(13);
     expect(runtime[3][0].type).to.equal(2); // UNSIGNED_INTEGER
     expect(runtime[3][0].value).to.equal(10);
+    expect(runtime[4].priority).to.equal(13);
     expect(trigger[3][0].type).to.equal(2); // UNSIGNED_INTEGER
     expect(trigger[3][0].value).to.equal(2);
+    expect(trigger[4].priority).to.equal(13);
+  });
+
+  it('uses priority 13 for all writes when clearing active fireplace/rapid on away', async () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    const unit = (registry as any).units.get('test_unit');
+    unit.probeValues.set('5:400', 1); // fireplace_active
+    unit.probeValues.set('5:15', 1); // rapid_active
+
+    await registry.setFanMode('test_unit', 'away');
+
+    const calls = mockClient.writeProperty.getCalls().map((call: any) => call.args);
+    expect(calls.length).to.be.greaterThan(0);
+
+    for (const args of calls) {
+      expect(args[4].priority).to.equal(13);
+    }
+
+    const callsByObject = new Map<string, any[]>(calls.map((args: any) => [JSON.stringify(args[1]), args]));
+    const fireplaceTrigger = callsByObject.get(JSON.stringify({ type: 19, instance: 360 })) as any[] | undefined;
+    const rapidTrigger = callsByObject.get(JSON.stringify({ type: 19, instance: 357 })) as any[] | undefined;
+    expect(fireplaceTrigger).to.not.equal(undefined);
+    expect(rapidTrigger).to.not.equal(undefined);
   });
 
   it('prefers active fireplace flag over operation mode', () => {

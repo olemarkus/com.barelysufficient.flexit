@@ -19,5 +19,8 @@
   },
   "1.0.7": {
     "en": "Updated app metadata and app images."
+  },
+  "1.0.8": {
+    "en": "No user-facing changes. Internal BACnet simulator and reliability improvements."
   }
 }

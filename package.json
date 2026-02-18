@@ -13,7 +13,10 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run typecheck && c8 --reporter=text --reporter=lcov mocha --require ts-node/register test/**/*.ts",
     "start": "homey app run --remote",
-    "validate": "npm run lint && npm test && homey app validate"
+    "validate": "npm run lint && npm test && homey app validate",
+    "fake-unit:start": "ts-node scripts/fake-unit.ts",
+    "fake-unit:cli": "ts-node scripts/fake-unit-cli.ts",
+    "bacnet:read-probe": "node scripts/bacnet-read-probe.js"
   },
   "dependencies": {
     "bacstack": "0.0.1-beta.14",
@@ -46,7 +49,11 @@
     "include": [
       "lib/**/*.ts",
       "drivers/**/*.ts",
-      "app.ts"
+      "app.ts",
+      "scripts/fake-unit/**/*.ts",
+      "scripts/fake-unit.ts",
+      "scripts/fake-unit-cli.ts",
+      "scripts/bacnet-read-probe.js"
     ],
     "exclude": [
       "test/**",

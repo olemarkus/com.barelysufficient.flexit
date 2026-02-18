@@ -60,9 +60,14 @@ When adding new points, update both the poll list and `distributeData` mappings.
 - ESLint is required (see scripts).
 - Tests must pass with coverage thresholds in `package.json`.
 - Run `npm run validate` regularly after changes (lint + tests + `homey app validate`).
+- `README.txt` is app-store/user-facing only; keep developer/test instructions out of it.
+- Commit messages must clearly explain what the commit contains and why; avoid vague one-liners.
+- Keep PR branches squashed to a single commit before merge/push unless explicitly requested otherwise.
 
 ## Useful scripts
 - `npm run lint`
 - `npm run typecheck`
 - `npm test`
 - `npm start` (runs `homey app run --remote`)
+- `npm run fake-unit:start` (standalone fake Nordic unit; docs in `scripts/fake-unit/README.md`)
+- `npm run fake-unit:cli` (feature-oriented CLI for the fake unit API)
