@@ -49,9 +49,82 @@
       }
     ],
     "no-console": "off",
-    "homey-app/global-timers": "off"
+    "homey-app/global-timers": "off",
+    "complexity": [
+      "error",
+      25
+    ],
+    "max-depth": [
+      "error",
+      4
+    ],
+    "max-lines": [
+      "error",
+      {
+        "max": 1000,
+        "skipBlankLines": true,
+        "skipComments": true
+      }
+    ],
+    "max-lines-per-function": [
+      "error",
+      {
+        "max": 100,
+        "skipBlankLines": true,
+        "skipComments": true,
+        "IIFEs": true
+      }
+    ],
+    "max-params": [
+      "error",
+      4
+    ],
+    "max-statements": [
+      "error",
+      35
+    ]
   },
   "overrides": [
+    {
+      "files": [
+        "scripts/**/*.ts"
+      ],
+      "rules": {
+        "complexity": [
+          "error",
+          60
+        ],
+        "max-depth": [
+          "error",
+          6
+        ],
+        "max-lines": [
+          "error",
+          {
+            "max": 1700,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ],
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 220,
+            "skipBlankLines": true,
+            "skipComments": true,
+            "IIFEs": true
+          }
+        ],
+        "max-params": [
+          "error",
+          8
+        ],
+        "max-statements": [
+          "error",
+          100
+        ]
+      }
+    },
     {
       "files": [
         "test/**/*.ts"
@@ -60,7 +133,13 @@
         "mocha": true
       },
       "rules": {
-        "node/no-unpublished-import": "off"
+        "node/no-unpublished-import": "off",
+        "complexity": "off",
+        "max-depth": "off",
+        "max-lines": "off",
+        "max-lines-per-function": "off",
+        "max-params": "off",
+        "max-statements": "off"
       }
     }
   ]

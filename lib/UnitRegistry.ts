@@ -70,6 +70,44 @@ const FIREPLACE_RUNTIME_KEY = objectKey(
   BACNET_OBJECTS.fireplaceVentilationRuntime.type,
   BACNET_OBJECTS.fireplaceVentilationRuntime.instance,
 );
+const VENTILATION_MODE_KEY = objectKey(
+  BACNET_OBJECTS.ventilationMode.type,
+  BACNET_OBJECTS.ventilationMode.instance,
+);
+const COMFORT_BUTTON_KEY = objectKey(
+  BACNET_OBJECTS.comfortButton.type,
+  BACNET_OBJECTS.comfortButton.instance,
+);
+const RAPID_ACTIVE_KEY = objectKey(OBJECT_TYPE.BINARY_VALUE, 15);
+const FIREPLACE_ACTIVE_KEY = objectKey(
+  BACNET_OBJECTS.fireplaceState.type,
+  BACNET_OBJECTS.fireplaceState.instance,
+);
+const TEMP_VENT_REMAINING_KEY = objectKey(OBJECT_TYPE.ANALOG_VALUE, 2005);
+const MODE_SIGNAL_KEYS = [
+  'comfort_button',
+  'ventilation_mode',
+  'operation_mode',
+  'rapid_active',
+  'fireplace_active',
+  'remaining_rapid_vent',
+  'remaining_fireplace_vent',
+  'remaining_temp_vent_op',
+  'mode_rf_input',
+];
+const CAPABILITY_MAPPINGS = [
+  { dataKey: 'target_temperature', capability: 'target_temperature' },
+  { dataKey: 'measure_temperature', capability: 'measure_temperature' },
+  { dataKey: 'measure_temperature.outdoor', capability: 'measure_temperature.outdoor' },
+  { dataKey: 'measure_temperature.exhaust', capability: 'measure_temperature.exhaust' },
+  { dataKey: 'measure_temperature.extract', capability: 'measure_temperature.extract' },
+  { dataKey: 'measure_power', capability: 'measure_power' },
+  { dataKey: 'measure_humidity', capability: 'measure_humidity' },
+  { dataKey: 'measure_motor_rpm', capability: 'measure_motor_rpm' },
+  { dataKey: 'measure_motor_rpm.extract', capability: 'measure_motor_rpm.extract' },
+  { dataKey: 'measure_fan_speed_percent', capability: 'measure_fan_speed_percent' },
+  { dataKey: 'measure_fan_speed_percent.extract', capability: 'measure_fan_speed_percent.extract' },
+] as const;
 
 const MODE_RF_INPUT_MAP: Record<number, 'home' | 'away' | 'high' | 'fireplace'> = {
   3: 'high',
@@ -156,6 +194,44 @@ interface UnitState {
   available: boolean;
 }
 
+interface PollParseTarget {
+  data: Record<string, number>;
+  extractTempPrimary?: number;
+  extractTempAlt?: number;
+}
+
+const mapPollValue = (
+  dataKey: string,
+  transform?: (value: number) => number,
+) => (
+  value: number,
+  target: PollParseTarget,
+) => {
+  target.data[dataKey] = transform ? transform(value) : value;
+};
+
+interface WriteOptions {
+  maxSegments: number;
+  maxApdu: number;
+  priority: number;
+}
+
+interface WriteUpdate {
+  objectId: { type: number; instance: number };
+  tag: number;
+  value: number;
+  priority?: number | null;
+}
+
+interface FanModeWriteContext {
+  unit: UnitState;
+  mode: string;
+  writeOptions: WriteOptions;
+  client: any;
+  ventilationModeKey: string;
+  comfortButtonKey: string;
+}
+
 interface RegistryLogger {
   log(...args: any[]): void;
   error(...args: any[]): void;
@@ -201,6 +277,46 @@ function buildPollRequest() {
     { objectId: { type: OBJECT_TYPE.BINARY_VALUE, instance: 574 }, properties: [{ id: PRESENT_VALUE_ID }] }, // Delay for away active
   ];
 }
+
+const POLL_VALUE_MAPPINGS: Record<string, (value: number, target: PollParseTarget) => void> = {
+  [objectKey(OBJECT_TYPE.ANALOG_VALUE, 1994)]: mapPollValue('target_temperature'),
+  [objectKey(OBJECT_TYPE.ANALOG_INPUT, 4)]: mapPollValue('measure_temperature'),
+  [objectKey(OBJECT_TYPE.ANALOG_INPUT, 1)]: mapPollValue('measure_temperature.outdoor'),
+  [objectKey(OBJECT_TYPE.ANALOG_INPUT, 11)]: mapPollValue('measure_temperature.exhaust'),
+  [objectKey(OBJECT_TYPE.ANALOG_INPUT, EXTRACT_AIR_TEMPERATURE_PRIMARY_INSTANCE)]: (
+    value,
+    target,
+  ) => {
+    target.extractTempPrimary = value;
+  },
+  [objectKey(OBJECT_TYPE.ANALOG_INPUT, EXTRACT_AIR_TEMPERATURE_ALT_INSTANCE)]: (
+    value,
+    target,
+  ) => {
+    target.extractTempAlt = value;
+  },
+  [objectKey(OBJECT_TYPE.ANALOG_INPUT, 96)]: mapPollValue('measure_humidity'),
+  [objectKey(OBJECT_TYPE.ANALOG_VALUE, 194)]: mapPollValue('measure_power', (value) => value * 1000),
+  [objectKey(OBJECT_TYPE.ANALOG_INPUT, 5)]: mapPollValue('measure_motor_rpm'),
+  [objectKey(OBJECT_TYPE.ANALOG_INPUT, 12)]: mapPollValue('measure_motor_rpm.extract'),
+  [objectKey(OBJECT_TYPE.ANALOG_OUTPUT, 3)]: mapPollValue('measure_fan_speed_percent'),
+  [objectKey(OBJECT_TYPE.ANALOG_OUTPUT, 4)]: mapPollValue('measure_fan_speed_percent.extract'),
+  [objectKey(OBJECT_TYPE.ANALOG_VALUE, 285)]: mapPollValue('filter_time'),
+  [objectKey(OBJECT_TYPE.ANALOG_VALUE, 286)]: mapPollValue('filter_limit'),
+  [objectKey(OBJECT_TYPE.BINARY_VALUE, 50)]: mapPollValue('comfort_button'),
+  [objectKey(OBJECT_TYPE.POSITIVE_INTEGER_VALUE, 318)]: mapPollValue('comfort_delay'),
+  [objectKey(OBJECT_TYPE.MULTI_STATE_VALUE, 42)]: mapPollValue('ventilation_mode'),
+  [objectKey(OBJECT_TYPE.MULTI_STATE_VALUE, 361)]: mapPollValue('operation_mode'),
+  [objectKey(OBJECT_TYPE.BINARY_VALUE, 15)]: mapPollValue('rapid_active'),
+  [objectKey(OBJECT_TYPE.BINARY_VALUE, 400)]: mapPollValue('fireplace_active'),
+  [objectKey(OBJECT_TYPE.BINARY_VALUE, 574)]: mapPollValue('away_delay_active'),
+  [objectKey(OBJECT_TYPE.ANALOG_VALUE, 2005)]: mapPollValue('remaining_temp_vent_op'),
+  [objectKey(OBJECT_TYPE.ANALOG_VALUE, 2031)]: mapPollValue('remaining_rapid_vent'),
+  [objectKey(OBJECT_TYPE.ANALOG_VALUE, 2038)]: mapPollValue('remaining_fireplace_vent'),
+  [objectKey(OBJECT_TYPE.ANALOG_VALUE, 2125)]: mapPollValue('mode_rf_input'),
+};
+
+const POLL_REQUEST = buildPollRequest();
 
 export class UnitRegistry {
     private units: Map<string, UnitState> = new Map();
@@ -382,103 +498,95 @@ export class UnitRegistry {
     private pollUnit(unitId: string) {
       const unit = this.units.get(unitId);
       if (!unit) return;
+      this.pollAttempt(unit, 0);
+    }
 
+    private pollAttempt(unit: UnitState, attempt: number) {
       const client = getBacnetClient(unit.bacnetPort);
-      const requestArray = buildPollRequest();
+      try {
+        client.readPropertyMultiple(unit.ip, POLL_REQUEST, (err: any, value: any) => {
+          if (err) {
+            this.handlePollError(unit, attempt, err);
+            return;
+          }
+          this.handlePollResponse(unit, value);
+        });
+      } catch (error) {
+        this.error(`[UnitRegistry] Synchronous internal error checking ${unit.unitId}:`, error);
+        this.handlePollFailure(unit);
+      }
+    }
 
-      const pollOnce = (attempt: number) => {
-        try {
-          client.readPropertyMultiple(unit.ip, requestArray, (err: any, value: any) => {
-            if (err) {
-              const isTimeout = err?.code === 'ERR_TIMEOUT' || String(err?.message || '').includes('ERR_TIMEOUT');
-              if (isTimeout && attempt === 0) {
-                this.warn(`[UnitRegistry] Poll timeout for ${unitId}, retrying once...`);
-                setTimeout(() => pollOnce(1), 1000);
-                return;
-              }
-              this.error(`[UnitRegistry] Poll error for ${unitId}:`, err);
-              this.handlePollFailure(unit);
-              return;
-            }
+    private handlePollError(unit: UnitState, attempt: number, err: any) {
+      const isTimeout = err?.code === 'ERR_TIMEOUT' || String(err?.message || '').includes('ERR_TIMEOUT');
+      if (isTimeout && attempt === 0) {
+        this.warn(`[UnitRegistry] Poll timeout for ${unit.unitId}, retrying once...`);
+        setTimeout(() => this.pollAttempt(unit, 1), 1000);
+        return;
+      }
+      this.error(`[UnitRegistry] Poll error for ${unit.unitId}:`, err);
+      this.handlePollFailure(unit);
+    }
 
-            try {
-              if (value && value.values) {
-                this.handlePollSuccess(unit);
-                unit.lastPollAt = Date.now();
-                const data: any = {};
-                const pollTime = unit.lastPollAt;
-                let extractTempPrimary: number | undefined;
-                let extractTempAlt: number | undefined;
-                value.values.forEach((obj: any) => {
-                  const { type, instance } = obj.objectId;
-                  const val = this.extractValue(obj);
-                  if (typeof val !== 'number') return;
+    private handlePollResponse(unit: UnitState, value: any) {
+      if (!value?.values) return;
+      try {
+        this.handlePollSuccess(unit);
+        unit.lastPollAt = Date.now();
+        const data = this.parsePollValues(unit, value.values, unit.lastPollAt);
+        this.distributeData(unit, data);
+      } catch (e) {
+        this.error(`[UnitRegistry] Parse error for ${unit.unitId}:`, e);
+      }
+    }
 
-                  if (type === OBJECT_TYPE.ANALOG_VALUE && instance === 1994) data.target_temperature = val;
-                  if (type === OBJECT_TYPE.ANALOG_INPUT && instance === 4) data['measure_temperature'] = val;
-                  if (type === OBJECT_TYPE.ANALOG_INPUT && instance === 1) data['measure_temperature.outdoor'] = val;
-                  if (type === OBJECT_TYPE.ANALOG_INPUT && instance === 11) data['measure_temperature.exhaust'] = val;
-                  if (type === OBJECT_TYPE.ANALOG_INPUT && instance === EXTRACT_AIR_TEMPERATURE_PRIMARY_INSTANCE) extractTempPrimary = val;
-                  if (type === OBJECT_TYPE.ANALOG_INPUT && instance === EXTRACT_AIR_TEMPERATURE_ALT_INSTANCE) extractTempAlt = val;
-                  if (type === OBJECT_TYPE.ANALOG_INPUT && instance === 96) data['measure_humidity'] = val;
-                  if (type === OBJECT_TYPE.ANALOG_VALUE && instance === 194) data['measure_power'] = val * 1000;
+    private parsePollValues(unit: UnitState, values: any[], pollTime: number): Record<string, number> {
+      const target: PollParseTarget = { data: {} };
+      for (const obj of values) {
+        const objectId = obj?.objectId;
+        if (!objectId) continue;
 
-                  if (type === OBJECT_TYPE.ANALOG_INPUT && instance === 5) data['measure_motor_rpm'] = val;
-                  if (type === OBJECT_TYPE.ANALOG_INPUT && instance === 12) data['measure_motor_rpm.extract'] = val;
-                  if (type === OBJECT_TYPE.ANALOG_OUTPUT && instance === 3) data['measure_fan_speed_percent'] = val;
-                  if (type === OBJECT_TYPE.ANALOG_OUTPUT && instance === 4) data['measure_fan_speed_percent.extract'] = val;
-                  if (type === OBJECT_TYPE.ANALOG_VALUE && instance === 285) data['filter_time'] = val;
-                  if (type === OBJECT_TYPE.ANALOG_VALUE && instance === 286) data['filter_limit'] = val;
-                  if (type === OBJECT_TYPE.BINARY_VALUE && instance === 50) data['comfort_button'] = val;
-                  if (type === OBJECT_TYPE.POSITIVE_INTEGER_VALUE && instance === 318) data['comfort_delay'] = val;
-                  if (type === OBJECT_TYPE.MULTI_STATE_VALUE && instance === 42) data['ventilation_mode'] = val;
-                  if (type === OBJECT_TYPE.MULTI_STATE_VALUE && instance === 361) data['operation_mode'] = val;
-                  if (type === OBJECT_TYPE.BINARY_VALUE && instance === 15) data['rapid_active'] = val;
-                  if (type === OBJECT_TYPE.BINARY_VALUE && instance === 400) data['fireplace_active'] = val;
-                  if (type === OBJECT_TYPE.BINARY_VALUE && instance === 574) data['away_delay_active'] = val;
-                  if (type === OBJECT_TYPE.ANALOG_VALUE && instance === 2005) data['remaining_temp_vent_op'] = val;
-                  if (type === OBJECT_TYPE.ANALOG_VALUE && instance === 2031) data['remaining_rapid_vent'] = val;
-                  if (type === OBJECT_TYPE.ANALOG_VALUE && instance === 2038) data['remaining_fireplace_vent'] = val;
-                  if (type === OBJECT_TYPE.ANALOG_VALUE && instance === 2125) data['mode_rf_input'] = val;
+        const val = this.extractValue(obj);
+        if (typeof val !== 'number' || Number.isNaN(val)) continue;
 
-                  const key = objectKey(type, instance);
-                  const pending = unit.pendingWriteErrors.get(key);
-                  if (pending && valuesMatch(val, pending.value)) {
-                    this.warn(
-                      `[UnitRegistry] Write error cleared for ${key}: now ${val} (was code ${pending.code})`,
-                    );
-                    unit.pendingWriteErrors.delete(key);
-                  } else if (key === objectKey(BACNET_OBJECTS.ventilationMode.type, BACNET_OBJECTS.ventilationMode.instance) && unit.writeContext) {
-                    const ctx = unit.writeContext.get(key);
-                    if (ctx && ctx.value !== val && pollTime - ctx.at < 60000) {
-                      this.warn(
-                        `[UnitRegistry] Ventilation mode mismatch after write: expected ${ctx.value} for '${ctx.mode}', got ${val}`,
-                      );
-                      unit.writeContext.delete(key);
-                    } else if (ctx && ctx.value === val) {
-                      unit.writeContext.delete(key);
-                    }
-                  }
+        const key = objectKey(objectId.type, objectId.instance);
+        const mapper = POLL_VALUE_MAPPINGS[key];
+        if (mapper) mapper(val, target);
+        this.reconcileObservedWriteStatus(unit, key, val, pollTime);
+        unit.probeValues.set(key, val);
+      }
 
-                  unit.probeValues.set(key, val);
-                });
+      const extractTemp = selectExtractTemperature(target.extractTempPrimary, target.extractTempAlt);
+      if (extractTemp !== undefined) {
+        target.data['measure_temperature.extract'] = extractTemp;
+      }
+      return target.data;
+    }
 
-                const extractTemp = selectExtractTemperature(extractTempPrimary, extractTempAlt);
-                if (extractTemp !== undefined) data['measure_temperature.extract'] = extractTemp;
+    private reconcileObservedWriteStatus(unit: UnitState, key: string, value: number, pollTime: number) {
+      const pending = unit.pendingWriteErrors.get(key);
+      if (pending && valuesMatch(value, pending.value)) {
+        this.warn(`[UnitRegistry] Write error cleared for ${key}: now ${value} (was code ${pending.code})`);
+        unit.pendingWriteErrors.delete(key);
+      }
+      this.reconcileVentilationWriteContext(unit, key, value, pollTime);
+    }
 
-                this.distributeData(unit, data);
-              }
-            } catch (e) {
-              this.error(`[UnitRegistry] Parse error for ${unitId}:`, e);
-            }
-          });
-        } catch (error) {
-          this.error(`[UnitRegistry] Synchronous internal error checking ${unitId}:`, error);
-          this.handlePollFailure(unit);
-        }
-      };
+    private reconcileVentilationWriteContext(unit: UnitState, key: string, value: number, pollTime: number) {
+      if (key !== VENTILATION_MODE_KEY || !unit.writeContext) return;
+      const context = unit.writeContext.get(key);
+      if (!context) return;
 
-      pollOnce(0);
+      if (context.value !== value && pollTime - context.at < 60000) {
+        this.warn(
+          `[UnitRegistry] Ventilation mode mismatch after write: expected ${context.value} for '${context.mode}', got ${value}`,
+        );
+        unit.writeContext.delete(key);
+        return;
+      }
+      if (context.value === value) {
+        unit.writeContext.delete(key);
+      }
     }
 
     private handlePollFailure(unit: UnitState) {
@@ -555,111 +663,103 @@ export class UnitRegistry {
       }
     }
 
-    private distributeData(unit: UnitState, data: any) {
-      // Compute derived values before distributing
-      let filterLife: number | undefined;
-      if (data['filter_time'] !== undefined && data['filter_limit'] !== undefined && data['filter_limit'] > 0) {
-        filterLife = Math.max(0, (1 - (data['filter_time'] / data['filter_limit'])) * 100);
-        filterLife = parseFloat(filterLife.toFixed(1));
-      }
-
-      // Compute fan mode
-      let mode: string | undefined;
-      if (
-        data['comfort_button'] !== undefined
-        || data['ventilation_mode'] !== undefined
-        || data['operation_mode'] !== undefined
-        || data['rapid_active'] !== undefined
-        || data['fireplace_active'] !== undefined
-        || data['remaining_rapid_vent'] !== undefined
-        || data['remaining_fireplace_vent'] !== undefined
-        || data['remaining_temp_vent_op'] !== undefined
-        || data['mode_rf_input'] !== undefined
-      ) {
-        mode = 'away';
-        const rfMode = MODE_RF_INPUT_MAP[Math.round(data['mode_rf_input'] ?? NaN)];
-        const tempOpActive = (data['remaining_temp_vent_op'] ?? 0) > 0;
-
-        if (unit.deferredMode === 'fireplace' && !tempOpActive && data['rapid_active'] !== 1) {
-          unit.deferredMode = undefined;
-          unit.deferredSince = undefined;
-          this.warn(`[UnitRegistry] Retrying deferred fireplace for ${unit.unitId}`);
-          this.setFanMode(unit.unitId, 'fireplace').catch(() => { });
-        }
-
-        if (data['operation_mode'] !== undefined) {
-          mode = mapOperationMode(Math.round(data['operation_mode']));
-        } else if (data['ventilation_mode'] !== undefined) {
-          mode = mapVentilationMode(Math.round(data['ventilation_mode']));
-        } else if (rfMode) {
-          mode = rfMode;
-        } else if (tempOpActive) {
-          if ((data['remaining_fireplace_vent'] ?? 0) > 0) mode = 'fireplace';
-          else if ((data['remaining_rapid_vent'] ?? 0) > 0) mode = 'high';
-          else if (data['comfort_button'] === 1) mode = 'home';
-        } else if (data['comfort_button'] === 1) {
-          mode = 'home';
-        }
-
-        const { expectedMode } = unit;
-        const ventilationMode = data['ventilation_mode'] !== undefined
-          ? mapVentilationMode(Math.round(data['ventilation_mode']))
-          : undefined;
-
-        if (ventilationMode) {
-          mode = ventilationMode;
-        }
-
-        if (data['fireplace_active'] === 1) mode = 'fireplace';
-        else if (data['rapid_active'] === 1) mode = 'high';
-
-        if (expectedMode && expectedMode !== mode) {
-          const comfortOff = data['comfort_button'] === 0;
-          const awayDelayActive = data['away_delay_active'] === 1;
-          if (expectedMode === 'away' && comfortOff && awayDelayActive) {
-            const mismatchKey = `${expectedMode}->pending`;
-            if (unit.lastMismatchKey !== mismatchKey) {
-              unit.lastMismatchKey = mismatchKey;
-              const delay = data['comfort_delay'] ?? 'unknown';
-              this.warn(
-                `[UnitRegistry] Away pending for ${unit.unitId}: delay active (configured ${delay} min)`,
-              );
-            }
-          } else {
-            const mismatchKey = `${expectedMode}->${mode}`;
-            if (unit.lastMismatchKey !== mismatchKey) {
-              unit.lastMismatchKey = mismatchKey;
-              this.warn(
-                `[UnitRegistry] Mode mismatch for ${unit.unitId}: expected '${expectedMode}' got '${mode}'`,
-              );
-            }
-          }
-        } else if (expectedMode && expectedMode === mode) {
-          unit.lastMismatchKey = undefined;
-        }
-
-      }
+    private distributeData(unit: UnitState, data: Record<string, number>) {
+      const filterLife = this.computeFilterLife(data);
+      const mode = this.resolveFanMode(unit, data);
 
       for (const device of unit.devices) {
-        // Thermostat capabilities
-        if (data.target_temperature !== undefined) device.setCapabilityValue('target_temperature', data.target_temperature).catch(() => { });
-        if (data['measure_temperature'] !== undefined) device.setCapabilityValue('measure_temperature', data['measure_temperature']).catch(() => { });
-        if (data['measure_temperature.outdoor'] !== undefined) device.setCapabilityValue('measure_temperature.outdoor', data['measure_temperature.outdoor']).catch(() => { });
-        if (data['measure_temperature.exhaust'] !== undefined) device.setCapabilityValue('measure_temperature.exhaust', data['measure_temperature.exhaust']).catch(() => { });
-        if (data['measure_temperature.extract'] !== undefined) device.setCapabilityValue('measure_temperature.extract', data['measure_temperature.extract']).catch(() => { });
-        if (data['measure_power'] !== undefined) device.setCapabilityValue('measure_power', data['measure_power']).catch(() => { });
-
-        // Fan capabilities
-        if (data['measure_humidity'] !== undefined) device.setCapabilityValue('measure_humidity', data['measure_humidity']).catch(() => { });
-        if (data['measure_motor_rpm'] !== undefined) device.setCapabilityValue('measure_motor_rpm', data['measure_motor_rpm']).catch(() => { });
-        if (data['measure_motor_rpm.extract'] !== undefined) device.setCapabilityValue('measure_motor_rpm.extract', data['measure_motor_rpm.extract']).catch(() => { });
-        if (data['measure_fan_speed_percent'] !== undefined) device.setCapabilityValue('measure_fan_speed_percent', data['measure_fan_speed_percent']).catch(() => { });
-        if (data['measure_fan_speed_percent.extract'] !== undefined) device.setCapabilityValue('measure_fan_speed_percent.extract', data['measure_fan_speed_percent.extract']).catch(() => { });
-        if (filterLife !== undefined) device.setCapabilityValue('measure_hepa_filter', filterLife).catch(() => { });
-
-        // Fan mode
-        if (mode !== undefined) device.setCapabilityValue('fan_mode', mode).catch(() => { });
+        this.applyMappedCapabilities(device, data);
+        if (filterLife !== undefined) this.setCapability(device, 'measure_hepa_filter', filterLife);
+        if (mode !== undefined) this.setCapability(device, 'fan_mode', mode);
       }
+    }
+
+    private computeFilterLife(data: Record<string, number>) {
+      const filterTime = data.filter_time;
+      const filterLimit = data.filter_limit;
+      if (filterTime === undefined || filterLimit === undefined || filterLimit <= 0) return undefined;
+
+      const filterLife = Math.max(0, (1 - (filterTime / filterLimit)) * 100);
+      return parseFloat(filterLife.toFixed(1));
+    }
+
+    private resolveFanMode(unit: UnitState, data: Record<string, number>): string | undefined {
+      if (!MODE_SIGNAL_KEYS.some((key) => data[key] !== undefined)) return undefined;
+
+      const tempOpActive = (data.remaining_temp_vent_op ?? 0) > 0;
+      if (unit.deferredMode === 'fireplace' && !tempOpActive && data.rapid_active !== 1) {
+        unit.deferredMode = undefined;
+        unit.deferredSince = undefined;
+        this.warn(`[UnitRegistry] Retrying deferred fireplace for ${unit.unitId}`);
+        this.setFanMode(unit.unitId, 'fireplace').catch(() => { });
+      }
+
+      let mode = this.resolveBaseMode(data, tempOpActive);
+      if (data.ventilation_mode !== undefined) {
+        mode = mapVentilationMode(Math.round(data.ventilation_mode));
+      }
+      if (data.fireplace_active === 1) mode = 'fireplace';
+      else if (data.rapid_active === 1) mode = 'high';
+
+      this.logModeMismatch(unit, mode, data);
+      return mode;
+    }
+
+    private resolveBaseMode(data: Record<string, number>, tempOpActive: boolean): 'home' | 'away' | 'high' | 'fireplace' {
+      const rfMode = MODE_RF_INPUT_MAP[Math.round(data.mode_rf_input ?? NaN)];
+      if (data.operation_mode !== undefined) {
+        return mapOperationMode(Math.round(data.operation_mode));
+      }
+      if (data.ventilation_mode !== undefined) {
+        return mapVentilationMode(Math.round(data.ventilation_mode));
+      }
+      if (rfMode) return rfMode;
+      if (tempOpActive) {
+        if ((data.remaining_fireplace_vent ?? 0) > 0) return 'fireplace';
+        if ((data.remaining_rapid_vent ?? 0) > 0) return 'high';
+        if (data.comfort_button === 1) return 'home';
+        return 'away';
+      }
+      return data.comfort_button === 1 ? 'home' : 'away';
+    }
+
+    private logModeMismatch(unit: UnitState, mode: string, data: Record<string, number>) {
+      const { expectedMode } = unit;
+      if (!expectedMode) return;
+
+      if (expectedMode === mode) {
+        unit.lastMismatchKey = undefined;
+        return;
+      }
+
+      const comfortOff = data.comfort_button === 0;
+      const awayDelayActive = data.away_delay_active === 1;
+      if (expectedMode === 'away' && comfortOff && awayDelayActive) {
+        const mismatchKey = `${expectedMode}->pending`;
+        if (unit.lastMismatchKey === mismatchKey) return;
+        unit.lastMismatchKey = mismatchKey;
+        const delay = data.comfort_delay ?? 'unknown';
+        this.warn(`[UnitRegistry] Away pending for ${unit.unitId}: delay active (configured ${delay} min)`);
+        return;
+      }
+
+      const mismatchKey = `${expectedMode}->${mode}`;
+      if (unit.lastMismatchKey === mismatchKey) return;
+      unit.lastMismatchKey = mismatchKey;
+      this.warn(`[UnitRegistry] Mode mismatch for ${unit.unitId}: expected '${expectedMode}' got '${mode}'`);
+    }
+
+    private applyMappedCapabilities(device: FlexitDevice, data: Record<string, number>) {
+      for (const { dataKey, capability } of CAPABILITY_MAPPINGS) {
+        const value = data[dataKey];
+        if (value !== undefined) {
+          this.setCapability(device, capability, value);
+        }
+      }
+    }
+
+    private setCapability(device: FlexitDevice, capability: string, value: number | string) {
+      device.setCapabilityValue(capability, value).catch(() => { });
     }
 
     async setFanMode(unitId: string, mode: string) {
@@ -667,233 +767,267 @@ export class UnitRegistry {
       if (!unit) throw new Error('Unit not found');
 
       this.log(`[UnitRegistry] Setting fan mode to '${mode}' for ${unitId}`);
-      const writeOptions = {
+      const writeOptions: WriteOptions = {
         maxSegments: BacnetEnums.MaxSegmentsAccepted.SEGMENTS_0,
         maxApdu: BacnetEnums.MaxApduLengthAccepted.OCTETS_1476,
-        priority: 13,
+        priority: DEFAULT_WRITE_PRIORITY,
       };
 
-      unit.writeQueue = unit.writeQueue.then(async () => {
-        const client = getBacnetClient(unit.bacnetPort);
+      unit.writeQueue = unit.writeQueue.then(() => this.applyFanMode(unit, mode, writeOptions));
+      return unit.writeQueue;
+    }
 
-        const ventilationModeKey = objectKey(
-          BACNET_OBJECTS.ventilationMode.type,
-          BACNET_OBJECTS.ventilationMode.instance,
+    private async applyFanMode(unit: UnitState, mode: string, writeOptions: WriteOptions) {
+      for (const key of NEVER_BLOCK_KEYS) {
+        unit.blockedWrites.delete(key);
+      }
+
+      const context: FanModeWriteContext = {
+        unit,
+        mode,
+        writeOptions,
+        client: getBacnetClient(unit.bacnetPort),
+        ventilationModeKey: VENTILATION_MODE_KEY,
+        comfortButtonKey: COMFORT_BUTTON_KEY,
+      };
+
+      const rapidActive = (unit.probeValues.get(RAPID_ACTIVE_KEY) ?? 0) === 1;
+      const tempVentActive = (unit.probeValues.get(TEMP_VENT_REMAINING_KEY) ?? 0) > 0;
+      const temporaryRapidActive = rapidActive || tempVentActive;
+      const fireplaceActive = (unit.probeValues.get(FIREPLACE_ACTIVE_KEY) ?? 0) === 1;
+      const fireplaceRuntime = clamp(
+        Math.round(unit.probeValues.get(FIREPLACE_RUNTIME_KEY) ?? DEFAULT_FIREPLACE_VENTILATION_MINUTES),
+        1,
+        360,
+      );
+
+      if (mode !== 'fireplace') {
+        unit.deferredMode = undefined;
+        unit.deferredSince = undefined;
+      }
+      if (mode === 'fireplace' && temporaryRapidActive) {
+        this.warn(
+          `[UnitRegistry] Fireplace requested while temporary ventilation is active (rapid=${rapidActive} temp=${tempVentActive}); proceeding anyway.`,
         );
+      }
 
-        // Ensure core control points are never permanently blocked.
-        for (const key of NEVER_BLOCK_KEYS) {
-          unit.blockedWrites.delete(key);
-        }
+      unit.expectedMode = mode;
+      unit.expectedModeAt = Date.now();
+      unit.lastMismatchKey = undefined;
 
-        const writeUpdate = async (up: { objectId: { type: number; instance: number }; tag: number; value: number; priority?: number | null }) => {
-          const writeKey = objectKey(up.objectId.type, up.objectId.instance);
-          if (unit.blockedWrites.has(writeKey)) {
-            this.warn(`[UnitRegistry] Skipping write ${writeKey} (write access denied previously)`);
-            return false;
+      if (mode !== 'fireplace' && fireplaceActive) {
+        await this.writeFireplaceTrigger(context, TRIGGER_VALUE);
+      }
+
+      switch (mode) {
+        case 'home':
+          await this.applyHomeMode(context, temporaryRapidActive);
+          return;
+        case 'away':
+          await this.applyAwayMode(context, fireplaceActive, temporaryRapidActive);
+          return;
+        case 'high':
+          await this.applyHighMode(context);
+          return;
+        case 'fireplace':
+          await this.applyFireplaceMode(context, fireplaceRuntime);
+          return;
+        default:
+          this.warn(`[UnitRegistry] Unsupported fan mode '${mode}' for ${unit.unitId}`);
+      }
+    }
+
+    private shouldSkipWrite(unit: UnitState, key: string, current: number | undefined, desired: number) {
+      if (current === undefined || !valuesMatch(current, desired)) return false;
+      const lastWrite = unit.lastWriteValues.get(key);
+      const lastPollAt = unit.lastPollAt ?? 0;
+      if (!lastWrite) return true;
+      if (lastWrite.at <= lastPollAt) return true;
+      if (lastWrite.value === desired) return true;
+      return false;
+    }
+
+    private async writeUpdate(context: FanModeWriteContext, update: WriteUpdate) {
+      const { unit } = context;
+      const writeKey = objectKey(update.objectId.type, update.objectId.instance);
+      if (unit.blockedWrites.has(writeKey)) {
+        this.warn(`[UnitRegistry] Skipping write ${writeKey} (write access denied previously)`);
+        return false;
+      }
+
+      return new Promise<boolean>((resolve) => {
+        let handled = false;
+        const tm = setTimeout(() => {
+          if (!handled) {
+            handled = true;
+            this.error(`[UnitRegistry] Timeout writing ${update.objectId.type}:${update.objectId.instance}`);
+            resolve(false);
           }
-          return new Promise<boolean>((resolve) => {
-            let handled = false;
-            const tm = setTimeout(() => {
-              if (!handled) {
-                handled = true;
-                this.error(`[UnitRegistry] Timeout writing ${up.objectId.type}:${up.objectId.instance}`);
-                resolve(false);
+        }, 5000);
+
+        try {
+          this.log(`[UnitRegistry] Writing ${update.objectId.type}:${update.objectId.instance} = ${update.value}`);
+          const options: { maxSegments: number; maxApdu: number; priority?: number } = {
+            maxSegments: context.writeOptions.maxSegments,
+            maxApdu: context.writeOptions.maxApdu,
+          };
+          if (update.priority !== null) {
+            options.priority = update.priority ?? DEFAULT_WRITE_PRIORITY;
+          }
+
+          context.client.writeProperty(
+            unit.ip,
+            update.objectId,
+            PRESENT_VALUE_ID,
+            [{ type: update.tag, value: update.value }],
+            options,
+            (err: any) => {
+              if (handled) return;
+              handled = true;
+              clearTimeout(tm);
+              const now = Date.now();
+
+              if (!err) {
+                unit.lastWriteValues.set(writeKey, { value: update.value, at: now });
+                this.log(
+                  `[UnitRegistry] Successfully wrote ${update.objectId.type}:${update.objectId.instance} to ${update.value}`,
+                );
+                resolve(true);
+                return;
               }
-            }, 5000);
 
-            try {
-              this.log(`[UnitRegistry] Writing ${up.objectId.type}:${up.objectId.instance} = ${up.value}`);
-              const options: { maxSegments: number; maxApdu: number; priority?: number } = {
-                maxSegments: writeOptions.maxSegments,
-                maxApdu: writeOptions.maxApdu,
-              };
-              if (up.priority !== null) {
-                options.priority = up.priority ?? DEFAULT_WRITE_PRIORITY;
+              const message = String(err?.message || err);
+              const errMatch = message.match(/Code:(\d+)/);
+              const code = errMatch ? Number(errMatch[1]) : undefined;
+              if (code === 37) {
+                unit.lastWriteValues.set(writeKey, { value: update.value, at: now });
+                unit.pendingWriteErrors.set(writeKey, { value: update.value, code });
+                this.warn(`[UnitRegistry] Write returned Code:37 for ${writeKey}; will verify on next poll.`);
+                resolve(true);
+                return;
               }
-              client.writeProperty(
-                unit.ip,
-                up.objectId,
-                PRESENT_VALUE_ID,
-                [{ type: up.tag, value: up.value }],
-                options,
-                (err: any) => {
-                  if (handled) return;
-                  handled = true;
-                  clearTimeout(tm);
-                  const now = Date.now();
-                  if (err) {
-                    const message = String(err?.message || err);
-                    const errMatch = message.match(/Code:(\d+)/);
-                    const code = errMatch ? Number(errMatch[1]) : undefined;
-                    if (code === 37) {
-                      unit.lastWriteValues.set(writeKey, { value: up.value, at: now });
-                      unit.pendingWriteErrors.set(writeKey, { value: up.value, code });
-                      this.warn(`[UnitRegistry] Write returned Code:37 for ${writeKey}; will verify on next poll.`);
-                      resolve(true);
-                      return;
-                    }
-                    if (message.includes('Code:40') || message.includes('Code:9')) {
-                      unit.lastWriteValues.set(writeKey, { value: up.value, at: now });
-                      if (NEVER_BLOCK_KEYS.has(writeKey)) {
-                        this.warn(`[UnitRegistry] Write denied for ${writeKey}, but will keep retrying.`);
-                      } else {
-                        unit.blockedWrites.add(writeKey);
-                        this.warn(`[UnitRegistry] Disabling writes for ${writeKey} due to device error.`);
-                      }
-                    } else {
-                      this.error(
-                        `[UnitRegistry] Failed to write ${up.objectId.type}:${up.objectId.instance} to ${up.value}`,
-                        err,
-                      );
-                    }
-                    resolve(false);
-                  } else {
-                    unit.lastWriteValues.set(writeKey, { value: up.value, at: now });
-                    this.log(`[UnitRegistry] Successfully wrote ${up.objectId.type}:${up.objectId.instance} to ${up.value}`);
-                    resolve(true);
-                  }
-                },
-              );
-            } catch (e) {
-              if (!handled) {
-                handled = true;
-                clearTimeout(tm);
-                this.error(`[UnitRegistry] Sync error writing ${up.objectId.type}:${up.objectId.instance}:`, e);
-                resolve(false);
+
+              if (message.includes('Code:40') || message.includes('Code:9')) {
+                unit.lastWriteValues.set(writeKey, { value: update.value, at: now });
+                if (NEVER_BLOCK_KEYS.has(writeKey)) {
+                  this.warn(`[UnitRegistry] Write denied for ${writeKey}, but will keep retrying.`);
+                } else {
+                  unit.blockedWrites.add(writeKey);
+                  this.warn(`[UnitRegistry] Disabling writes for ${writeKey} due to device error.`);
+                }
+              } else {
+                this.error(
+                  `[UnitRegistry] Failed to write ${update.objectId.type}:${update.objectId.instance} to ${update.value}`,
+                  err,
+                );
               }
-            }
-          });
-        };
-
-        const rapidActive = (unit.probeValues.get(objectKey(OBJECT_TYPE.BINARY_VALUE, 15)) ?? 0) === 1;
-        const tempVentActive = (unit.probeValues.get(objectKey(OBJECT_TYPE.ANALOG_VALUE, 2005)) ?? 0) > 0;
-        const fireplaceRuntime = clamp(
-          Math.round(unit.probeValues.get(FIREPLACE_RUNTIME_KEY) ?? DEFAULT_FIREPLACE_VENTILATION_MINUTES),
-          1,
-          360,
-        );
-
-        const comfortButtonKey = objectKey(OBJECT_TYPE.BINARY_VALUE, 50);
-
-        const shouldSkipWrite = (key: string, current: number | undefined, desired: number) => {
-          if (current === undefined || !valuesMatch(current, desired)) return false;
-          const lastWrite = unit.lastWriteValues.get(key);
-          const lastPollAt = unit.lastPollAt ?? 0;
-          if (!lastWrite) return true;
-          if (lastWrite.at <= lastPollAt) return true;
-          if (lastWrite.value === desired) return true;
-          return false;
-        };
-
-        const writeComfort = async (value: number, opts?: { force?: boolean }) => {
-          const key = comfortButtonKey;
-          const current = unit.probeValues.get(key);
-          if (!opts?.force && shouldSkipWrite(key, current, value)) {
-            this.log(`[UnitRegistry] Comfort button already ${value}, skipping write.`);
-            return true;
-          }
-          return writeUpdate({
-            objectId: BACNET_OBJECTS.comfortButton,
-            tag: BacnetEnums.ApplicationTags.ENUMERATED,
-            value,
-            priority: 13,
-          });
-        };
-
-        const writeVentMode = async (value: number, opts?: { force?: boolean }) => {
-          const current = unit.probeValues.get(ventilationModeKey);
-          if (!opts?.force && shouldSkipWrite(ventilationModeKey, current, value)) {
-            this.log(`[UnitRegistry] Ventilation mode already ${value}, skipping write.`);
-            return true;
-          }
-          const ok = await writeUpdate({
-            objectId: BACNET_OBJECTS.ventilationMode,
-            tag: BacnetEnums.ApplicationTags.UNSIGNED_INTEGER,
-            value,
-            priority: 13,
-          });
-          if (ok) {
-            unit.writeContext.set(ventilationModeKey, { value, mode, at: Date.now() });
-          }
-          return ok;
-        };
-
-        const writeFireplaceTrigger = async (value: number) => writeUpdate({
-          objectId: BACNET_OBJECTS.fireplaceVentilationTrigger,
-          tag: BacnetEnums.ApplicationTags.UNSIGNED_INTEGER,
-          value,
-          priority: 13,
-        });
-
-        const writeRapidTrigger = async (value: number) => writeUpdate({
-          objectId: BACNET_OBJECTS.rapidVentilationTrigger,
-          tag: BacnetEnums.ApplicationTags.UNSIGNED_INTEGER,
-          value,
-          priority: 13,
-        });
-
-        if (mode !== 'fireplace') {
-          unit.deferredMode = undefined;
-          unit.deferredSince = undefined;
-        }
-
-        if (mode === 'fireplace' && (rapidActive || tempVentActive)) {
-          this.warn(
-            `[UnitRegistry] Fireplace requested while temporary ventilation is active (rapid=${rapidActive} temp=${tempVentActive}); proceeding anyway.`,
+              resolve(false);
+            },
           );
-        }
-
-        unit.expectedMode = mode;
-        unit.expectedModeAt = Date.now();
-        unit.lastMismatchKey = undefined;
-
-        const fireplaceActive = (unit.probeValues.get(objectKey(OBJECT_TYPE.BINARY_VALUE, 400)) ?? 0) === 1;
-        const temporaryRapidActive = rapidActive || tempVentActive;
-        if (mode !== 'fireplace' && fireplaceActive) {
-          await writeFireplaceTrigger(TRIGGER_VALUE);
-        }
-
-        if (mode === 'home') {
-          const comfortOk = await writeComfort(1);
-          if (comfortOk && !unit.blockedWrites.has(ventilationModeKey)) {
-            await writeVentMode(VENTILATION_MODE_VALUES.HOME, { force: true });
+        } catch (e) {
+          if (!handled) {
+            handled = true;
+            clearTimeout(tm);
+            this.error(`[UnitRegistry] Sync error writing ${update.objectId.type}:${update.objectId.instance}:`, e);
+            resolve(false);
           }
-          if (temporaryRapidActive) {
-            await writeRapidTrigger(TRIGGER_VALUE);
-          }
-        } else if (mode === 'away') {
-          const force = fireplaceActive;
-          await writeComfort(0, { force });
-          if (temporaryRapidActive) {
-            await writeRapidTrigger(TRIGGER_VALUE);
-          }
-        } else if (mode === 'high') {
-          const comfortOk = await writeComfort(1);
-          if (!unit.blockedWrites.has(ventilationModeKey) && comfortOk) {
-            await writeVentMode(VENTILATION_MODE_VALUES.HIGH);
-          } else if (unit.blockedWrites.has(ventilationModeKey)) {
-            this.warn('[UnitRegistry] Ventilation mode write blocked; cannot set high mode.');
-          }
-        } else if (mode === 'fireplace') {
-          const comfortState = unit.probeValues.get(objectKey(OBJECT_TYPE.BINARY_VALUE, 50));
-          if (comfortState !== 1) {
-            await writeComfort(1);
-          }
-          await writeUpdate({
-            objectId: BACNET_OBJECTS.fireplaceVentilationRuntime,
-            tag: BacnetEnums.ApplicationTags.UNSIGNED_INTEGER,
-            value: fireplaceRuntime,
-          });
-          await writeUpdate({
-            objectId: BACNET_OBJECTS.fireplaceVentilationTrigger,
-            tag: BacnetEnums.ApplicationTags.UNSIGNED_INTEGER,
-            value: TRIGGER_VALUE,
-          });
         }
       });
+    }
 
-      return unit.writeQueue;
+    private async writeComfort(context: FanModeWriteContext, value: number, opts?: { force?: boolean }) {
+      const current = context.unit.probeValues.get(context.comfortButtonKey);
+      if (!opts?.force && this.shouldSkipWrite(context.unit, context.comfortButtonKey, current, value)) {
+        this.log(`[UnitRegistry] Comfort button already ${value}, skipping write.`);
+        return true;
+      }
+      return this.writeUpdate(context, {
+        objectId: BACNET_OBJECTS.comfortButton,
+        tag: BacnetEnums.ApplicationTags.ENUMERATED,
+        value,
+        priority: DEFAULT_WRITE_PRIORITY,
+      });
+    }
+
+    private async writeVentMode(context: FanModeWriteContext, value: number, opts?: { force?: boolean }) {
+      const current = context.unit.probeValues.get(context.ventilationModeKey);
+      if (!opts?.force && this.shouldSkipWrite(context.unit, context.ventilationModeKey, current, value)) {
+        this.log(`[UnitRegistry] Ventilation mode already ${value}, skipping write.`);
+        return true;
+      }
+      const ok = await this.writeUpdate(context, {
+        objectId: BACNET_OBJECTS.ventilationMode,
+        tag: BacnetEnums.ApplicationTags.UNSIGNED_INTEGER,
+        value,
+        priority: DEFAULT_WRITE_PRIORITY,
+      });
+      if (ok) {
+        context.unit.writeContext.set(context.ventilationModeKey, { value, mode: context.mode, at: Date.now() });
+      }
+      return ok;
+    }
+
+    private writeFireplaceTrigger(context: FanModeWriteContext, value: number) {
+      return this.writeUpdate(context, {
+        objectId: BACNET_OBJECTS.fireplaceVentilationTrigger,
+        tag: BacnetEnums.ApplicationTags.UNSIGNED_INTEGER,
+        value,
+        priority: DEFAULT_WRITE_PRIORITY,
+      });
+    }
+
+    private writeRapidTrigger(context: FanModeWriteContext, value: number) {
+      return this.writeUpdate(context, {
+        objectId: BACNET_OBJECTS.rapidVentilationTrigger,
+        tag: BacnetEnums.ApplicationTags.UNSIGNED_INTEGER,
+        value,
+        priority: DEFAULT_WRITE_PRIORITY,
+      });
+    }
+
+    private async applyHomeMode(context: FanModeWriteContext, temporaryRapidActive: boolean) {
+      const comfortOk = await this.writeComfort(context, 1);
+      if (comfortOk && !context.unit.blockedWrites.has(context.ventilationModeKey)) {
+        await this.writeVentMode(context, VENTILATION_MODE_VALUES.HOME, { force: true });
+      }
+      if (temporaryRapidActive) {
+        await this.writeRapidTrigger(context, TRIGGER_VALUE);
+      }
+    }
+
+    private async applyAwayMode(
+      context: FanModeWriteContext,
+      fireplaceActive: boolean,
+      temporaryRapidActive: boolean,
+    ) {
+      await this.writeComfort(context, 0, { force: fireplaceActive });
+      if (temporaryRapidActive) {
+        await this.writeRapidTrigger(context, TRIGGER_VALUE);
+      }
+    }
+
+    private async applyHighMode(context: FanModeWriteContext) {
+      const comfortOk = await this.writeComfort(context, 1);
+      if (context.unit.blockedWrites.has(context.ventilationModeKey)) {
+        this.warn('[UnitRegistry] Ventilation mode write blocked; cannot set high mode.');
+        return;
+      }
+      if (comfortOk) {
+        await this.writeVentMode(context, VENTILATION_MODE_VALUES.HIGH);
+      }
+    }
+
+    private async applyFireplaceMode(context: FanModeWriteContext, fireplaceRuntime: number) {
+      const comfortState = context.unit.probeValues.get(context.comfortButtonKey);
+      if (comfortState !== 1) {
+        await this.writeComfort(context, 1);
+      }
+      await this.writeUpdate(context, {
+        objectId: BACNET_OBJECTS.fireplaceVentilationRuntime,
+        tag: BacnetEnums.ApplicationTags.UNSIGNED_INTEGER,
+        value: fireplaceRuntime,
+      });
+      await this.writeFireplaceTrigger(context, TRIGGER_VALUE);
     }
 
     private extractValue(obj: any): number | undefined {
