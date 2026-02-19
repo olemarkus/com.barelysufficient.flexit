@@ -235,7 +235,13 @@ export class FakeNordicUnitState {
       return this.failure(ERROR_CLASS.OBJECT, ERROR_CODE.UNKNOWN_OBJECT, `Unsupported object ${type}:${instance}`);
     }
 
-    if (point.access !== 'RW') {
+    const isObservedFlexitGoCompatibilityWrite = this.isObservedFlexitGoFilterResetWrite(
+      point,
+      numericValue,
+      priority,
+    );
+
+    if (point.access !== 'RW' && !isObservedFlexitGoCompatibilityWrite) {
       return this.failure(ERROR_CLASS.PROPERTY, ERROR_CODE.WRITE_ACCESS_DENIED, `${point.name} is read-only`);
     }
 
@@ -259,6 +265,18 @@ export class FakeNordicUnitState {
     this.applyPostWriteBehavior(point, normalized);
     this.tick();
     return { ok: true, value: null };
+  }
+
+  private isObservedFlexitGoFilterResetWrite(point: SupportedPoint, value: number, priority?: number) {
+    // Observed Flexit GO flow writes AV:285 presentValue=0 with priority 16
+    // when user confirms filter replacement. Accept this compatibility write
+    // even though docs model AV:285 as read-only.
+    return (
+      point.type === OBJECT_TYPE.ANALOG_VALUE
+      && point.instance === 285
+      && Math.abs(value) < 0.001
+      && priority === 16
+    );
   }
 
   setFanMode(mode: FanMode): BacnetResult<null> {
@@ -549,6 +567,15 @@ export class FakeNordicUnitState {
     if (point.name === 'trigger_fireplace' && asInteger(value) === 2) {
       this.fireplaceRemainingMinutes = clamp(this.getByName('runtime_fireplace'), 1, 360);
       this.setByName('trigger_fireplace', 1);
+      return;
+    }
+
+    if (
+      (point.name === 'filter_replace_timer_reset' || point.name === 'filter_replace_timer_reset_legacy')
+      && asInteger(value) === 2
+    ) {
+      this.setByName('filter_operating_time', 0);
+      this.setByName(point.name, 1);
       return;
     }
 

@@ -1,3 +1,4 @@
+/* eslint-disable max-lines */
 import { getBacnetClient, BacnetEnums, setBacnetLogger } from './bacnetClient';
 import { discoverFlexitUnits } from './flexitDiscovery';
 
@@ -9,7 +10,8 @@ function clamp(n: number, min: number, max: number) {
 export interface FlexitDevice {
     getData(): { unitId: string };
     getSetting(key: string): string | number | boolean | null;
-    setSetting(settings: Record<string, any>): Promise<void>;
+    setSetting?(settings: Record<string, any>): Promise<void>;
+    setSettings?(settings: Record<string, any>): Promise<void>;
     setCapabilityValue(cap: string, value: any): Promise<void>;
     setAvailable(): Promise<void>;
     setUnavailable(reason?: string): Promise<void>;
@@ -21,6 +23,19 @@ const PRESENT_VALUE_ID = 85;
 const OBJECT_TYPE = BacnetEnums.ObjectType;
 const DEFAULT_FIREPLACE_VENTILATION_MINUTES = 10;
 const DEFAULT_WRITE_PRIORITY = 13;
+const FLEXIT_GO_WRITE_PRIORITY = 16;
+export const FILTER_CHANGE_INTERVAL_MONTHS_SETTING = 'filter_change_interval_months';
+export const FILTER_CHANGE_INTERVAL_HOURS_LEGACY_SETTING = 'filter_change_interval_hours';
+// Flexit GO observed behavior: 5 months is written as 3660 hours (5 * 732).
+export const FILTER_CHANGE_INTERVAL_HOURS_PER_MONTH = 732;
+export const MIN_FILTER_CHANGE_INTERVAL_MONTHS = 3;
+export const MAX_FILTER_CHANGE_INTERVAL_MONTHS = 12;
+export const MIN_FILTER_CHANGE_INTERVAL_HOURS = (
+  MIN_FILTER_CHANGE_INTERVAL_MONTHS * FILTER_CHANGE_INTERVAL_HOURS_PER_MONTH
+);
+export const MAX_FILTER_CHANGE_INTERVAL_HOURS = (
+  MAX_FILTER_CHANGE_INTERVAL_MONTHS * FILTER_CHANGE_INTERVAL_HOURS_PER_MONTH
+);
 
 const POLL_INTERVAL_MS = 10_000;
 const REDISCOVERY_INTERVAL_MS = 60_000;
@@ -58,12 +73,14 @@ const BACNET_OBJECTS = {
   fireplaceVentilationTrigger: { type: OBJECT_TYPE.MULTI_STATE_VALUE, instance: 360 },
   fireplaceVentilationRuntime: { type: OBJECT_TYPE.POSITIVE_INTEGER_VALUE, instance: 270 },
   fireplaceVentilationRemaining: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 2038 },
+  filterOperatingTime: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 285 },
   fireplaceState: { type: OBJECT_TYPE.BINARY_VALUE, instance: 400 },
   cookerHood: { type: OBJECT_TYPE.BINARY_VALUE, instance: 402 },
   resetTempVentOp: { type: OBJECT_TYPE.BINARY_VALUE, instance: 452 },
   resetTempRapidRf: { type: OBJECT_TYPE.BINARY_VALUE, instance: 487 },
   resetTempFireplaceRf: { type: OBJECT_TYPE.BINARY_VALUE, instance: 488 },
 };
+const FILTER_LIMIT_OBJECT = { type: OBJECT_TYPE.ANALOG_VALUE, instance: 286 };
 
 const objectKey = (type: number, instance: number) => `${type}:${instance}`;
 const FIREPLACE_RUNTIME_KEY = objectKey(
@@ -122,6 +139,7 @@ const NEVER_BLOCK_KEYS = new Set<string>([
   objectKey(OBJECT_TYPE.MULTI_STATE_VALUE, 360),
   objectKey(OBJECT_TYPE.POSITIVE_INTEGER_VALUE, 270),
   objectKey(OBJECT_TYPE.MULTI_STATE_VALUE, 357),
+  objectKey(BACNET_OBJECTS.filterOperatingTime.type, BACNET_OBJECTS.filterOperatingTime.instance),
 ]);
 
 function mapOperationMode(value: number): 'home' | 'away' | 'high' | 'fireplace' {
@@ -168,6 +186,29 @@ function selectExtractTemperature(primary?: number, alternate?: number): number 
   if (alternateIsNumber) return alternate;
   if (primaryIsNumber) return primary;
   return undefined;
+}
+
+export function filterIntervalMonthsToHours(months: number): number {
+  return Math.round(months * FILTER_CHANGE_INTERVAL_HOURS_PER_MONTH);
+}
+
+export function filterIntervalHoursToMonths(
+  hours: number,
+  onClamp?: (message: string) => void,
+): number {
+  const rawMonths = Math.round(hours / FILTER_CHANGE_INTERVAL_HOURS_PER_MONTH);
+  const clampedMonths = clamp(
+    rawMonths,
+    MIN_FILTER_CHANGE_INTERVAL_MONTHS,
+    MAX_FILTER_CHANGE_INTERVAL_MONTHS,
+  );
+  if (rawMonths !== clampedMonths && onClamp) {
+    onClamp(
+      `[UnitRegistry] Clamped filter interval from ${rawMonths} months`
+      + ` (${hours}h) to ${clampedMonths} months`,
+    );
+  }
+  return clampedMonths;
 }
 
 interface UnitState {
@@ -236,6 +277,11 @@ interface RegistryLogger {
   log(...args: any[]): void;
   error(...args: any[]): void;
   warn?(...args: any[]): void;
+}
+
+interface RegistryDependencies {
+  getBacnetClient(port: number): any;
+  discoverFlexitUnits: typeof discoverFlexitUnits;
 }
 
 // The core poll request — only objects that drive device capabilities.
@@ -321,6 +367,15 @@ const POLL_REQUEST = buildPollRequest();
 export class UnitRegistry {
     private units: Map<string, UnitState> = new Map();
     private logger?: RegistryLogger;
+    private readonly dependencies: RegistryDependencies;
+
+    constructor(dependencies?: Partial<RegistryDependencies>) {
+      this.dependencies = {
+        getBacnetClient,
+        discoverFlexitUnits,
+        ...dependencies,
+      };
+    }
 
     setLogger(logger: RegistryLogger) {
       this.logger = logger;
@@ -439,7 +494,7 @@ export class UnitRegistry {
       const unit = this.units.get(unitId);
       if (!unit) throw new Error('Unit not found');
 
-      const client = getBacnetClient(unit.bacnetPort);
+      const client = this.dependencies.getBacnetClient(unit.bacnetPort);
       const v = clamp(setpoint, 10, 30);
       const writeOptions = {
         maxSegments: BacnetEnums.MaxSegmentsAccepted.SEGMENTS_0,
@@ -495,6 +550,101 @@ export class UnitRegistry {
       return unit.writeQueue;
     }
 
+    async resetFilterTimer(unitId: string) {
+      const unit = this.units.get(unitId);
+      if (!unit) throw new Error('Unit not found');
+
+      const writeOptions: WriteOptions = {
+        maxSegments: BacnetEnums.MaxSegmentsAccepted.SEGMENTS_0,
+        maxApdu: BacnetEnums.MaxApduLengthAccepted.OCTETS_1476,
+        priority: DEFAULT_WRITE_PRIORITY,
+      };
+
+      this.log(`[UnitRegistry] Resetting filter timer for ${unitId}`);
+
+      unit.writeQueue = unit.writeQueue.then(async () => {
+        const context: FanModeWriteContext = {
+          unit,
+          mode: 'filter_reset',
+          writeOptions,
+          client: this.dependencies.getBacnetClient(unit.bacnetPort),
+          ventilationModeKey: VENTILATION_MODE_KEY,
+          comfortButtonKey: COMFORT_BUTTON_KEY,
+        };
+
+        // Follow observed Flexit GO behavior first: AV:285 <- 0 with priority 16.
+        const flexitGoCompatibleReset = await this.writeUpdate(context, {
+          objectId: BACNET_OBJECTS.filterOperatingTime,
+          tag: BacnetEnums.ApplicationTags.REAL,
+          value: 0,
+          priority: FLEXIT_GO_WRITE_PRIORITY,
+        });
+        if (flexitGoCompatibleReset) {
+          this.log(`[UnitRegistry] Filter timer reset by writing 0 to AV:285 for ${unitId}`);
+          this.pollUnit(unitId);
+          return;
+        }
+
+        throw new Error('Failed to reset filter timer via AV:285');
+      });
+
+      return unit.writeQueue;
+    }
+
+    async setFilterChangeInterval(unitId: string, requestedHours: number) {
+      const unit = this.units.get(unitId);
+      if (!unit) throw new Error('Unit not found');
+
+      const intervalHours = this.normalizeFilterChangeIntervalHours(requestedHours);
+      const writeOptions: WriteOptions = {
+        maxSegments: BacnetEnums.MaxSegmentsAccepted.SEGMENTS_0,
+        maxApdu: BacnetEnums.MaxApduLengthAccepted.OCTETS_1476,
+        priority: DEFAULT_WRITE_PRIORITY,
+      };
+
+      this.log(`[UnitRegistry] Setting filter change interval to ${intervalHours}h for ${unitId}`);
+
+      unit.writeQueue = unit.writeQueue.then(async () => {
+        const context: FanModeWriteContext = {
+          unit,
+          mode: 'filter_interval',
+          writeOptions,
+          client: this.dependencies.getBacnetClient(unit.bacnetPort),
+          ventilationModeKey: VENTILATION_MODE_KEY,
+          comfortButtonKey: COMFORT_BUTTON_KEY,
+        };
+
+        const writeOk = await this.writeUpdate(context, {
+          objectId: FILTER_LIMIT_OBJECT,
+          tag: BacnetEnums.ApplicationTags.REAL,
+          value: intervalHours,
+          priority: FLEXIT_GO_WRITE_PRIORITY,
+        });
+        if (!writeOk) throw new Error('Failed to write filter change interval via AV:286');
+
+        const verifiedValue = await this.readPresentValue(context.client, unit, FILTER_LIMIT_OBJECT);
+        const verifiedHours = this.normalizeFilterChangeIntervalHours(verifiedValue);
+
+        this.log(`[UnitRegistry] Verified filter change interval ${verifiedHours}h for ${unitId}`);
+        const verifiedMonths = filterIntervalHoursToMonths(
+          verifiedHours,
+          (message) => this.warn(message),
+        );
+        for (const device of unit.devices) {
+          this.updateDeviceSettings(device, {
+            [FILTER_CHANGE_INTERVAL_MONTHS_SETTING]: verifiedMonths,
+            [FILTER_CHANGE_INTERVAL_HOURS_LEGACY_SETTING]: verifiedHours,
+          }).catch((err) => {
+            this.warn(`[UnitRegistry] Failed to sync filter settings for ${unitId}:`, err);
+          });
+        }
+
+        this.pollUnit(unitId);
+      });
+
+      return unit.writeQueue;
+    }
+
     private pollUnit(unitId: string) {
       const unit = this.units.get(unitId);
       if (!unit) return;
@@ -502,7 +652,7 @@ export class UnitRegistry {
     }
 
     private pollAttempt(unit: UnitState, attempt: number) {
-      const client = getBacnetClient(unit.bacnetPort);
+      const client = this.dependencies.getBacnetClient(unit.bacnetPort);
       try {
         client.readPropertyMultiple(unit.ip, POLL_REQUEST, (err: any, value: any) => {
           if (err) {
@@ -619,7 +769,7 @@ export class UnitRegistry {
 
       const doRediscovery = async () => {
         try {
-          const found = await discoverFlexitUnits({ timeoutMs: 5000, burstCount: 3, burstIntervalMs: 300 });
+          const found = await this.dependencies.discoverFlexitUnits({ timeoutMs: 5000, burstCount: 3, burstIntervalMs: 300 });
           const match = found.find((u) => u.serialNormalized === unit.unitId);
           if (!match) return;
 
@@ -634,10 +784,7 @@ export class UnitRegistry {
             unit.ip = match.ip;
             unit.bacnetPort = match.bacnetPort;
 
-            // Update device settings so they persist across restarts
-            for (const device of unit.devices) {
-              device.setSetting({ ip: match.ip, bacnetPort: match.bacnetPort }).catch(() => { });
-            }
+            // Connection settings are labels (read-only), keep runtime values in memory.
           } else {
             this.log(`[UnitRegistry] Rediscovered ${unit.unitId} at same address, retrying poll`);
           }
@@ -664,11 +811,12 @@ export class UnitRegistry {
     }
 
     private distributeData(unit: UnitState, data: Record<string, number>) {
-      const filterLife = this.computeFilterLife(data);
       const mode = this.resolveFanMode(unit, data);
 
       for (const device of unit.devices) {
         this.applyMappedCapabilities(device, data);
+        this.syncFilterIntervalSetting(device, data.filter_limit);
+        const filterLife = this.computeFilterLife(data);
         if (filterLife !== undefined) this.setCapability(device, 'measure_hepa_filter', filterLife);
         if (mode !== undefined) this.setCapability(device, 'fan_mode', mode);
       }
@@ -681,6 +829,53 @@ export class UnitRegistry {
 
       const filterLife = Math.max(0, (1 - (filterTime / filterLimit)) * 100);
       return parseFloat(filterLife.toFixed(1));
+    }
+
+    private normalizeFilterChangeIntervalHours(value: unknown): number {
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric)) {
+        throw new Error('Filter change interval must be numeric');
+      }
+
+      const rounded = Math.round(numeric);
+      if (
+        rounded < MIN_FILTER_CHANGE_INTERVAL_HOURS
+        || rounded > MAX_FILTER_CHANGE_INTERVAL_HOURS
+      ) {
+        throw new Error(
+          `Filter change interval must be between ${MIN_FILTER_CHANGE_INTERVAL_HOURS}`
+          + ` and ${MAX_FILTER_CHANGE_INTERVAL_HOURS} hours`,
+        );
+      }
+      return rounded;
+    }
+
+    private updateDeviceSettings(device: FlexitDevice, settings: Record<string, any>) {
+      if (typeof device.setSettings === 'function') return device.setSettings(settings);
+      if (typeof device.setSetting === 'function') return device.setSetting(settings);
+      return Promise.resolve();
+    }
+
+    private syncFilterIntervalSetting(device: FlexitDevice, filterLimit: number | undefined) {
+      if (filterLimit === undefined || !Number.isFinite(filterLimit) || filterLimit <= 0) return;
+
+      const normalizedHours = Math.round(filterLimit);
+      const normalizedMonths = filterIntervalHoursToMonths(
+        normalizedHours,
+        (message) => this.warn(message),
+      );
+      const currentMonths = Number(device.getSetting(FILTER_CHANGE_INTERVAL_MONTHS_SETTING));
+      const currentHours = Number(device.getSetting(FILTER_CHANGE_INTERVAL_HOURS_LEGACY_SETTING));
+      const monthsInSync = Number.isFinite(currentMonths) && Math.abs(currentMonths - normalizedMonths) < 0.5;
+      const hoursInSync = Number.isFinite(currentHours) && Math.abs(currentHours - normalizedHours) < 0.5;
+      if (monthsInSync && (!Number.isFinite(currentHours) || hoursInSync)) return;
+
+      this.updateDeviceSettings(device, {
+        [FILTER_CHANGE_INTERVAL_MONTHS_SETTING]: normalizedMonths,
+        [FILTER_CHANGE_INTERVAL_HOURS_LEGACY_SETTING]: normalizedHours,
+      }).catch((err) => {
+        this.warn(`[UnitRegistry] Failed to sync filter interval settings for ${device.getData().unitId}:`, err);
+      });
     }
 
     private resolveFanMode(unit: UnitState, data: Record<string, number>): string | undefined {
@@ -786,7 +981,7 @@ export class UnitRegistry {
         unit,
         mode,
         writeOptions,
-        client: getBacnetClient(unit.bacnetPort),
+        client: this.dependencies.getBacnetClient(unit.bacnetPort),
         ventilationModeKey: VENTILATION_MODE_KEY,
         comfortButtonKey: COMFORT_BUTTON_KEY,
       };
@@ -1028,6 +1223,66 @@ export class UnitRegistry {
         value: fireplaceRuntime,
       });
       await this.writeFireplaceTrigger(context, TRIGGER_VALUE);
+    }
+
+    private async readPresentValue(
+      client: any,
+      unit: UnitState,
+      objectId: { type: number; instance: number },
+    ): Promise<number> {
+      return new Promise<number>((resolve, reject) => {
+        let handled = false;
+        const tm = setTimeout(() => {
+          if (!handled) {
+            handled = true;
+            reject(new Error(`Timeout reading ${objectId.type}:${objectId.instance}`));
+          }
+        }, 5000);
+
+        const request = [{ objectId, properties: [{ id: PRESENT_VALUE_ID }] }];
+
+        try {
+          client.readPropertyMultiple(unit.ip, request, (err: any, value: any) => {
+            if (handled) return;
+            handled = true;
+            clearTimeout(tm);
+            if (err) {
+              reject(err);
+              return;
+            }
+
+            let candidates: any[];
+            if (Array.isArray(value)) candidates = value;
+            else if (Array.isArray(value?.values)) candidates = value.values;
+            else candidates = [value];
+
+            for (const candidate of candidates) {
+              const raw = this.extractNumericPresentValue(candidate);
+              if (typeof raw === 'number' && !Number.isNaN(raw)) {
+                resolve(raw);
+                return;
+              }
+            }
+
+            reject(new Error(`Missing present value for ${objectId.type}:${objectId.instance}`));
+          });
+        } catch (error) {
+          if (handled) return;
+          handled = true;
+          clearTimeout(tm);
+          reject(error);
+        }
+      });
+    }
+
+    private extractNumericPresentValue(value: any): number | undefined {
+      const direct = this.extractValue(value);
+      if (typeof direct === 'number' && !Number.isNaN(direct)) return direct;
+
+      const tagged = value?.value?.[0]?.value;
+      if (typeof tagged === 'number' && !Number.isNaN(tagged)) return tagged;
+
+      return undefined;
     }
 
     private extractValue(obj: any): number | undefined {

@@ -1,6 +1,7 @@
 # Keep Homey publish artifacts runtime-only
 /.homeybuild/
 /coverage/
+/docs/
 /localdocs/
 /test/
 /scripts/

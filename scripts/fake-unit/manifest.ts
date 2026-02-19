@@ -104,7 +104,13 @@ export const SUPPORTED_POINTS: SupportedPoint[] = [
   point('heater_valve_position_percent', 'ANALOG_OUTPUT', 12, 'real', 'R', 'xlsx', 'Heating coil valve position', { min: 0, max: 100, units: '%' }),
   point('rotor_speed_percent', 'ANALOG_OUTPUT', 0, 'real', 'R', 'xlsx', 'Rotary heat exchanger speed', { min: 0, max: 100, units: '%' }),
   point('filter_operating_time', 'ANALOG_VALUE', 285, 'real', 'R', 'xlsx', 'Operating time filter', { min: 0, max: 99999, units: 'h' }),
-  point('filter_exchange_limit', 'ANALOG_VALUE', 286, 'real', 'R', 'xlsx', 'Operating time for filter replacement', { min: 0, max: 99990, units: 'h' }),
+  point('filter_exchange_limit', 'ANALOG_VALUE', 286, 'real', 'RW', 'xlsx', 'Operating time for filter replacement', { min: 1, max: 99990, units: 'h' }),
+  point('filter_replace_timer_reset', 'MULTI_STATE_VALUE', 613, 'enum', 'RW', 'xlsx', 'Air filter replace timer reset', {
+    min: 1, max: 2, requiresPriority13: true,
+  }),
+  point('filter_replace_timer_reset_legacy', 'MULTI_STATE_VALUE', 609, 'enum', 'RW', 'observed', 'Air filter replace timer reset (legacy)', {
+    min: 1, max: 2, requiresPriority13: true,
+  }),
 
   // Observed points used by current Nordic integrations and packet dumps.
   point('temp_extract', 'ANALOG_INPUT', 95, 'real', 'R', 'observed', 'Extract air temperature (observed)', { min: -50, max: 80, units: 'degC' }),
@@ -216,6 +222,8 @@ export const DEFAULT_POINT_VALUES: Record<string, number> = {
   [key('ANALOG_OUTPUT', 0)]: 55,
   [key('ANALOG_VALUE', 285)]: 1200,
   [key('ANALOG_VALUE', 286)]: 4380,
+  [key('MULTI_STATE_VALUE', 613)]: 1,
+  [key('MULTI_STATE_VALUE', 609)]: 1,
   [key('ANALOG_INPUT', 95)]: 21,
   [key('ANALOG_INPUT', 96)]: 34,
   [key('ANALOG_VALUE', 194)]: 0.3,
