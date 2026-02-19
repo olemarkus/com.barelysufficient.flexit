@@ -39,6 +39,13 @@
   },
   "support": "https://github.com/olemarkus/com.barelysufficient.flexit/issues",
   "homeyCommunityTopicId": 151048,
+  "contributing": {
+    "donate": {
+      "githubSponsors": {
+        "username": "olemarkus"
+      }
+    }
+  },
   "drivers": [
     {
       "name": {
