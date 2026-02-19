@@ -26,7 +26,7 @@ pnpm-debug.log*
 Thumbs.db
 
 # Local docs and captures
-/localdocs/
+/localdocs/*
 /dump*
 /*.pcap
 /*.pcapng

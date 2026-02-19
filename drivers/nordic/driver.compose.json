@@ -21,7 +21,8 @@
     "measure_motor_rpm.extract",
     "measure_fan_speed_percent",
     "measure_fan_speed_percent.extract",
-    "measure_hepa_filter"
+    "measure_hepa_filter",
+    "button.reset_filter"
   ],
   "capabilitiesOptions": {
     "measure_humidity": {
@@ -96,6 +97,15 @@
         "en": "%"
       }
     },
+    "button.reset_filter": {
+      "maintenanceAction": true,
+      "title": {
+        "en": "Reset filter timer"
+      },
+      "desc": {
+        "en": "Use only after replacing both filters."
+      }
+    },
     "fan_mode": {
       "values": [
         {
@@ -143,34 +153,75 @@
   ],
   "settings": [
     {
-      "id": "ip",
-      "type": "text",
+      "type": "group",
       "label": {
-        "en": "Device IP"
-      }
-    },
-    {
-      "id": "bacnetPort",
-      "type": "number",
-      "label": {
-        "en": "BACnet Port"
+        "en": "Filter settings"
       },
-      "value": 47808
+      "children": [
+        {
+          "id": "filter_change_interval_months",
+          "type": "number",
+          "label": {
+            "en": "Filter change interval"
+          },
+          "hint": {
+            "en": "Filter replacement interval in months (Flexit GO style)."
+          },
+          "units": {
+            "en": "months"
+          },
+          "value": 6,
+          "min": 3,
+          "max": 12,
+          "step": 1
+        }
+      ]
     },
     {
-      "id": "serial",
-      "type": "text",
+      "type": "group",
       "label": {
-        "en": "Serial"
-      }
-    },
-    {
-      "id": "mac",
-      "type": "text",
-      "label": {
-        "en": "MAC (optional)"
+        "en": "Connection settings"
       },
-      "value": ""
+      "children": [
+        {
+          "id": "ip",
+          "type": "label",
+          "label": {
+            "en": "Device IP"
+          },
+          "hint": {
+            "en": "Detected during pairing. Read-only informational value."
+          },
+          "value": "-"
+        },
+        {
+          "id": "bacnetPort",
+          "type": "label",
+          "label": {
+            "en": "BACnet Port"
+          },
+          "hint": {
+            "en": "Detected during pairing. Read-only informational value."
+          },
+          "value": "47808"
+        },
+        {
+          "id": "serial",
+          "type": "label",
+          "label": {
+            "en": "Serial"
+          },
+          "value": "-"
+        },
+        {
+          "id": "mac",
+          "type": "label",
+          "label": {
+            "en": "MAC"
+          },
+          "value": "-"
+        }
+      ]
     }
   ]
 }

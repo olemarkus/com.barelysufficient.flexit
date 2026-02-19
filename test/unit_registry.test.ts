@@ -2,11 +2,16 @@ import { expect } from 'chai';
 import sinon from 'sinon';
 import proxyquire from 'proxyquire';
 
+const FILTER_CHANGE_INTERVAL_HOURS_PER_MONTH = 732;
+const MIN_FILTER_CHANGE_INTERVAL_HOURS = 3 * FILTER_CHANGE_INTERVAL_HOURS_PER_MONTH;
+const MAX_FILTER_CHANGE_INTERVAL_HOURS = 12 * FILTER_CHANGE_INTERVAL_HOURS_PER_MONTH;
+
 function makeMockDevice() {
   const device: any = {
     getSetting: sinon.stub(),
     getData: sinon.stub().returns({ unitId: 'test_unit' }),
     setCapabilityValue: sinon.stub().resolves(),
+    setSettings: sinon.stub().resolves(),
     setSetting: sinon.stub().resolves(),
     setAvailable: sinon.stub().resolves(),
     setUnavailable: sinon.stub().resolves(),
@@ -16,6 +21,8 @@ function makeMockDevice() {
   device.getSetting.withArgs('ip').returns('127.0.0.1');
   device.getSetting.withArgs('bacnetPort').returns(47808);
   device.getSetting.withArgs('serial').returns('800199-000001');
+  device.getSetting.withArgs('filter_change_interval_months').returns(6);
+  device.getSetting.withArgs('filter_change_interval_hours').returns(4380);
   return device;
 }
 
@@ -109,6 +116,121 @@ describe('UnitRegistry', () => {
 
     const { args } = mockClient.writeProperty.firstCall;
     expect(args[4].priority).to.equal(13);
+  });
+
+  it('resets filter timer with Flexit GO compatible AV:285 write first', async () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    mockClient.writeProperty.resetHistory();
+    await registry.resetFilterTimer('test_unit');
+
+    const { args } = mockClient.writeProperty.firstCall;
+    expect(args[1]).to.deep.equal({ type: 2, instance: 285 });
+    expect(args[3][0].type).to.equal(4); // REAL
+    expect(args[3][0].value).to.equal(0);
+    expect(args[4].priority).to.equal(16);
+  });
+
+  it('fails reset when Flexit GO AV:285 write fails (no fallback writes)', async () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    mockClient.writeProperty.resetBehavior();
+    mockClient.writeProperty.onFirstCall().callsFake(
+      (_ip: string, _objectId: { type: number; instance: number }, _propertyId: number, _value: any, _options: any, cb: any) => {
+        cb(new Error('Write failed'));
+      },
+    );
+    let thrown: Error | null = null;
+    try {
+      await registry.resetFilterTimer('test_unit');
+    } catch (error) {
+      thrown = error as Error;
+    }
+
+    expect(thrown).to.not.equal(null);
+    expect(thrown?.message).to.equal('Failed to reset filter timer via AV:285');
+    const objectIds = mockClient.writeProperty.getCalls().map((call: any) => call.args[1]);
+    expect(objectIds).to.deep.equal([{ type: 2, instance: 285 }]);
+  });
+
+  it('writes filter change interval and verifies unit-reported value', async () => {
+    const mockDevice = makeMockDevice();
+    mockClient.readPropertyMultiple.resetBehavior();
+    mockClient.readPropertyMultiple.callsFake((_ip: string, _req: any[], cb: any) => {
+      cb(null, {
+        values: [
+          makeReadObject(BACNET_ENUMS.ObjectType.ANALOG_VALUE, 286, 5000),
+        ],
+      });
+    });
+
+    registry.register('test_unit', mockDevice);
+    await registry.setFilterChangeInterval('test_unit', 5000);
+
+    const writeCall = mockClient.writeProperty.getCalls().find((call: any) => (
+      call.args[1].type === BACNET_ENUMS.ObjectType.ANALOG_VALUE && call.args[1].instance === 286
+    ));
+    expect(writeCall).to.not.equal(undefined);
+    expect(writeCall?.args[3][0].type).to.equal(BACNET_ENUMS.ApplicationTags.REAL);
+    expect(writeCall?.args[3][0].value).to.equal(5000);
+    expect(writeCall?.args[4].priority).to.equal(16);
+
+    const settingsUpdate = mockDevice.setSettings.getCalls().find((call: any) => (
+      call.args[0]?.filter_change_interval_hours === 5000
+      && call.args[0]?.filter_change_interval_months === Math.round(5000 / FILTER_CHANGE_INTERVAL_HOURS_PER_MONTH)
+    ));
+    expect(settingsUpdate).to.not.equal(undefined);
+  });
+
+  it('fails filter interval write when AV:286 write fails (no fallback priorities)', async () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    mockClient.writeProperty.resetBehavior();
+    mockClient.writeProperty.onFirstCall().callsFake(
+      (_ip: string, _objectId: { type: number; instance: number }, _propertyId: number, _value: any, _options: any, cb: any) => {
+        cb(new Error('Write failed'));
+      },
+    );
+
+    let thrown: Error | null = null;
+    try {
+      await registry.setFilterChangeInterval('test_unit', 5000);
+    } catch (error) {
+      thrown = error as Error;
+    }
+
+    expect(thrown).to.not.equal(null);
+    expect(thrown?.message).to.equal('Failed to write filter change interval via AV:286');
+    expect(mockClient.writeProperty.callCount).to.equal(1);
+    expect(mockClient.writeProperty.firstCall.args[1]).to.deep.equal({ type: 2, instance: 286 });
+    expect(mockClient.writeProperty.firstCall.args[4].priority).to.equal(16);
+  });
+
+  it('rejects filter interval values outside 3..12 month equivalent hours', async () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    let lowError: Error | null = null;
+    try {
+      await registry.setFilterChangeInterval('test_unit', MIN_FILTER_CHANGE_INTERVAL_HOURS - 1);
+    } catch (error) {
+      lowError = error as Error;
+    }
+    let highError: Error | null = null;
+    try {
+      await registry.setFilterChangeInterval('test_unit', MAX_FILTER_CHANGE_INTERVAL_HOURS + 1);
+    } catch (error) {
+      highError = error as Error;
+    }
+
+    expect(lowError).to.not.equal(null);
+    expect(highError).to.not.equal(null);
+    expect(lowError?.message).to.equal(`Filter change interval must be between ${MIN_FILTER_CHANGE_INTERVAL_HOURS} and ${MAX_FILTER_CHANGE_INTERVAL_HOURS} hours`);
+    expect(highError?.message).to.equal(`Filter change interval must be between ${MIN_FILTER_CHANGE_INTERVAL_HOURS} and ${MAX_FILTER_CHANGE_INTERVAL_HOURS} hours`);
+    expect(mockClient.writeProperty.called).to.equal(false);
   });
 
   it('writes high mode via ventilation mode when available', async () => {
@@ -217,6 +339,25 @@ describe('UnitRegistry', () => {
     const call = mockDevice.setCapabilityValue.lastCall;
     expect(call.args[0]).to.equal('fan_mode');
     expect(call.args[1]).to.equal('high');
+  });
+
+  it('uses unit-reported filter limit for filter life calculation', () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    const unit = { unitId: 'test_unit', devices: new Set([mockDevice]) };
+    (registry as any).distributeData(unit, {
+      filter_time: 1000,
+      filter_limit: 4380,
+    });
+
+    const filterLifeCalls = mockDevice.setCapabilityValue
+      .getCalls()
+      .filter((call: any) => call.args[0] === 'measure_hepa_filter');
+
+    expect(filterLifeCalls.length).to.be.greaterThan(0);
+    const lastCall = filterLifeCalls[filterLifeCalls.length - 1];
+    expect(lastCall.args[1]).to.equal(77.2);
   });
 
   it('marks device unavailable after consecutive poll failures', () => {

@@ -111,4 +111,54 @@ describe('fake-unit state', () => {
     const after = state.getFilterStatus();
     expect(after.operatingHours).to.equal(0);
   });
+
+  it('resets filter operating time through filter reset trigger points', () => {
+    const state = createState();
+    expect(state.setFilterOperatingHours(1000).ok).to.equal(true);
+
+    const primaryReset = state.writePresentValue(
+      OBJECT_TYPE.MULTI_STATE_VALUE,
+      613,
+      PROPERTY_ID.PRESENT_VALUE,
+      2,
+      13,
+    );
+    expect(primaryReset.ok).to.equal(true);
+    expect(state.getFilterStatus().operatingHours).to.equal(0);
+
+    expect(state.setFilterOperatingHours(500).ok).to.equal(true);
+    const legacyReset = state.writePresentValue(
+      OBJECT_TYPE.MULTI_STATE_VALUE,
+      609,
+      PROPERTY_ID.PRESENT_VALUE,
+      2,
+      13,
+    );
+    expect(legacyReset.ok).to.equal(true);
+    expect(state.getFilterStatus().operatingHours).to.equal(0);
+  });
+
+  it('accepts observed Flexit GO compatibility reset write for AV:285', () => {
+    const state = createState();
+    expect(state.setFilterOperatingHours(220).ok).to.equal(true);
+
+    const goResetWrite = state.writePresentValue(
+      OBJECT_TYPE.ANALOG_VALUE,
+      285,
+      PROPERTY_ID.PRESENT_VALUE,
+      0,
+      16,
+    );
+    expect(goResetWrite.ok).to.equal(true);
+    expect(state.getFilterStatus().operatingHours).to.equal(0);
+
+    const nonZeroDenied = state.writePresentValue(
+      OBJECT_TYPE.ANALOG_VALUE,
+      285,
+      PROPERTY_ID.PRESENT_VALUE,
+      50,
+      16,
+    );
+    expect(nonZeroDenied.ok).to.equal(false);
+  });
 });

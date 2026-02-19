@@ -39,6 +39,8 @@ Used in `lib/UnitRegistry.ts`:
 - AO 1:4 -> Fan Speed % Extract
 - AV 2:285 -> Filter Time
 - AV 2:286 -> Filter Limit
+- AV 2:285 is documented read-only, but observed Flexit GO traffic writes `presentValue=0` with priority 16 during filter replacement flow. Treat this as compatibility behavior and track as a doc deviation.
+- Flexit GO shows filter interval in months (range observed in app UI: 3..12), but writes AV 2:286 in hours (observed: 5 months -> `presentValue=3660`) with priority 16.
 - BV 5:50 -> Mode Home/Away (ENUMERATED)
 - High/Fireplace are treated as read-only over BACnet until a confirmed writable control point is identified.
 - BV 5:15 -> Rapid ventilation active (status)
@@ -47,6 +49,18 @@ Used in `lib/UnitRegistry.ts`:
 - AV 2:2038 -> Remaining fireplace ventilation time (used to report Fireplace)
 
 When adding new points, update both the poll list and `distributeData` mappings.
+
+## Fallbacks and Point Validation
+- Be cautious with fallback object IDs/values. If unsure which point/value/tag/priority to use, validate by running the fake unit and testing behavior against the Flexit app flow before finalizing.
+- For filter reset/interval operations, follow Flexit GO strictly: no fallback BACnet writes beyond the observed app write pattern.
+- It is acceptable (and encouraged) to ask developers to verify uncertain BACnet values this way when confidence is low.
+- Keep the checked-in point catalog up to date: `docs/bacnet_point_catalog.json`.
+- Maintain the catalog manually (do not depend on generator scripts).
+- Catalog content should focus on BACnet object documentation (spreadsheet-derived point data) plus concise learned behavior notes from observed Flexit GO traffic.
+- Include object type + instance, value type/kind, access mode, example values, and enum mappings where applicable.
+- Exclude source/provenance fields (script paths, discovery provenance, generator metadata).
+- Prefer the JSON catalog over consulting spreadsheet exports directly when implementing or reviewing mappings.
+- Keep catalog data anonymized: no raw serials, MAC addresses, IPs, user tokens, or other identifiable payload fragments.
 
 ## What We Want to Achieve
 - Reliable multicast discovery and pairing.
@@ -62,6 +76,8 @@ When adding new points, update both the poll list and `distributeData` mappings.
 - Run `npm run validate` regularly after changes (lint + tests + `homey app validate`).
 - `README.txt` is app-store/user-facing only; keep developer/test instructions out of it.
 - Commit messages must clearly explain what the commit contains and why; avoid vague one-liners.
+- Commit title format: imperative present tense, concise, and capitalized (for example: `Add filter reset maintenance action`).
+- Commit body is required for non-trivial changes: start with a short user-facing summary of added/changed behavior, then add technical implementation details if needed.
 - Keep PR branches squashed to a single commit before merge/push unless explicitly requested otherwise.
 
 ## Useful scripts
