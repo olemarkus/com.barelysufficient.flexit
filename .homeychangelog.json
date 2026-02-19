@@ -22,5 +22,8 @@
   },
   "1.0.8": {
     "en": "No user-facing changes. Internal BACnet simulator and reliability improvements."
+  },
+  "1.1.0": {
+    "en": "Added filter maintenance support: you can now reset the filter timer after replacing filters under the device maintenance section, and you can set the filter change interval under the device advanced settings."
   }
 }
