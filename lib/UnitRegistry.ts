@@ -25,6 +25,12 @@ const OBJECT_TYPE = BacnetEnums.ObjectType;
 const DEFAULT_FIREPLACE_VENTILATION_MINUTES = 10;
 const DEFAULT_WRITE_PRIORITY = 13;
 const FLEXIT_GO_WRITE_PRIORITY = 16;
+export const MIN_TARGET_TEMPERATURE_C = 10;
+export const MAX_TARGET_TEMPERATURE_C = 30;
+const TARGET_TEMPERATURE_STEP_C = 0.5;
+export const TARGET_TEMPERATURE_HOME_SETTING = 'target_temperature_home';
+export const TARGET_TEMPERATURE_AWAY_SETTING = 'target_temperature_away';
+type TargetTemperatureMode = 'home' | 'away';
 export const FILTER_CHANGE_INTERVAL_MONTHS_SETTING = 'filter_change_interval_months';
 export const FILTER_CHANGE_INTERVAL_HOURS_LEGACY_SETTING = 'filter_change_interval_hours';
 export const FAN_PROFILE_MODES = ['home', 'away', 'high', 'fireplace', 'cooker'] as const;
@@ -180,6 +186,18 @@ const BACNET_OBJECTS = {
   resetTempFireplaceRf: { type: OBJECT_TYPE.BINARY_VALUE, instance: 488 },
 };
 const FILTER_LIMIT_OBJECT = { type: OBJECT_TYPE.ANALOG_VALUE, instance: 286 };
+const TARGET_TEMPERATURE_OBJECTS: Record<TargetTemperatureMode, { type: number; instance: number }> = {
+  home: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 1994 },
+  away: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 1985 },
+};
+const TARGET_TEMPERATURE_DATA_KEYS: Record<TargetTemperatureMode, string> = {
+  home: 'target_temperature.home',
+  away: 'target_temperature.away',
+};
+const TARGET_TEMPERATURE_SETTING_KEYS: Record<TargetTemperatureMode, string> = {
+  home: TARGET_TEMPERATURE_HOME_SETTING,
+  away: TARGET_TEMPERATURE_AWAY_SETTING,
+};
 
 const objectKey = (type: number, instance: number) => `${type}:${instance}`;
 const FIREPLACE_RUNTIME_KEY = objectKey(
@@ -189,6 +207,10 @@ const FIREPLACE_RUNTIME_KEY = objectKey(
 const VENTILATION_MODE_KEY = objectKey(
   BACNET_OBJECTS.ventilationMode.type,
   BACNET_OBJECTS.ventilationMode.instance,
+);
+const OPERATION_MODE_KEY = objectKey(
+  BACNET_OBJECTS.operationMode.type,
+  BACNET_OBJECTS.operationMode.instance,
 );
 const COMFORT_BUTTON_KEY = objectKey(
   BACNET_OBJECTS.comfortButton.type,
@@ -200,6 +222,20 @@ const FIREPLACE_ACTIVE_KEY = objectKey(
   BACNET_OBJECTS.fireplaceState.instance,
 );
 const TEMP_VENT_REMAINING_KEY = objectKey(OBJECT_TYPE.ANALOG_VALUE, 2005);
+const RAPID_REMAINING_KEY = objectKey(OBJECT_TYPE.ANALOG_VALUE, 2031);
+const FIREPLACE_REMAINING_KEY = objectKey(OBJECT_TYPE.ANALOG_VALUE, 2038);
+const MODE_RF_INPUT_KEY = objectKey(OBJECT_TYPE.ANALOG_VALUE, 2125);
+const TARGET_TEMPERATURE_MODE_PROBE_KEY_MAP: ReadonlyArray<readonly [string, string]> = [
+  [OPERATION_MODE_KEY, 'operation_mode'],
+  [VENTILATION_MODE_KEY, 'ventilation_mode'],
+  [COMFORT_BUTTON_KEY, 'comfort_button'],
+  [RAPID_ACTIVE_KEY, 'rapid_active'],
+  [FIREPLACE_ACTIVE_KEY, 'fireplace_active'],
+  [TEMP_VENT_REMAINING_KEY, 'remaining_temp_vent_op'],
+  [RAPID_REMAINING_KEY, 'remaining_rapid_vent'],
+  [FIREPLACE_REMAINING_KEY, 'remaining_fireplace_vent'],
+  [MODE_RF_INPUT_KEY, 'mode_rf_input'],
+] as const;
 const MODE_SIGNAL_KEYS = [
   'comfort_button',
   'ventilation_mode',
@@ -212,7 +248,6 @@ const MODE_SIGNAL_KEYS = [
   'mode_rf_input',
 ];
 const CAPABILITY_MAPPINGS = [
-  { dataKey: 'target_temperature', capability: 'target_temperature' },
   { dataKey: 'measure_temperature', capability: 'measure_temperature' },
   { dataKey: 'measure_temperature.outdoor', capability: 'measure_temperature.outdoor' },
   { dataKey: 'measure_temperature.exhaust', capability: 'measure_temperature.exhaust' },
@@ -275,6 +310,12 @@ function mapVentilationMode(value: number): 'home' | 'away' | 'high' {
 
 function valuesMatch(actual: number, expected: number) {
   return Math.abs(actual - expected) < 0.01;
+}
+
+export function normalizeTargetTemperature(value: number): number {
+  const clamped = clamp(value, MIN_TARGET_TEMPERATURE_C, MAX_TARGET_TEMPERATURE_C);
+  const stepped = Math.round(clamped / TARGET_TEMPERATURE_STEP_C) * TARGET_TEMPERATURE_STEP_C;
+  return Number(stepped.toFixed(1));
 }
 
 export function isFanProfileMode(value: unknown): value is FanProfileMode {
@@ -427,7 +468,8 @@ interface FanSetpointChangedEvent {
 function buildPollRequest() {
   return [
     // Thermostat capabilities
-    { objectId: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 1994 }, properties: [{ id: PRESENT_VALUE_ID }] }, // Setpoint
+    { objectId: TARGET_TEMPERATURE_OBJECTS.home, properties: [{ id: PRESENT_VALUE_ID }] }, // Setpoint HOME
+    { objectId: TARGET_TEMPERATURE_OBJECTS.away, properties: [{ id: PRESENT_VALUE_ID }] }, // Setpoint AWAY
     { objectId: { type: OBJECT_TYPE.ANALOG_INPUT, instance: 4 }, properties: [{ id: PRESENT_VALUE_ID }] }, // Supply Temp
     { objectId: { type: OBJECT_TYPE.ANALOG_INPUT, instance: 1 }, properties: [{ id: PRESENT_VALUE_ID }] }, // Outdoor Temp
     { objectId: { type: OBJECT_TYPE.ANALOG_INPUT, instance: 11 }, properties: [{ id: PRESENT_VALUE_ID }] }, // Exhaust Temp
@@ -474,7 +516,8 @@ function buildPollRequest() {
 }
 
 const POLL_VALUE_MAPPINGS: Record<string, (value: number, target: PollParseTarget) => void> = {
-  [objectKey(OBJECT_TYPE.ANALOG_VALUE, 1994)]: mapPollValue('target_temperature'),
+  [objectKey(TARGET_TEMPERATURE_OBJECTS.home.type, TARGET_TEMPERATURE_OBJECTS.home.instance)]: mapPollValue(TARGET_TEMPERATURE_DATA_KEYS.home),
+  [objectKey(TARGET_TEMPERATURE_OBJECTS.away.type, TARGET_TEMPERATURE_OBJECTS.away.instance)]: mapPollValue(TARGET_TEMPERATURE_DATA_KEYS.away),
   [objectKey(OBJECT_TYPE.ANALOG_INPUT, 4)]: mapPollValue('measure_temperature'),
   [objectKey(OBJECT_TYPE.ANALOG_INPUT, 1)]: mapPollValue('measure_temperature.outdoor'),
   [objectKey(OBJECT_TYPE.ANALOG_INPUT, 11)]: mapPollValue('measure_temperature.exhaust'),
@@ -661,34 +704,51 @@ export class UnitRegistry {
       const unit = this.units.get(unitId);
       if (!unit) throw new Error('Unit not found');
 
+      const mode = this.resolveTargetTemperatureModeFromProbe(unit);
+      return this.writeTemperatureSetpoint(unit, mode, setpoint);
+    }
+
+    async setTemperatureSetpoint(unitId: string, mode: TargetTemperatureMode, setpoint: number) {
+      const unit = this.units.get(unitId);
+      if (!unit) throw new Error('Unit not found');
+      return this.writeTemperatureSetpoint(unit, mode, setpoint);
+    }
+
+    private async writeTemperatureSetpoint(
+      unit: UnitState,
+      mode: TargetTemperatureMode,
+      setpoint: number,
+    ) {
       const client = this.dependencies.getBacnetClient(unit.bacnetPort);
-      const v = clamp(setpoint, 10, 30);
+      const normalizedSetpoint = normalizeTargetTemperature(setpoint);
       const writeOptions = {
         maxSegments: BacnetEnums.MaxSegmentsAccepted.SEGMENTS_0,
         maxApdu: BacnetEnums.MaxApduLengthAccepted.OCTETS_1476,
         priority: DEFAULT_WRITE_PRIORITY,
       };
+      const objectId = TARGET_TEMPERATURE_OBJECTS[mode];
 
-      this.log(`[UnitRegistry] Writing setpoint ${v} to ${unitId} (${unit.ip})`);
+      this.log(
+        `[UnitRegistry] Writing ${mode} setpoint ${normalizedSetpoint} to`
+        + ` ${unit.unitId} (${unit.ip})`,
+      );
 
       unit.writeQueue = unit.writeQueue.then(async () => new Promise<void>((resolve, reject) => {
         let handled = false;
         const tm = setTimeout(() => {
           if (!handled) {
             handled = true;
-            this.error(`[UnitRegistry] Timeout writing setpoint to ${unitId}`);
+            this.error(`[UnitRegistry] Timeout writing ${mode} setpoint to ${unit.unitId}`);
             reject(new Error('Timeout'));
           }
         }, 5000);
-
-        const objectId = { type: 2, instance: 1994 };
 
         try {
           client.writeProperty(
             unit.ip,
             objectId,
             PRESENT_VALUE_ID,
-            [{ type: BacnetEnums.ApplicationTags.REAL, value: v }],
+            [{ type: BacnetEnums.ApplicationTags.REAL, value: normalizedSetpoint }],
             writeOptions,
             (err: any, _value: any) => {
               if (handled) return;
@@ -696,11 +756,14 @@ export class UnitRegistry {
               clearTimeout(tm);
 
               if (err) {
-                this.error(`[UnitRegistry] Failed to write setpoint to ${unitId}:`, err);
+                this.error(`[UnitRegistry] Failed to write ${mode} setpoint to ${unit.unitId}:`, err);
                 reject(err);
                 return;
               }
-              this.log(`[UnitRegistry] Successfully wrote setpoint ${v} to ${unitId}`);
+              this.log(
+                `[UnitRegistry] Successfully wrote ${mode} setpoint`
+                + ` ${normalizedSetpoint} to ${unit.unitId}`,
+              );
               resolve();
             },
           );
@@ -708,13 +771,24 @@ export class UnitRegistry {
           if (!handled) {
             handled = true;
             clearTimeout(tm);
-            this.error(`[UnitRegistry] Sync error writing setpoint to ${unitId}:`, e);
+            this.error(`[UnitRegistry] Sync error writing ${mode} setpoint to ${unit.unitId}:`, e);
             reject(e);
           }
         }
       }));
 
       return unit.writeQueue;
+    }
+
+    private resolveTargetTemperatureModeFromProbe(unit: UnitState): TargetTemperatureMode {
+      const data: Record<string, number> = {};
+      for (const [probeKey, dataKey] of TARGET_TEMPERATURE_MODE_PROBE_KEY_MAP) {
+        const value = unit.probeValues.get(probeKey);
+        if (value !== undefined) data[dataKey] = value;
+      }
+
+      const mode = this.resolveFanModeFromSignals(data);
+      return this.resolveCurrentTemperatureSetpointMode(data, mode) ?? 'home';
     }
 
     async resetFilterTimer(unitId: string) {
@@ -1067,10 +1141,13 @@ export class UnitRegistry {
     private distributeData(unit: UnitState, data: Record<string, number>) {
       const mode = this.resolveFanMode(unit, data);
       const setpointMode = this.resolveCurrentFanSetpointMode(data, mode);
+      const temperatureMode = this.resolveCurrentTemperatureSetpointMode(data, mode);
 
       for (const device of unit.devices) {
         this.applyMappedCapabilities(device, data);
+        this.applyCurrentTargetTemperatureCapability(device, data, temperatureMode);
         this.applyCurrentFanSetpointCapabilities(unit, device, data, setpointMode);
+        this.syncTargetTemperatureSettings(device, data);
         this.syncFanProfileSettings(device, data);
         this.syncFilterIntervalSetting(device, data.filter_limit);
         const filterLife = this.computeFilterLife(data);
@@ -1102,6 +1179,54 @@ export class UnitRegistry {
       }
 
       return undefined;
+    }
+
+    private resolveCurrentTemperatureSetpointMode(
+      data: Record<string, number>,
+      resolvedMode: string | undefined,
+    ): TargetTemperatureMode | undefined {
+      if (resolvedMode) return resolvedMode === 'away' ? 'away' : 'home';
+
+      if (data.operation_mode !== undefined) {
+        const mapped = mapOperationMode(Math.round(data.operation_mode));
+        return mapped === 'away' ? 'away' : 'home';
+      }
+
+      if (data.ventilation_mode !== undefined) {
+        const mapped = mapVentilationMode(Math.round(data.ventilation_mode));
+        return mapped === 'away' ? 'away' : 'home';
+      }
+
+      if (data.comfort_button !== undefined) {
+        return data.comfort_button === 0 ? 'away' : 'home';
+      }
+
+      const homeValue = data[TARGET_TEMPERATURE_DATA_KEYS.home];
+      if (homeValue !== undefined && Number.isFinite(homeValue)) return 'home';
+      const awayValue = data[TARGET_TEMPERATURE_DATA_KEYS.away];
+      if (awayValue !== undefined && Number.isFinite(awayValue)) return 'away';
+      return undefined;
+    }
+
+    private applyCurrentTargetTemperatureCapability(
+      device: FlexitDevice,
+      data: Record<string, number>,
+      mode: TargetTemperatureMode | undefined,
+    ) {
+      const selectedMode = mode ?? 'home';
+      const selectedKey = TARGET_TEMPERATURE_DATA_KEYS[selectedMode];
+      let nextValue = data[selectedKey];
+
+      if (nextValue === undefined || !Number.isFinite(nextValue)) {
+        const fallbackMode = selectedMode === 'away' ? 'home' : 'away';
+        const fallbackValue = data[TARGET_TEMPERATURE_DATA_KEYS[fallbackMode]];
+        if (fallbackValue !== undefined && Number.isFinite(fallbackValue)) {
+          nextValue = fallbackValue;
+        }
+      }
+
+      if (nextValue === undefined || !Number.isFinite(nextValue)) return;
+      this.setCapability(device, 'target_temperature', normalizeTargetTemperature(nextValue));
     }
 
     private applyCurrentFanSetpointCapabilities(
@@ -1195,6 +1320,28 @@ export class UnitRegistry {
       return Promise.resolve();
     }
 
+    private syncTargetTemperatureSettings(device: FlexitDevice, data: Record<string, number>) {
+      const updates: Record<string, number> = {};
+      for (const mode of ['home', 'away'] as const) {
+        const dataKey = TARGET_TEMPERATURE_DATA_KEYS[mode];
+        const setpoint = data[dataKey];
+        if (setpoint === undefined || !Number.isFinite(setpoint)) continue;
+
+        const settingKey = TARGET_TEMPERATURE_SETTING_KEYS[mode];
+        const normalizedSetpoint = normalizeTargetTemperature(setpoint);
+        const currentSettingValue = Number(device.getSetting(settingKey));
+        if (!Number.isFinite(currentSettingValue) || !valuesMatch(currentSettingValue, normalizedSetpoint)) {
+          updates[settingKey] = normalizedSetpoint;
+        }
+      }
+
+      if (Object.keys(updates).length === 0) return;
+
+      this.updateDeviceSettings(device, updates).catch((err) => {
+        this.warn(`[UnitRegistry] Failed to sync target temperature settings for ${device.getData().unitId}:`, err);
+      });
+    }
+
     private syncFanProfileSettings(device: FlexitDevice, data: Record<string, number>) {
       const updates: Record<string, number> = {};
 
@@ -1262,14 +1409,25 @@ export class UnitRegistry {
         this.setFanMode(unit.unitId, 'fireplace').catch(() => { });
       }
 
+      const mode = this.resolveFanModeFromSignals(data, tempOpActive);
+      if (!mode) return undefined;
+
+      this.logModeMismatch(unit, mode, data);
+      return mode;
+    }
+
+    private resolveFanModeFromSignals(
+      data: Record<string, number>,
+      tempOpActive: boolean = (data.remaining_temp_vent_op ?? 0) > 0,
+    ): 'home' | 'away' | 'high' | 'fireplace' | undefined {
+      if (!MODE_SIGNAL_KEYS.some((key) => data[key] !== undefined)) return undefined;
+
       let mode = this.resolveBaseMode(data, tempOpActive);
       if (data.ventilation_mode !== undefined) {
         mode = mapVentilationMode(Math.round(data.ventilation_mode));
       }
       if (data.fireplace_active === 1) mode = 'fireplace';
       else if (data.rapid_active === 1) mode = 'high';
-
-      this.logModeMismatch(unit, mode, data);
       return mode;
     }
 

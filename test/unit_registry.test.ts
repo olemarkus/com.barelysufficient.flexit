@@ -23,6 +23,8 @@ function makeMockDevice() {
   device.getSetting.withArgs('serial').returns('800199-000001');
   device.getSetting.withArgs('filter_change_interval_months').returns(6);
   device.getSetting.withArgs('filter_change_interval_hours').returns(4380);
+  device.getSetting.withArgs('target_temperature_home').returns(20);
+  device.getSetting.withArgs('target_temperature_away').returns(18);
   return device;
 }
 
@@ -115,7 +117,43 @@ describe('UnitRegistry', () => {
     await registry.writeSetpoint('test_unit', 21.5);
 
     const { args } = mockClient.writeProperty.firstCall;
+    expect(args[1]).to.deep.equal({ type: 2, instance: 1994 });
     expect(args[4].priority).to.equal(13);
+  });
+
+  it('writes setpoint to away object when unit is in away mode', async () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    const unit = (registry as any).units.get('test_unit');
+    unit.probeValues.set('19:361', 2); // operation_mode away
+
+    await registry.writeSetpoint('test_unit', 17.5);
+
+    const { args } = mockClient.writeProperty.firstCall;
+    expect(args[1]).to.deep.equal({ type: 2, instance: 1985 });
+    expect(args[3][0].value).to.equal(17.5);
+    expect(args[4].priority).to.equal(13);
+  });
+
+  it('probes target temperature mode without fan-mode side effects', async () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    const unit = (registry as any).units.get('test_unit');
+    unit.expectedMode = 'home';
+    unit.probeValues.set('19:361', 2); // operation_mode away
+
+    const logModeMismatchSpy = sinon.spy(registry as any, 'logModeMismatch');
+    try {
+      await registry.writeSetpoint('test_unit', 18);
+
+      expect(logModeMismatchSpy.called).to.equal(false);
+      const { args } = mockClient.writeProperty.firstCall;
+      expect(args[1]).to.deep.equal({ type: 2, instance: 1985 });
+    } finally {
+      logModeMismatchSpy.restore();
+    }
   });
 
   it('resets filter timer with Flexit GO compatible AV:285 write first', async () => {
@@ -316,6 +354,78 @@ describe('UnitRegistry', () => {
 
     expect(mockDevice.setCapabilityValue.calledWith('measure_fan_setpoint_percent', 90)).to.equal(true);
     expect(mockDevice.setCapabilityValue.calledWith('measure_fan_setpoint_percent.extract', 50)).to.equal(true);
+  });
+
+  it('uses away target temperature for main target capability in away mode', () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    const unit = (registry as any).units.get('test_unit');
+    if (!unit) throw new Error('Expected unit to exist');
+
+    (registry as any).distributeData(unit, {
+      operation_mode: 2, // away
+      ventilation_mode: 2, // away
+      'target_temperature.home': 21,
+      'target_temperature.away': 17,
+    });
+
+    expect(mockDevice.setCapabilityValue.calledWith('target_temperature', 17)).to.equal(true);
+  });
+
+  it('uses home target temperature for main target capability in high mode', () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    const unit = (registry as any).units.get('test_unit');
+    if (!unit) throw new Error('Expected unit to exist');
+
+    (registry as any).distributeData(unit, {
+      operation_mode: 4, // high
+      ventilation_mode: 4, // high
+      'target_temperature.home': 22,
+      'target_temperature.away': 16,
+    });
+
+    expect(mockDevice.setCapabilityValue.calledWith('target_temperature', 22)).to.equal(true);
+  });
+
+  it('normalizes active target temperature capability to 10..30 in 0.5C steps', () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    const unit = (registry as any).units.get('test_unit');
+    if (!unit) throw new Error('Expected unit to exist');
+
+    (registry as any).distributeData(unit, {
+      operation_mode: 2, // away
+      ventilation_mode: 2, // away
+      'target_temperature.home': 31.2,
+      'target_temperature.away': 9.74,
+    });
+
+    expect(mockDevice.setCapabilityValue.calledWith('target_temperature', 10)).to.equal(true);
+  });
+
+  it('normalizes synced home/away target temperature settings to 10..30 in 0.5C steps', () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    const unit = (registry as any).units.get('test_unit');
+    if (!unit) throw new Error('Expected unit to exist');
+
+    (registry as any).distributeData(unit, {
+      operation_mode: 3, // home
+      ventilation_mode: 3, // home
+      'target_temperature.home': 31.2,
+      'target_temperature.away': 9.74,
+    });
+
+    const settingsUpdate = mockDevice.setSettings.getCalls().find((call: any) => (
+      call.args[0]?.target_temperature_home === 30
+      && call.args[0]?.target_temperature_away === 10
+    ));
+    expect(settingsUpdate).to.not.equal(undefined);
   });
 
   it('fails filter interval write when AV:286 write fails (no fallback priorities)', async () => {
@@ -523,7 +633,7 @@ describe('UnitRegistry', () => {
     expect(unit.consecutiveFailures).to.equal(0);
   });
 
-  it('clamps setpoint to valid range', async () => {
+  it('clamps and rounds setpoint writes to valid 0.5C range', async () => {
     const mockDevice = makeMockDevice();
     registry.register('test_unit', mockDevice);
 
@@ -537,6 +647,12 @@ describe('UnitRegistry', () => {
 
     const args2 = mockClient.writeProperty.firstCall.args;
     expect(args2[3][0].value).to.equal(30); // clamped to max
+
+    mockClient.writeProperty.resetHistory();
+    await registry.writeSetpoint('test_unit', 21.26);
+
+    const args3 = mockClient.writeProperty.firstCall.args;
+    expect(args3[3][0].value).to.equal(21.5); // rounded to 0.5C step
   });
 
   it('destroy clears all intervals and units', () => {

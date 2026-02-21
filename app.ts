@@ -41,6 +41,12 @@ export = class App extends Homey.App {
       this.error('Unhandled Rejection:', reason);
     });
 
+    const resolveUnitId = (device: Homey.Device | undefined) => {
+      const unitId = String((device as any)?.getData?.()?.unitId ?? '').trim();
+      if (!unitId) throw new Error('Device unitId is missing.');
+      return unitId;
+    };
+
     const setFanProfileModeCard = this.homey.flow.getActionCard('set_fan_profile_mode');
     setFanProfileModeCard.registerRunListener(async (args: any) => {
       const device = args?.device as Homey.Device | undefined;
@@ -57,8 +63,7 @@ export = class App extends Homey.App {
       const normalizedSupply = normalizeFanProfilePercent(supplyPercent, modeRaw, 'supply');
       const normalizedExhaust = normalizeFanProfilePercent(exhaustPercent, modeRaw, 'exhaust');
 
-      const unitId = String((device as any)?.getData?.()?.unitId ?? '').trim();
-      if (!unitId) throw new Error('Device unitId is missing.');
+      const unitId = resolveUnitId(device);
 
       await Registry.setFanProfileMode(
         unitId,
