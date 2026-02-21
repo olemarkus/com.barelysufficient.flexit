@@ -289,6 +289,44 @@ describe('fake-unit bacnet server', () => {
       error.invokeId === 6 && error.serviceChoice === BacnetEnums.ConfirmedServiceChoice.READ_PROPERTY
     ))).to.equal(true);
 
+    (server as any).handleReadProperty({
+      address: '127.0.0.1',
+      invokeId: 7,
+      request: {
+        objectId: {
+          type: BacnetEnums.ObjectType.ANALOG_VALUE,
+          instance: 1844,
+        },
+        property: {
+          id: BacnetEnums.PropertyIdentifier.HIGH_LIMIT,
+          index: BacnetEnums.ASN1_ARRAY_ALL,
+        },
+      },
+    });
+
+    (server as any).handleReadProperty({
+      address: '127.0.0.1',
+      invokeId: 8,
+      request: {
+        objectId: {
+          type: BacnetEnums.ObjectType.ANALOG_VALUE,
+          instance: 1844,
+        },
+        property: {
+          id: BacnetEnums.PropertyIdentifier.LOW_LIMIT,
+          index: BacnetEnums.ASN1_ARRAY_ALL,
+        },
+      },
+    });
+
+    const highLimitResponse = captured.readProperty.find((entry) => entry.invokeId === 7);
+    const lowLimitResponse = captured.readProperty.find((entry) => entry.invokeId === 8);
+    expect(highLimitResponse?.values[0]?.type).to.equal(BacnetEnums.ApplicationTags.REAL);
+    expect(highLimitResponse?.values[0]?.value).to.equal(100);
+    expect(lowLimitResponse?.values[0]?.type).to.equal(BacnetEnums.ApplicationTags.REAL);
+    expect(lowLimitResponse?.values[0]?.value).to.equal(30);
+    expect(captured.errors.some((error) => error.invokeId === 7 || error.invokeId === 8)).to.equal(false);
+
     const packet = {
       buffer: Buffer.alloc(1482),
       offset: 4,

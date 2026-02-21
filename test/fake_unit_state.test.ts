@@ -161,4 +161,29 @@ describe('fake-unit state', () => {
     );
     expect(nonZeroDenied.ok).to.equal(false);
   });
+
+  it('accepts fan profile writes on AV 1836/1841 with priority 16', () => {
+    const state = createState();
+    const writeHomeSupply = state.writePresentValue(
+      OBJECT_TYPE.ANALOG_VALUE,
+      1836,
+      PROPERTY_ID.PRESENT_VALUE,
+      70,
+      16,
+    );
+    const writeHomeExhaust = state.writePresentValue(
+      OBJECT_TYPE.ANALOG_VALUE,
+      1841,
+      PROPERTY_ID.PRESENT_VALUE,
+      60,
+      16,
+    );
+
+    expect(writeHomeSupply.ok).to.equal(true);
+    expect(writeHomeExhaust.ok).to.equal(true);
+    state.setFanMode('home');
+    const summary = state.summary();
+    expect(summary.fan.supplyPercent).to.equal(70);
+    expect(summary.fan.extractPercent).to.equal(60);
+  });
 });

@@ -4,17 +4,28 @@ import {
   FlexitDevice,
   FILTER_CHANGE_INTERVAL_MONTHS_SETTING,
   FILTER_CHANGE_INTERVAL_HOURS_LEGACY_SETTING,
+  FAN_PROFILE_MODES,
+  FAN_PROFILE_SETTING_KEYS,
+  FanProfileMode,
   MIN_FILTER_CHANGE_INTERVAL_HOURS,
   MAX_FILTER_CHANGE_INTERVAL_HOURS,
   MIN_FILTER_CHANGE_INTERVAL_MONTHS,
   MAX_FILTER_CHANGE_INTERVAL_MONTHS,
+  normalizeFanProfilePercent,
   filterIntervalMonthsToHours,
   filterIntervalHoursToMonths,
 } from '../../lib/UnitRegistry';
 
 const EXHAUST_TEMP_CAPABILITY = 'measure_temperature.exhaust';
 const RESET_FILTER_CAPABILITY = 'button.reset_filter';
-const REQUIRED_CAPABILITIES = [EXHAUST_TEMP_CAPABILITY, RESET_FILTER_CAPABILITY] as const;
+const SUPPLY_SETPOINT_CAPABILITY = 'measure_fan_setpoint_percent';
+const EXTRACT_SETPOINT_CAPABILITY = 'measure_fan_setpoint_percent.extract';
+const REQUIRED_CAPABILITIES = [
+  EXHAUST_TEMP_CAPABILITY,
+  RESET_FILTER_CAPABILITY,
+  SUPPLY_SETPOINT_CAPABILITY,
+  EXTRACT_SETPOINT_CAPABILITY,
+] as const;
 
 export = class FlexitNordicDevice extends Homey.Device {
   async onInit() {
@@ -62,6 +73,32 @@ export = class FlexitNordicDevice extends Homey.Device {
   }): Promise<void> {
     const monthsChanged = changedKeys.includes(FILTER_CHANGE_INTERVAL_MONTHS_SETTING);
     const legacyHoursChanged = changedKeys.includes(FILTER_CHANGE_INTERVAL_HOURS_LEGACY_SETTING);
+    const changedFanModes = this.getChangedFanModes(changedKeys);
+    if (!monthsChanged && !legacyHoursChanged && changedFanModes.length === 0) return;
+
+    const { unitId } = this.getData();
+    await this.maybeHandleFilterIntervalSetting(unitId, newSettings, monthsChanged, legacyHoursChanged);
+    for (const mode of changedFanModes) {
+      await this.maybeHandleFanProfileModeSetting(unitId, mode, newSettings);
+    }
+  }
+
+  private getChangedFanModes(changedKeys: string[]): FanProfileMode[] {
+    const changedFanModes: FanProfileMode[] = [];
+    for (const mode of FAN_PROFILE_MODES) {
+      const modeSettings = FAN_PROFILE_SETTING_KEYS[mode];
+      if (!changedKeys.includes(modeSettings.supply) && !changedKeys.includes(modeSettings.exhaust)) continue;
+      changedFanModes.push(mode);
+    }
+    return changedFanModes;
+  }
+
+  private async maybeHandleFilterIntervalSetting(
+    unitId: string,
+    newSettings: Record<string, unknown>,
+    monthsChanged: boolean,
+    legacyHoursChanged: boolean,
+  ) {
     if (!monthsChanged && !legacyHoursChanged) return;
 
     let requestedHours: number;
@@ -92,7 +129,6 @@ export = class FlexitNordicDevice extends Homey.Device {
       }
     }
 
-    const { unitId } = this.getData();
     const currentMonths = Number(this.getSetting(FILTER_CHANGE_INTERVAL_MONTHS_SETTING));
     const currentHours = Number(this.getSetting(FILTER_CHANGE_INTERVAL_HOURS_LEGACY_SETTING));
     const requestedMonths = filterIntervalHoursToMonths(requestedHours);
@@ -106,6 +142,43 @@ export = class FlexitNordicDevice extends Homey.Device {
     } catch (error) {
       this.error('Failed to update filter change interval:', error);
       throw new Error('Failed to update filter change interval on the unit.');
+    }
+  }
+
+  private async maybeHandleFanProfileModeSetting(
+    unitId: string,
+    mode: FanProfileMode,
+    newSettings: Record<string, unknown>,
+  ) {
+    const modeSettings = FAN_PROFILE_SETTING_KEYS[mode];
+    const requestedSupply = Number(newSettings[modeSettings.supply] ?? this.getSetting(modeSettings.supply));
+    const requestedExhaust = Number(newSettings[modeSettings.exhaust] ?? this.getSetting(modeSettings.exhaust));
+    if (!Number.isFinite(requestedSupply) || !Number.isFinite(requestedExhaust)) {
+      throw new Error(`Both supply and exhaust values are required for ${mode} fan settings.`);
+    }
+    const normalizedSupply = normalizeFanProfilePercent(requestedSupply, mode, 'supply');
+    const normalizedExhaust = normalizeFanProfilePercent(requestedExhaust, mode, 'exhaust');
+
+    const currentSupply = Number(this.getSetting(modeSettings.supply));
+    const currentExhaust = Number(this.getSetting(modeSettings.exhaust));
+    const supplyInSync = Number.isFinite(currentSupply) && Math.abs(currentSupply - normalizedSupply) < 0.5;
+    const exhaustInSync = Number.isFinite(currentExhaust) && Math.abs(currentExhaust - normalizedExhaust) < 0.5;
+    if (supplyInSync && exhaustInSync) return;
+
+    try {
+      this.log(
+        `Updating ${mode} fan profile to supply=${normalizedSupply}%`
+        + ` exhaust=${normalizedExhaust}% for unit ${unitId}`,
+      );
+      await Registry.setFanProfileMode(
+        unitId,
+        mode,
+        normalizedSupply,
+        normalizedExhaust,
+      );
+    } catch (error) {
+      this.error(`Failed to update ${mode} fan profile:`, error);
+      throw new Error(`Failed to update ${mode} fan profile on the unit.`);
     }
   }
 

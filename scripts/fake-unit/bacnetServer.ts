@@ -7,6 +7,8 @@ import {
   FLEXIT_GO_LOGIN_OBJECT_TYPE,
   FLEXIT_GO_LOGIN_PROPERTY_ID,
   FLEXIT_GO_PROPRIETARY_PROPERTY_OVERLAYS,
+  FLEXIT_GO_RANGE_MAX_PROPERTY_ID,
+  FLEXIT_GO_RANGE_MIN_PROPERTY_ID,
   FLEXIT_GO_STATIC_COMPAT_OBJECTS,
   OBJECT_TYPE,
   PROPERTY_ID,
@@ -1320,6 +1322,29 @@ export class FakeBacnetServer {
         };
       default:
         break;
+    }
+
+    if (propertyId === PROPERTY_ID.PRESENT_VALUE) {
+      const livePointValue = this.state.readPresentValue(objectId.type, objectId.instance, PROPERTY_ID.PRESENT_VALUE);
+      if (livePointValue.ok) {
+        return {
+          ok: true as const,
+          values: [{ type: valueTagForRead(livePointValue.value.point), value: livePointValue.value.value }],
+        };
+      }
+    }
+
+    if (propertyId === PROPERTY_ID.HIGH_LIMIT || propertyId === PROPERTY_ID.LOW_LIMIT) {
+      const rangePropertyId = propertyId === PROPERTY_ID.HIGH_LIMIT
+        ? FLEXIT_GO_RANGE_MAX_PROPERTY_ID
+        : FLEXIT_GO_RANGE_MIN_PROPERTY_ID;
+      const rangeProperty = compatObject.properties.find((property) => property.id === rangePropertyId);
+      if (rangeProperty) {
+        return {
+          ok: true as const,
+          values: [{ type: rangeProperty.tag, value: rangeProperty.value }],
+        };
+      }
     }
 
     const valueProperty = compatObject.properties.find((property) => property.id === propertyId);

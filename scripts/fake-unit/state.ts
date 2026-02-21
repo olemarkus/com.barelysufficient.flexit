@@ -469,7 +469,7 @@ export class FakeNordicUnitState {
     else operationMode = OPERATION_MODE_VALUES.AWAY;
     this.setByName('operation_mode', operationMode);
 
-    const fanTargets = this.targetFanPercent(this.mode);
+    const fanTargets = this.targetFanPercent(this.mode, cookerHoodActive);
     this.setByName('fan_speed_supply_percent', fanTargets.supply);
     this.setByName('fan_speed_extract_percent', fanTargets.extract);
     this.setByName('fan_rpm_supply', fanTargets.supply * 39);
@@ -538,12 +538,35 @@ export class FakeNordicUnitState {
     return 'away';
   }
 
-  private targetFanPercent(mode: FanMode): { supply: number; extract: number } {
-    if (this.fireplaceRemainingMinutes > 0) return { supply: 90, extract: 50 };
-    if (mode === 'away') return { supply: 56, extract: 55 };
-    if (mode === 'high') return { supply: 100, extract: 99 };
-    if (mode === 'fireplace') return { supply: 90, extract: 50 };
-    return { supply: 80, extract: 79 };
+  private targetFanPercent(mode: FanMode, cookerHoodActive: boolean): { supply: number; extract: number } {
+    if (this.fireplaceRemainingMinutes > 0 || mode === 'fireplace') {
+      return {
+        supply: this.getByName('fan_profile_supply_fireplace'),
+        extract: this.getByName('fan_profile_extract_fireplace'),
+      };
+    }
+    if (cookerHoodActive) {
+      return {
+        supply: this.getByName('fan_profile_supply_cooker'),
+        extract: this.getByName('fan_profile_extract_cooker'),
+      };
+    }
+    if (mode === 'away') {
+      return {
+        supply: this.getByName('fan_profile_supply_away'),
+        extract: this.getByName('fan_profile_extract_away'),
+      };
+    }
+    if (mode === 'high') {
+      return {
+        supply: this.getByName('fan_profile_supply_high'),
+        extract: this.getByName('fan_profile_extract_high'),
+      };
+    }
+    return {
+      supply: this.getByName('fan_profile_supply_home'),
+      extract: this.getByName('fan_profile_extract_home'),
+    };
   }
 
   private normalizeWriteValue(point: SupportedPoint, value: number): number {

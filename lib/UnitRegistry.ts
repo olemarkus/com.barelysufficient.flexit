@@ -26,6 +26,104 @@ const DEFAULT_WRITE_PRIORITY = 13;
 const FLEXIT_GO_WRITE_PRIORITY = 16;
 export const FILTER_CHANGE_INTERVAL_MONTHS_SETTING = 'filter_change_interval_months';
 export const FILTER_CHANGE_INTERVAL_HOURS_LEGACY_SETTING = 'filter_change_interval_hours';
+export const FAN_PROFILE_MODES = ['home', 'away', 'high', 'fireplace', 'cooker'] as const;
+export type FanProfileMode = (typeof FAN_PROFILE_MODES)[number];
+export type FanProfileFan = 'supply' | 'exhaust';
+const CURRENT_FAN_SETPOINT_CAPABILITIES: Record<FanProfileFan, string> = {
+  supply: 'measure_fan_setpoint_percent',
+  exhaust: 'measure_fan_setpoint_percent.extract',
+};
+// Observed Flexit GO range hints (AV 1835..1844 proprietary 5036/5037, also probed as LOW/HIGH_LIMIT).
+export const FAN_PROFILE_PERCENT_RANGES: Record<FanProfileMode, Record<FanProfileFan, { min: number; max: number }>> = {
+  high: {
+    supply: { min: 80, max: 100 },
+    exhaust: { min: 79, max: 100 },
+  },
+  home: {
+    supply: { min: 56, max: 100 },
+    exhaust: { min: 55, max: 99 },
+  },
+  away: {
+    supply: { min: 30, max: 80 },
+    exhaust: { min: 30, max: 79 },
+  },
+  fireplace: {
+    supply: { min: 30, max: 100 },
+    exhaust: { min: 30, max: 100 },
+  },
+  cooker: {
+    supply: { min: 30, max: 100 },
+    exhaust: { min: 30, max: 100 },
+  },
+};
+export const MIN_FAN_PROFILE_PERCENT = 30;
+export const MAX_FAN_PROFILE_PERCENT = 100;
+export const FAN_PROFILE_SETTING_KEYS: Record<FanProfileMode, Record<FanProfileFan, string>> = {
+  home: {
+    supply: 'fan_profile_home_supply',
+    exhaust: 'fan_profile_home_exhaust',
+  },
+  away: {
+    supply: 'fan_profile_away_supply',
+    exhaust: 'fan_profile_away_exhaust',
+  },
+  high: {
+    supply: 'fan_profile_high_supply',
+    exhaust: 'fan_profile_high_exhaust',
+  },
+  fireplace: {
+    supply: 'fan_profile_fireplace_supply',
+    exhaust: 'fan_profile_fireplace_exhaust',
+  },
+  cooker: {
+    supply: 'fan_profile_cooker_supply',
+    exhaust: 'fan_profile_cooker_exhaust',
+  },
+};
+const FAN_PROFILE_OBJECTS: Record<FanProfileMode, Record<FanProfileFan, { type: number; instance: number }>> = {
+  high: {
+    supply: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 1835 },
+    exhaust: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 1840 },
+  },
+  home: {
+    supply: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 1836 },
+    exhaust: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 1841 },
+  },
+  away: {
+    supply: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 1837 },
+    exhaust: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 1842 },
+  },
+  fireplace: {
+    supply: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 1838 },
+    exhaust: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 1843 },
+  },
+  cooker: {
+    supply: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 1839 },
+    exhaust: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 1844 },
+  },
+};
+const FAN_PROFILE_DATA_KEYS: Record<FanProfileMode, Record<FanProfileFan, string>> = {
+  home: {
+    supply: 'fan_profile.home.supply',
+    exhaust: 'fan_profile.home.exhaust',
+  },
+  away: {
+    supply: 'fan_profile.away.supply',
+    exhaust: 'fan_profile.away.exhaust',
+  },
+  high: {
+    supply: 'fan_profile.high.supply',
+    exhaust: 'fan_profile.high.exhaust',
+  },
+  fireplace: {
+    supply: 'fan_profile.fireplace.supply',
+    exhaust: 'fan_profile.fireplace.exhaust',
+  },
+  cooker: {
+    supply: 'fan_profile.cooker.supply',
+    exhaust: 'fan_profile.cooker.exhaust',
+  },
+};
 // Flexit GO observed behavior: 5 months is written as 3660 hours (5 * 732).
 export const FILTER_CHANGE_INTERVAL_HOURS_PER_MONTH = 732;
 export const MIN_FILTER_CHANGE_INTERVAL_MONTHS = 3;
@@ -178,6 +276,36 @@ function valuesMatch(actual: number, expected: number) {
   return Math.abs(actual - expected) < 0.01;
 }
 
+export function isFanProfileMode(value: unknown): value is FanProfileMode {
+  return typeof value === 'string' && (FAN_PROFILE_MODES as readonly string[]).includes(value);
+}
+
+export function fanProfilePercentRange(mode: FanProfileMode, fan: FanProfileFan): { min: number; max: number } {
+  return FAN_PROFILE_PERCENT_RANGES[mode][fan];
+}
+
+export function normalizeFanProfilePercent(
+  value: unknown,
+  mode: FanProfileMode,
+  fan: FanProfileFan,
+): number {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    throw new Error(`${mode} ${fan} fan profile must be numeric`);
+  }
+
+  const rounded = Math.round(numeric);
+  const range = fanProfilePercentRange(mode, fan);
+  if (rounded < range.min || rounded > range.max) {
+    throw new Error(
+      `${mode} ${fan} fan profile must be between ${range.min}`
+      + ` and ${range.max} percent`,
+    );
+  }
+
+  return rounded;
+}
+
 function selectExtractTemperature(primary?: number, alternate?: number): number | undefined {
   const primaryIsNumber = typeof primary === 'number' && Number.isFinite(primary);
   const alternateIsNumber = typeof alternate === 'number' && Number.isFinite(alternate);
@@ -233,6 +361,9 @@ interface UnitState {
   lastMismatchKey?: string;
   consecutiveFailures: number;
   available: boolean;
+  currentFanSetpointMode?: FanProfileMode;
+  currentFanSetpoints: Partial<Record<FanProfileFan, number>>;
+  currentFanSetpointsInitialized: boolean;
 }
 
 interface PollParseTarget {
@@ -284,6 +415,13 @@ interface RegistryDependencies {
   discoverFlexitUnits: typeof discoverFlexitUnits;
 }
 
+interface FanSetpointChangedEvent {
+  device: FlexitDevice;
+  fan: FanProfileFan;
+  mode: FanProfileMode;
+  setpointPercent: number;
+}
+
 // The core poll request — only objects that drive device capabilities.
 function buildPollRequest() {
   return [
@@ -302,6 +440,16 @@ function buildPollRequest() {
     { objectId: { type: OBJECT_TYPE.ANALOG_INPUT, instance: 12 }, properties: [{ id: PRESENT_VALUE_ID }] }, // Fan RPM Extract
     { objectId: { type: OBJECT_TYPE.ANALOG_OUTPUT, instance: 3 }, properties: [{ id: PRESENT_VALUE_ID }] }, // Fan Speed % Supply
     { objectId: { type: OBJECT_TYPE.ANALOG_OUTPUT, instance: 4 }, properties: [{ id: PRESENT_VALUE_ID }] }, // Fan Speed % Extract
+    { objectId: FAN_PROFILE_OBJECTS.home.supply, properties: [{ id: PRESENT_VALUE_ID }] }, // Setpoint supply HOME
+    { objectId: FAN_PROFILE_OBJECTS.home.exhaust, properties: [{ id: PRESENT_VALUE_ID }] }, // Setpoint exhaust HOME
+    { objectId: FAN_PROFILE_OBJECTS.away.supply, properties: [{ id: PRESENT_VALUE_ID }] }, // Setpoint supply AWAY
+    { objectId: FAN_PROFILE_OBJECTS.away.exhaust, properties: [{ id: PRESENT_VALUE_ID }] }, // Setpoint exhaust AWAY
+    { objectId: FAN_PROFILE_OBJECTS.high.supply, properties: [{ id: PRESENT_VALUE_ID }] }, // Setpoint supply HIGH
+    { objectId: FAN_PROFILE_OBJECTS.high.exhaust, properties: [{ id: PRESENT_VALUE_ID }] }, // Setpoint exhaust HIGH
+    { objectId: FAN_PROFILE_OBJECTS.fireplace.supply, properties: [{ id: PRESENT_VALUE_ID }] }, // Setpoint supply FIREPLACE
+    { objectId: FAN_PROFILE_OBJECTS.fireplace.exhaust, properties: [{ id: PRESENT_VALUE_ID }] }, // Setpoint exhaust FIREPLACE
+    { objectId: FAN_PROFILE_OBJECTS.cooker.supply, properties: [{ id: PRESENT_VALUE_ID }] }, // Setpoint supply COOKER
+    { objectId: FAN_PROFILE_OBJECTS.cooker.exhaust, properties: [{ id: PRESENT_VALUE_ID }] }, // Setpoint exhaust COOKER
     { objectId: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 285 }, properties: [{ id: PRESENT_VALUE_ID }] }, // Filter Time
     { objectId: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 286 }, properties: [{ id: PRESENT_VALUE_ID }] }, // Filter Limit
 
@@ -347,6 +495,16 @@ const POLL_VALUE_MAPPINGS: Record<string, (value: number, target: PollParseTarge
   [objectKey(OBJECT_TYPE.ANALOG_INPUT, 12)]: mapPollValue('measure_motor_rpm.extract'),
   [objectKey(OBJECT_TYPE.ANALOG_OUTPUT, 3)]: mapPollValue('measure_fan_speed_percent'),
   [objectKey(OBJECT_TYPE.ANALOG_OUTPUT, 4)]: mapPollValue('measure_fan_speed_percent.extract'),
+  [objectKey(FAN_PROFILE_OBJECTS.home.supply.type, FAN_PROFILE_OBJECTS.home.supply.instance)]: mapPollValue('fan_profile.home.supply'),
+  [objectKey(FAN_PROFILE_OBJECTS.home.exhaust.type, FAN_PROFILE_OBJECTS.home.exhaust.instance)]: mapPollValue('fan_profile.home.exhaust'),
+  [objectKey(FAN_PROFILE_OBJECTS.away.supply.type, FAN_PROFILE_OBJECTS.away.supply.instance)]: mapPollValue('fan_profile.away.supply'),
+  [objectKey(FAN_PROFILE_OBJECTS.away.exhaust.type, FAN_PROFILE_OBJECTS.away.exhaust.instance)]: mapPollValue('fan_profile.away.exhaust'),
+  [objectKey(FAN_PROFILE_OBJECTS.high.supply.type, FAN_PROFILE_OBJECTS.high.supply.instance)]: mapPollValue('fan_profile.high.supply'),
+  [objectKey(FAN_PROFILE_OBJECTS.high.exhaust.type, FAN_PROFILE_OBJECTS.high.exhaust.instance)]: mapPollValue('fan_profile.high.exhaust'),
+  [objectKey(FAN_PROFILE_OBJECTS.fireplace.supply.type, FAN_PROFILE_OBJECTS.fireplace.supply.instance)]: mapPollValue('fan_profile.fireplace.supply'),
+  [objectKey(FAN_PROFILE_OBJECTS.fireplace.exhaust.type, FAN_PROFILE_OBJECTS.fireplace.exhaust.instance)]: mapPollValue('fan_profile.fireplace.exhaust'),
+  [objectKey(FAN_PROFILE_OBJECTS.cooker.supply.type, FAN_PROFILE_OBJECTS.cooker.supply.instance)]: mapPollValue('fan_profile.cooker.supply'),
+  [objectKey(FAN_PROFILE_OBJECTS.cooker.exhaust.type, FAN_PROFILE_OBJECTS.cooker.exhaust.instance)]: mapPollValue('fan_profile.cooker.exhaust'),
   [objectKey(OBJECT_TYPE.ANALOG_VALUE, 285)]: mapPollValue('filter_time'),
   [objectKey(OBJECT_TYPE.ANALOG_VALUE, 286)]: mapPollValue('filter_limit'),
   [objectKey(OBJECT_TYPE.BINARY_VALUE, 50)]: mapPollValue('comfort_button'),
@@ -368,6 +526,7 @@ export class UnitRegistry {
     private units: Map<string, UnitState> = new Map();
     private logger?: RegistryLogger;
     private readonly dependencies: RegistryDependencies;
+    private fanSetpointChangedHandler?: (event: FanSetpointChangedEvent) => void;
 
     constructor(dependencies?: Partial<RegistryDependencies>) {
       this.dependencies = {
@@ -380,6 +539,10 @@ export class UnitRegistry {
     setLogger(logger: RegistryLogger) {
       this.logger = logger;
       this.syncBacnetLogger();
+    }
+
+    setFanSetpointChangedHandler(handler?: (event: FanSetpointChangedEvent) => void) {
+      this.fanSetpointChangedHandler = handler;
     }
 
     private syncBacnetLogger() {
@@ -455,6 +618,9 @@ export class UnitRegistry {
           lastMismatchKey: undefined,
           consecutiveFailures: 0,
           available: true,
+          currentFanSetpointMode: undefined,
+          currentFanSetpoints: {},
+          currentFanSetpointsInitialized: false,
         };
         this.units.set(unitId, unit);
 
@@ -645,6 +811,88 @@ export class UnitRegistry {
       return unit.writeQueue;
     }
 
+    async setFanProfileMode(
+      unitId: string,
+      mode: FanProfileMode,
+      requestedSupplyPercent: number,
+      requestedExhaustPercent: number,
+    ) {
+      if (!isFanProfileMode(mode)) throw new Error(`Unsupported fan profile mode '${mode}'`);
+
+      const unit = this.units.get(unitId);
+      if (!unit) throw new Error('Unit not found');
+
+      const supplyPercent = normalizeFanProfilePercent(requestedSupplyPercent, mode, 'supply');
+      const exhaustPercent = normalizeFanProfilePercent(requestedExhaustPercent, mode, 'exhaust');
+      const writeOptions: WriteOptions = {
+        maxSegments: BacnetEnums.MaxSegmentsAccepted.SEGMENTS_0,
+        maxApdu: BacnetEnums.MaxApduLengthAccepted.OCTETS_1476,
+        priority: DEFAULT_WRITE_PRIORITY,
+      };
+
+      this.log(
+        `[UnitRegistry] Setting ${mode} fan profile`
+        + ` supply=${supplyPercent}% exhaust=${exhaustPercent}% for ${unitId}`,
+      );
+
+      unit.writeQueue = unit.writeQueue.then(async () => {
+        const context: FanModeWriteContext = {
+          unit,
+          mode: `fan_profile:${mode}`,
+          writeOptions,
+          client: this.dependencies.getBacnetClient(unit.bacnetPort),
+          ventilationModeKey: VENTILATION_MODE_KEY,
+          comfortButtonKey: COMFORT_BUTTON_KEY,
+        };
+        const objects = FAN_PROFILE_OBJECTS[mode];
+
+        const supplyWriteOk = await this.writeUpdate(context, {
+          objectId: objects.supply,
+          tag: BacnetEnums.ApplicationTags.REAL,
+          value: supplyPercent,
+          priority: FLEXIT_GO_WRITE_PRIORITY,
+        });
+        if (!supplyWriteOk) throw new Error(`Failed to write supply fan profile for ${mode}`);
+
+        const exhaustWriteOk = await this.writeUpdate(context, {
+          objectId: objects.exhaust,
+          tag: BacnetEnums.ApplicationTags.REAL,
+          value: exhaustPercent,
+          priority: FLEXIT_GO_WRITE_PRIORITY,
+        });
+        if (!exhaustWriteOk) throw new Error(`Failed to write exhaust fan profile for ${mode}`);
+
+        const verifiedSupply = normalizeFanProfilePercent(
+          await this.readPresentValue(context.client, unit, objects.supply),
+          mode,
+          'supply',
+        );
+        const verifiedExhaust = normalizeFanProfilePercent(
+          await this.readPresentValue(context.client, unit, objects.exhaust),
+          mode,
+          'exhaust',
+        );
+        this.log(
+          `[UnitRegistry] Verified ${mode} fan profile`
+          + ` supply=${verifiedSupply}% exhaust=${verifiedExhaust}% for ${unitId}`,
+        );
+
+        const settingsForMode = FAN_PROFILE_SETTING_KEYS[mode];
+        for (const device of unit.devices) {
+          this.updateDeviceSettings(device, {
+            [settingsForMode.supply]: verifiedSupply,
+            [settingsForMode.exhaust]: verifiedExhaust,
+          }).catch((err) => {
+            this.warn(`[UnitRegistry] Failed to sync ${mode} fan settings for ${unitId}:`, err);
+          });
+        }
+
+        this.pollUnit(unitId);
+      });
+
+      return unit.writeQueue;
+    }
+
     private pollUnit(unitId: string) {
       const unit = this.units.get(unitId);
       if (!unit) return;
@@ -812,13 +1060,95 @@ export class UnitRegistry {
 
     private distributeData(unit: UnitState, data: Record<string, number>) {
       const mode = this.resolveFanMode(unit, data);
+      const setpointMode = this.resolveCurrentFanSetpointMode(data, mode);
 
       for (const device of unit.devices) {
         this.applyMappedCapabilities(device, data);
+        this.applyCurrentFanSetpointCapabilities(unit, device, data, setpointMode);
+        this.syncFanProfileSettings(device, data);
         this.syncFilterIntervalSetting(device, data.filter_limit);
         const filterLife = this.computeFilterLife(data);
         if (filterLife !== undefined) this.setCapability(device, 'measure_hepa_filter', filterLife);
         if (mode !== undefined) this.setCapability(device, 'fan_mode', mode);
+      }
+    }
+
+    private resolveCurrentFanSetpointMode(
+      data: Record<string, number>,
+      resolvedMode: string | undefined,
+    ): FanProfileMode | undefined {
+      if (data.operation_mode !== undefined) {
+        const operationMode = Math.round(data.operation_mode);
+        if (operationMode === OPERATION_MODE_VALUES.COOKER_HOOD) return 'cooker';
+      }
+
+      if (resolvedMode && isFanProfileMode(resolvedMode)) {
+        return resolvedMode;
+      }
+
+      if (data.ventilation_mode !== undefined) {
+        return mapVentilationMode(Math.round(data.ventilation_mode));
+      }
+
+      if (data.operation_mode !== undefined) {
+        const mapped = mapOperationMode(Math.round(data.operation_mode));
+        if (isFanProfileMode(mapped)) return mapped;
+      }
+
+      return undefined;
+    }
+
+    private applyCurrentFanSetpointCapabilities(
+      unit: UnitState,
+      device: FlexitDevice,
+      data: Record<string, number>,
+      mode: FanProfileMode | undefined,
+    ) {
+      if (!mode) return;
+
+      let observedAny = false;
+      for (const fan of ['supply', 'exhaust'] as const) {
+        const profileKey = FAN_PROFILE_DATA_KEYS[mode][fan];
+        const profileValue = data[profileKey];
+        if (profileValue === undefined || !Number.isFinite(profileValue)) continue;
+
+        let normalized: number;
+        try {
+          normalized = normalizeFanProfilePercent(profileValue, mode, fan);
+        } catch (error) {
+          this.warn(`[UnitRegistry] Invalid current fan setpoint ${mode}.${fan}:`, error);
+          continue;
+        }
+
+        observedAny = true;
+        const capability = CURRENT_FAN_SETPOINT_CAPABILITIES[fan];
+        this.setCapability(device, capability, normalized);
+
+        const previous = unit.currentFanSetpoints[fan];
+        const changed = previous === undefined || !valuesMatch(previous, normalized) || unit.currentFanSetpointMode !== mode;
+        if (unit.currentFanSetpointsInitialized && changed) {
+          this.triggerFanSetpointChanged({
+            device,
+            fan,
+            mode,
+            setpointPercent: normalized,
+          });
+        }
+        unit.currentFanSetpoints[fan] = normalized;
+      }
+
+      if (observedAny) {
+        unit.currentFanSetpointMode = mode;
+        unit.currentFanSetpointsInitialized = true;
+      }
+    }
+
+    private triggerFanSetpointChanged(event: FanSetpointChangedEvent) {
+      if (!this.fanSetpointChangedHandler) return;
+      try {
+        this.fanSetpointChangedHandler(event);
+      } catch (error) {
+        this.warn('[UnitRegistry] Failed to handle fan setpoint changed callback:', error);
       }
     }
 
@@ -854,6 +1184,40 @@ export class UnitRegistry {
       if (typeof device.setSettings === 'function') return device.setSettings(settings);
       if (typeof device.setSetting === 'function') return device.setSetting(settings);
       return Promise.resolve();
+    }
+
+    private syncFanProfileSettings(device: FlexitDevice, data: Record<string, number>) {
+      const updates: Record<string, number> = {};
+
+      for (const mode of FAN_PROFILE_MODES) {
+        for (const fan of ['supply', 'exhaust'] as const) {
+          const dataKey = FAN_PROFILE_DATA_KEYS[mode][fan];
+          const nextValue = data[dataKey];
+          if (nextValue === undefined || !Number.isFinite(nextValue)) continue;
+
+          const normalized = Math.round(nextValue);
+          const range = fanProfilePercentRange(mode, fan);
+          if (normalized < range.min || normalized > range.max) {
+            this.warn(
+              `[UnitRegistry] Ignoring out-of-range ${mode} ${fan} fan profile value`
+              + ` ${nextValue} from ${device.getData().unitId}`,
+            );
+            continue;
+          }
+          const settingKey = FAN_PROFILE_SETTING_KEYS[mode][fan];
+          const current = Number(device.getSetting(settingKey));
+          const inSync = Number.isFinite(current) && Math.abs(current - normalized) < 0.5;
+          if (!inSync) {
+            updates[settingKey] = normalized;
+          }
+        }
+      }
+
+      if (Object.keys(updates).length === 0) return;
+
+      this.updateDeviceSettings(device, updates).catch((err) => {
+        this.warn(`[UnitRegistry] Failed to sync fan profile settings for ${device.getData().unitId}:`, err);
+      });
     }
 
     private syncFilterIntervalSetting(device: FlexitDevice, filterLimit: number | undefined) {

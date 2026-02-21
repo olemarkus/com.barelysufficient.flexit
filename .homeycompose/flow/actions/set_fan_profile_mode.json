@@ -1,0 +1,77 @@
+{
+  "title": {
+    "en": "Set fan profile for mode"
+  },
+  "titleFormatted": {
+    "en": "Set [[mode]] fan profile to supply [[supply_percent]]% and exhaust [[exhaust_percent]]%"
+  },
+  "hint": {
+    "en": "Updates the saved supply and exhaust fan percentages for the selected mode on the unit."
+  },
+  "args": [
+    {
+      "type": "device",
+      "name": "device",
+      "filter": "driver_id=nordic"
+    },
+    {
+      "type": "dropdown",
+      "name": "mode",
+      "title": {
+        "en": "Mode"
+      },
+      "values": [
+        {
+          "id": "home",
+          "label": {
+            "en": "Home"
+          }
+        },
+        {
+          "id": "away",
+          "label": {
+            "en": "Away"
+          }
+        },
+        {
+          "id": "high",
+          "label": {
+            "en": "High"
+          }
+        },
+        {
+          "id": "fireplace",
+          "label": {
+            "en": "Fireplace"
+          }
+        },
+        {
+          "id": "cooker",
+          "label": {
+            "en": "Cooker"
+          }
+        }
+      ]
+    },
+    {
+      "name": "supply_percent",
+      "type": "number",
+      "title": {
+        "en": "Supply fan (%)"
+      },
+      "min": 30,
+      "max": 100,
+      "step": 1
+    },
+    {
+      "name": "exhaust_percent",
+      "type": "number",
+      "title": {
+        "en": "Exhaust fan (%)"
+      },
+      "min": 30,
+      "max": 100,
+      "step": 1
+    }
+  ]
+}
