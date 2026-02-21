@@ -1,0 +1,27 @@
+{
+  "title": {
+    "en": "Extract fan setpoint changed"
+  },
+  "titleFormatted": {
+    "en": "Extract fan setpoint changed"
+  },
+  "hint": {
+    "en": "Triggers when the active extract fan setpoint changes. Token is percentage (0-100%)."
+  },
+  "args": [
+    {
+      "type": "device",
+      "name": "device",
+      "filter": "driver_id=nordic"
+    }
+  ],
+  "tokens": [
+    {
+      "name": "setpoint_percent",
+      "type": "number",
+      "title": {
+        "en": "Setpoint (%)"
+      }
+    }
+  ]
+}

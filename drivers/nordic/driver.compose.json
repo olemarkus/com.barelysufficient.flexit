@@ -21,6 +21,8 @@
     "measure_motor_rpm.extract",
     "measure_fan_speed_percent",
     "measure_fan_speed_percent.extract",
+    "measure_fan_setpoint_percent",
+    "measure_fan_setpoint_percent.extract",
     "measure_hepa_filter",
     "button.reset_filter"
   ],
@@ -84,6 +86,22 @@
     "measure_fan_speed_percent.extract": {
       "title": {
         "en": "Extract Fan Speed"
+      },
+      "units": {
+        "en": "%"
+      }
+    },
+    "measure_fan_setpoint_percent": {
+      "title": {
+        "en": "Supply fan setpoint"
+      },
+      "units": {
+        "en": "%"
+      }
+    },
+    "measure_fan_setpoint_percent.extract": {
+      "title": {
+        "en": "Extract fan setpoint"
       },
       "units": {
         "en": "%"
@@ -174,6 +192,194 @@
           "min": 3,
           "max": 12,
           "step": 1
+        }
+      ]
+    },
+    {
+      "type": "group",
+      "label": {
+        "en": "Fan setpoints"
+      },
+      "children": [
+        {
+          "type": "group",
+          "label": {
+            "en": "Fan setpoint, home"
+          },
+          "children": [
+            {
+              "id": "fan_profile_home_supply",
+              "type": "number",
+              "label": {
+                "en": "Supply fan"
+              },
+              "units": {
+                "en": "%"
+              },
+              "value": 80,
+              "min": 56,
+              "max": 100,
+              "step": 1
+            },
+            {
+              "id": "fan_profile_home_exhaust",
+              "type": "number",
+              "label": {
+                "en": "Exhaust fan"
+              },
+              "units": {
+                "en": "%"
+              },
+              "value": 79,
+              "min": 55,
+              "max": 99,
+              "step": 1
+            }
+          ]
+        },
+        {
+          "type": "group",
+          "label": {
+            "en": "Fan setpoint, away"
+          },
+          "children": [
+            {
+              "id": "fan_profile_away_supply",
+              "type": "number",
+              "label": {
+                "en": "Supply fan"
+              },
+              "units": {
+                "en": "%"
+              },
+              "value": 56,
+              "min": 30,
+              "max": 80,
+              "step": 1
+            },
+            {
+              "id": "fan_profile_away_exhaust",
+              "type": "number",
+              "label": {
+                "en": "Exhaust fan"
+              },
+              "units": {
+                "en": "%"
+              },
+              "value": 55,
+              "min": 30,
+              "max": 79,
+              "step": 1
+            }
+          ]
+        },
+        {
+          "type": "group",
+          "label": {
+            "en": "Fan setpoint, high"
+          },
+          "children": [
+            {
+              "id": "fan_profile_high_supply",
+              "type": "number",
+              "label": {
+                "en": "Supply fan"
+              },
+              "units": {
+                "en": "%"
+              },
+              "value": 100,
+              "min": 80,
+              "max": 100,
+              "step": 1
+            },
+            {
+              "id": "fan_profile_high_exhaust",
+              "type": "number",
+              "label": {
+                "en": "Exhaust fan"
+              },
+              "units": {
+                "en": "%"
+              },
+              "value": 99,
+              "min": 79,
+              "max": 100,
+              "step": 1
+            }
+          ]
+        },
+        {
+          "type": "group",
+          "label": {
+            "en": "Fan setpoint, fireplace"
+          },
+          "children": [
+            {
+              "id": "fan_profile_fireplace_supply",
+              "type": "number",
+              "label": {
+                "en": "Supply fan"
+              },
+              "units": {
+                "en": "%"
+              },
+              "value": 90,
+              "min": 30,
+              "max": 100,
+              "step": 1
+            },
+            {
+              "id": "fan_profile_fireplace_exhaust",
+              "type": "number",
+              "label": {
+                "en": "Exhaust fan"
+              },
+              "units": {
+                "en": "%"
+              },
+              "value": 50,
+              "min": 30,
+              "max": 100,
+              "step": 1
+            }
+          ]
+        },
+        {
+          "type": "group",
+          "label": {
+            "en": "Fan setpoint, cooker"
+          },
+          "children": [
+            {
+              "id": "fan_profile_cooker_supply",
+              "type": "number",
+              "label": {
+                "en": "Supply fan"
+              },
+              "units": {
+                "en": "%"
+              },
+              "value": 90,
+              "min": 30,
+              "max": 100,
+              "step": 1
+            },
+            {
+              "id": "fan_profile_cooker_exhaust",
+              "type": "number",
+              "label": {
+                "en": "Exhaust fan"
+              },
+              "units": {
+                "en": "%"
+              },
+              "value": 50,
+              "min": 30,
+              "max": 100,
+              "step": 1
+            }
+          ]
         }
       ]
     },

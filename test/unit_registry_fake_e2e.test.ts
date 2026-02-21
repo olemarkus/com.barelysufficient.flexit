@@ -29,6 +29,18 @@ const CLIENT_BIND_ADDRESS = '127.0.0.1';
 const SERVER_BIND_ADDRESS = '127.0.0.2';
 const SOCKET_LISTEN_TIMEOUT_MS = 2000;
 const FILTER_CHANGE_INTERVAL_HOURS_PER_MONTH = 732;
+const DEFAULT_FAN_SETTINGS: Record<string, number> = {
+  fan_profile_home_supply: 80,
+  fan_profile_home_exhaust: 79,
+  fan_profile_away_supply: 56,
+  fan_profile_away_exhaust: 55,
+  fan_profile_high_supply: 100,
+  fan_profile_high_exhaust: 99,
+  fan_profile_fireplace_supply: 90,
+  fan_profile_fireplace_exhaust: 50,
+  fan_profile_cooker_supply: 90,
+  fan_profile_cooker_exhaust: 50,
+};
 
 function createState() {
   return new FakeNordicUnitState({
@@ -51,12 +63,14 @@ function makeMockDevice(serverIp: string, serverPort: number, filterIntervalHour
     1,
     Math.round(filterIntervalHours / FILTER_CHANGE_INTERVAL_HOURS_PER_MONTH),
   );
+  const currentFanSettings = { ...DEFAULT_FAN_SETTINGS };
   const getSetting = sinon.stub();
   getSetting.withArgs('ip').returns(serverIp);
   getSetting.withArgs('bacnetPort').returns(serverPort);
   getSetting.withArgs('serial').returns('800131-123456');
   getSetting.withArgs('filter_change_interval_hours').callsFake(() => currentFilterIntervalHours);
   getSetting.withArgs('filter_change_interval_months').callsFake(() => currentFilterIntervalMonths);
+  getSetting.callsFake((key: string) => currentFanSettings[key]);
 
   const setSettings = sinon.stub().callsFake(async (settings: Record<string, any>) => {
     const nextHours = settings?.filter_change_interval_hours;
@@ -69,6 +83,12 @@ function makeMockDevice(serverIp: string, serverPort: number, filterIntervalHour
       currentFilterIntervalMonths = nextMonths;
       currentFilterIntervalHours = Math.round(nextMonths * FILTER_CHANGE_INTERVAL_HOURS_PER_MONTH);
     }
+    for (const [key, value] of Object.entries(settings ?? {})) {
+      if (!Object.prototype.hasOwnProperty.call(currentFanSettings, key)) continue;
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        currentFanSettings[key] = value;
+      }
+    }
   });
   const setSetting = sinon.stub().callsFake(async (settings: Record<string, any>) => {
     const nextHours = settings?.filter_change_interval_hours;
@@ -80,6 +100,12 @@ function makeMockDevice(serverIp: string, serverPort: number, filterIntervalHour
     if (typeof nextMonths === 'number' && Number.isFinite(nextMonths) && !(typeof nextHours === 'number' && Number.isFinite(nextHours))) {
       currentFilterIntervalMonths = nextMonths;
       currentFilterIntervalHours = Math.round(nextMonths * FILTER_CHANGE_INTERVAL_HOURS_PER_MONTH);
+    }
+    for (const [key, value] of Object.entries(settings ?? {})) {
+      if (!Object.prototype.hasOwnProperty.call(currentFanSettings, key)) continue;
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        currentFanSettings[key] = value;
+      }
     }
   });
 
@@ -354,5 +380,27 @@ describe('UnitRegistry fake-unit e2e', function unitRegistryFakeUdpE2e() {
     expect(device.getSetting('filter_change_interval_months')).to.equal(
       Math.round(5000 / FILTER_CHANGE_INTERVAL_HOURS_PER_MONTH),
     );
+  });
+
+  it('writes home fan profile using AV 1836/1841 with priority 16', async () => {
+    const device = makeMockDevice(SERVER_BIND_ADDRESS, serverPort, 4380);
+    registry.register('test_unit', device);
+
+    await registry.setFanProfileMode('test_unit', 'home', 70, 60);
+    await waitFor(() => {
+      const supply = state.readPresentValue(OBJECT_TYPE.ANALOG_VALUE, 1836, PROPERTY_ID.PRESENT_VALUE);
+      const exhaust = state.readPresentValue(OBJECT_TYPE.ANALOG_VALUE, 1841, PROPERTY_ID.PRESENT_VALUE);
+      return supply.ok && exhaust.ok && Math.abs(supply.value.value - 70) < 0.1 && Math.abs(exhaust.value.value - 60) < 0.1;
+    });
+
+    const writes = writePresentValueSpy.getCalls().filter((call: any) => (
+      call.args[2] === PROPERTY_ID.PRESENT_VALUE
+      && call.args[4] === 16
+      && call.args[0] === OBJECT_TYPE.ANALOG_VALUE
+      && (call.args[1] === 1836 || call.args[1] === 1841)
+    ));
+    expect(writes.length).to.equal(2);
+    expect(device.getSetting('fan_profile_home_supply')).to.equal(70);
+    expect(device.getSetting('fan_profile_home_exhaust')).to.equal(60);
   });
 });

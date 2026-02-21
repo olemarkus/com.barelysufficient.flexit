@@ -184,6 +184,126 @@ describe('UnitRegistry', () => {
     expect(settingsUpdate).to.not.equal(undefined);
   });
 
+  it('writes mode fan profile with priority 16 and verifies values', async () => {
+    const mockDevice = makeMockDevice();
+    mockDevice.getSetting.withArgs('fan_profile_home_supply').returns(80);
+    mockDevice.getSetting.withArgs('fan_profile_home_exhaust').returns(79);
+    mockClient.readPropertyMultiple.resetBehavior();
+    mockClient.readPropertyMultiple.callsFake((_ip: string, req: any[], cb: any) => {
+      const objectId = req?.[0]?.objectId;
+      if (objectId?.type === BACNET_ENUMS.ObjectType.ANALOG_VALUE && objectId?.instance === 1836) {
+        cb(null, { values: [makeReadObject(BACNET_ENUMS.ObjectType.ANALOG_VALUE, 1836, 70)] });
+        return;
+      }
+      if (objectId?.type === BACNET_ENUMS.ObjectType.ANALOG_VALUE && objectId?.instance === 1841) {
+        cb(null, { values: [makeReadObject(BACNET_ENUMS.ObjectType.ANALOG_VALUE, 1841, 60)] });
+        return;
+      }
+      cb(null, { values: [] });
+    });
+
+    registry.register('test_unit', mockDevice);
+    await registry.setFanProfileMode('test_unit', 'home', 70, 60);
+
+    const calls = mockClient.writeProperty.getCalls().map((call: any) => call.args);
+    const callsByObject = new Map<string, any[]>(calls.map((args: any) => [JSON.stringify(args[1]), args]));
+
+    const homeSupply = callsByObject.get(JSON.stringify({ type: 2, instance: 1836 })) as any[] | undefined;
+    const homeExhaust = callsByObject.get(JSON.stringify({ type: 2, instance: 1841 })) as any[] | undefined;
+
+    expect(homeSupply).to.not.equal(undefined);
+    expect(homeExhaust).to.not.equal(undefined);
+    if (!homeSupply || !homeExhaust) throw new Error('Expected writes for home fan profile');
+
+    expect(homeSupply[3][0].type).to.equal(BACNET_ENUMS.ApplicationTags.REAL);
+    expect(homeSupply[3][0].value).to.equal(70);
+    expect(homeSupply[4].priority).to.equal(16);
+    expect(homeExhaust[3][0].type).to.equal(BACNET_ENUMS.ApplicationTags.REAL);
+    expect(homeExhaust[3][0].value).to.equal(60);
+    expect(homeExhaust[4].priority).to.equal(16);
+
+    const settingsUpdate = mockDevice.setSettings.getCalls().find((call: any) => (
+      call.args[0]?.fan_profile_home_supply === 70
+      && call.args[0]?.fan_profile_home_exhaust === 60
+    ));
+    expect(settingsUpdate).to.not.equal(undefined);
+  });
+
+  it('rejects fan profile values outside mode-specific ranges', async () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    let thrown: Error | null = null;
+    try {
+      await registry.setFanProfileMode('test_unit', 'high', 70, 90);
+    } catch (error) {
+      thrown = error as Error;
+    }
+
+    expect(thrown).to.not.equal(null);
+    expect(thrown?.message).to.equal('high supply fan profile must be between 80 and 100 percent');
+    expect(mockClient.writeProperty.called).to.equal(false);
+  });
+
+  it('publishes current fan setpoint capabilities and triggers change callback', async () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    const events: Array<{ fan: string; mode: string; setpointPercent: number }> = [];
+    registry.setFanSetpointChangedHandler((event: any) => {
+      events.push({
+        fan: event.fan,
+        mode: event.mode,
+        setpointPercent: event.setpointPercent,
+      });
+    });
+
+    const unit = (registry as any).units.get('test_unit');
+    if (!unit) throw new Error('Expected unit to exist');
+
+    (registry as any).distributeData(unit, {
+      operation_mode: 3, // home
+      ventilation_mode: 3, // home
+      'fan_profile.home.supply': 80,
+      'fan_profile.home.exhaust': 79,
+    });
+
+    expect(mockDevice.setCapabilityValue.calledWith('measure_fan_setpoint_percent', 80)).to.equal(true);
+    expect(mockDevice.setCapabilityValue.calledWith('measure_fan_setpoint_percent.extract', 79)).to.equal(true);
+    expect(events).to.have.length(0);
+
+    (registry as any).distributeData(unit, {
+      operation_mode: 3, // home
+      ventilation_mode: 3, // home
+      'fan_profile.home.supply': 81,
+      'fan_profile.home.exhaust': 79,
+    });
+
+    expect(events.some((event) => (
+      event.fan === 'supply' && event.mode === 'home' && event.setpointPercent === 81
+    ))).to.equal(true);
+  });
+
+  it('uses cooker profile for current setpoint when operation mode is cooker hood', async () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    const unit = (registry as any).units.get('test_unit');
+    if (!unit) throw new Error('Expected unit to exist');
+
+    (registry as any).distributeData(unit, {
+      operation_mode: 5, // cooker hood
+      ventilation_mode: 4, // high
+      'fan_profile.high.supply': 100,
+      'fan_profile.high.exhaust': 99,
+      'fan_profile.cooker.supply': 90,
+      'fan_profile.cooker.exhaust': 50,
+    });
+
+    expect(mockDevice.setCapabilityValue.calledWith('measure_fan_setpoint_percent', 90)).to.equal(true);
+    expect(mockDevice.setCapabilityValue.calledWith('measure_fan_setpoint_percent.extract', 50)).to.equal(true);
+  });
+
   it('fails filter interval write when AV:286 write fails (no fallback priorities)', async () => {
     const mockDevice = makeMockDevice();
     registry.register('test_unit', mockDevice);

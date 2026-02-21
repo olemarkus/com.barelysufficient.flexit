@@ -8,7 +8,7 @@ const proxyquireStrict = proxyquire.noCallThru().noPreserveCache();
 
 class MockHomeyDevice {
   setClass = sinon.stub().resolves();
-  hasCapability = sinon.stub();
+  hasCapability = sinon.stub().returns(true);
   addCapability = sinon.stub().resolves();
   setSettings = sinon.stub().resolves();
   getSetting = sinon.stub().returns(undefined);
@@ -30,6 +30,7 @@ describe('Nordic device', () => {
       unregister: sinon.stub(),
       writeSetpoint: sinon.stub().resolves(),
       setFanMode: sinon.stub().resolves(),
+      setFanProfileMode: sinon.stub().resolves(),
       resetFilterTimer: sinon.stub().resolves(),
       setFilterChangeInterval: sinon.stub().resolves(),
     };
@@ -38,10 +39,34 @@ describe('Nordic device', () => {
       Registry: registryStub,
       FILTER_CHANGE_INTERVAL_MONTHS_SETTING: 'filter_change_interval_months',
       FILTER_CHANGE_INTERVAL_HOURS_LEGACY_SETTING: 'filter_change_interval_hours',
+      FAN_PROFILE_MODES: ['home', 'away', 'high', 'fireplace', 'cooker'],
+      FAN_PROFILE_SETTING_KEYS: {
+        home: { supply: 'fan_profile_home_supply', exhaust: 'fan_profile_home_exhaust' },
+        away: { supply: 'fan_profile_away_supply', exhaust: 'fan_profile_away_exhaust' },
+        high: { supply: 'fan_profile_high_supply', exhaust: 'fan_profile_high_exhaust' },
+        fireplace: { supply: 'fan_profile_fireplace_supply', exhaust: 'fan_profile_fireplace_exhaust' },
+        cooker: { supply: 'fan_profile_cooker_supply', exhaust: 'fan_profile_cooker_exhaust' },
+      },
       MIN_FILTER_CHANGE_INTERVAL_HOURS: 2196,
       MAX_FILTER_CHANGE_INTERVAL_HOURS: 8784,
       MIN_FILTER_CHANGE_INTERVAL_MONTHS: 3,
       MAX_FILTER_CHANGE_INTERVAL_MONTHS: 12,
+      normalizeFanProfilePercent: (value: number, mode: string, fan: string) => {
+        const rounded = Math.round(value);
+        const ranges: Record<string, Record<string, { min: number; max: number }>> = {
+          high: { supply: { min: 80, max: 100 }, exhaust: { min: 79, max: 100 } },
+          home: { supply: { min: 56, max: 100 }, exhaust: { min: 55, max: 99 } },
+          away: { supply: { min: 30, max: 80 }, exhaust: { min: 30, max: 79 } },
+          fireplace: { supply: { min: 30, max: 100 }, exhaust: { min: 30, max: 100 } },
+          cooker: { supply: { min: 30, max: 100 }, exhaust: { min: 30, max: 100 } },
+        };
+        const range = ranges[mode]?.[fan];
+        if (!range) throw new Error(`Unsupported fan profile range ${mode}.${fan}`);
+        if (rounded < range.min || rounded > range.max) {
+          throw new Error(`${mode} ${fan} fan profile must be between ${range.min} and ${range.max} percent`);
+        }
+        return rounded;
+      },
       filterIntervalMonthsToHours: (months: number) => Math.round(months * 732),
       filterIntervalHoursToMonths: (hours: number) => Math.max(3, Math.min(12, Math.round(hours / 732))),
     };
@@ -201,5 +226,48 @@ describe('Nordic device', () => {
     expect(thrownLow?.message).to.contain('between 3 and 12 months');
     expect(thrownHigh?.message).to.contain('between 3 and 12 months');
     expect(registryStub.setFilterChangeInterval.called).to.equal(false);
+  });
+
+  it('writes changed fan profile settings by mode', async () => {
+    const device = new DeviceClass();
+    device.hasCapability.withArgs(EXHAUST_TEMP_CAPABILITY).returns(true);
+    device.hasCapability.withArgs(RESET_FILTER_CAPABILITY).returns(true);
+    device.getSetting.withArgs('fan_profile_home_supply').returns(80);
+    device.getSetting.withArgs('fan_profile_home_exhaust').returns(79);
+    await device.onInit();
+
+    await device.onSettings({
+      newSettings: {
+        fan_profile_home_supply: 70,
+        fan_profile_home_exhaust: 60,
+      },
+      changedKeys: ['fan_profile_home_supply'],
+    });
+
+    expect(registryStub.setFanProfileMode.calledOnceWithExactly('test_unit', 'home', 70, 60)).to.equal(true);
+  });
+
+  it('rejects out-of-range fan profile values', async () => {
+    const device = new DeviceClass();
+    device.hasCapability.withArgs(EXHAUST_TEMP_CAPABILITY).returns(true);
+    device.hasCapability.withArgs(RESET_FILTER_CAPABILITY).returns(true);
+    await device.onInit();
+
+    let thrown: Error | null = null;
+    try {
+      await device.onSettings({
+        newSettings: {
+          fan_profile_home_supply: 101,
+          fan_profile_home_exhaust: 60,
+        },
+        changedKeys: ['fan_profile_home_supply'],
+      });
+    } catch (error) {
+      thrown = error as Error;
+    }
+
+    expect(thrown).to.not.equal(null);
+    expect(thrown?.message).to.contain('between 56 and 100');
+    expect(registryStub.setFanProfileMode.called).to.equal(false);
   });
 });

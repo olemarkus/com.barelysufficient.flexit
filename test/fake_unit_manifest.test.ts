@@ -30,16 +30,6 @@ describe('fake-unit manifest', () => {
       1831,
       1833,
       1834,
-      1835,
-      1836,
-      1837,
-      1838,
-      1839,
-      1840,
-      1841,
-      1842,
-      1843,
-      1844,
       1919,
       2090,
       2096,
@@ -113,6 +103,16 @@ describe('fake-unit manifest', () => {
         tag: APPLICATION_TAG.REAL,
         value: entry.min,
       });
+    }
+  });
+
+  it('includes AV 1835..1844 as writable documented points', () => {
+    for (const instance of [1835, 1836, 1837, 1838, 1839, 1840, 1841, 1842, 1843, 1844]) {
+      const point = SUPPORTED_POINTS.find((entry) => (
+        entry.type === OBJECT_TYPE.ANALOG_VALUE && entry.instance === instance
+      ));
+      expect(point, `Missing AV ${instance}`).to.not.equal(undefined);
+      expect(point?.access).to.equal('RW');
     }
   });
 
