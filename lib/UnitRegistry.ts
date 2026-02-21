@@ -1092,13 +1092,13 @@ export class UnitRegistry {
         return resolvedMode;
       }
 
-      if (data.ventilation_mode !== undefined) {
-        return mapVentilationMode(Math.round(data.ventilation_mode));
-      }
-
       if (data.operation_mode !== undefined) {
         const mapped = mapOperationMode(Math.round(data.operation_mode));
         if (isFanProfileMode(mapped)) return mapped;
+      }
+
+      if (data.ventilation_mode !== undefined) {
+        return mapVentilationMode(Math.round(data.ventilation_mode));
       }
 
       return undefined;
@@ -1263,9 +1263,6 @@ export class UnitRegistry {
       }
 
       let mode = this.resolveBaseMode(data, tempOpActive);
-      if (data.ventilation_mode !== undefined) {
-        mode = mapVentilationMode(Math.round(data.ventilation_mode));
-      }
       if (data.fireplace_active === 1) mode = 'fireplace';
       else if (data.rapid_active === 1) mode = 'high';
 

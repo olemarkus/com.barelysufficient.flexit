@@ -460,6 +460,41 @@ describe('UnitRegistry', () => {
     expect(call.args[1]).to.equal('fireplace');
   });
 
+  it('prefers operation mode over ventilation mode when both are present', () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    const unit = { unitId: 'test_unit', devices: new Set([mockDevice]) };
+    (registry as any).distributeData(unit, {
+      operation_mode: 3, // home
+      ventilation_mode: 2, // away
+    });
+
+    const call = mockDevice.setCapabilityValue.lastCall;
+    expect(call.args[0]).to.equal('fan_mode');
+    expect(call.args[1]).to.equal('home');
+  });
+
+  it('uses operation-mode profile for current setpoint when ventilation disagrees', () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    const unit = (registry as any).units.get('test_unit');
+    if (!unit) throw new Error('Expected unit to exist');
+
+    (registry as any).distributeData(unit, {
+      operation_mode: 3, // home
+      ventilation_mode: 2, // away
+      'fan_profile.home.supply': 81,
+      'fan_profile.home.exhaust': 80,
+      'fan_profile.away.supply': 60,
+      'fan_profile.away.exhaust': 59,
+    });
+
+    expect(mockDevice.setCapabilityValue.calledWith('measure_fan_setpoint_percent', 81)).to.equal(true);
+    expect(mockDevice.setCapabilityValue.calledWith('measure_fan_setpoint_percent.extract', 80)).to.equal(true);
+  });
+
   it('uses RF input mapping when available', () => {
     const mockDevice = makeMockDevice();
     registry.register('test_unit', mockDevice);
