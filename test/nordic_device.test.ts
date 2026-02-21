@@ -247,6 +247,30 @@ describe('Nordic device', () => {
     expect(registryStub.setFanProfileMode.calledOnceWithExactly('test_unit', 'home', 70, 60)).to.equal(true);
   });
 
+  it('suppresses onSettings fan profile writes for registry-originated sync', async () => {
+    const device = new DeviceClass();
+    device.hasCapability.withArgs(EXHAUST_TEMP_CAPABILITY).returns(true);
+    device.hasCapability.withArgs(RESET_FILTER_CAPABILITY).returns(true);
+    device.getSetting.withArgs('fan_profile_home_supply').returns(80);
+    device.getSetting.withArgs('fan_profile_home_exhaust').returns(79);
+    await device.onInit();
+
+    await device.applyRegistrySettings({
+      fan_profile_home_supply: 70,
+      fan_profile_home_exhaust: 60,
+    });
+
+    await device.onSettings({
+      newSettings: {
+        fan_profile_home_supply: 70,
+        fan_profile_home_exhaust: 60,
+      },
+      changedKeys: ['fan_profile_home_supply', 'fan_profile_home_exhaust'],
+    });
+
+    expect(registryStub.setFanProfileMode.called).to.equal(false);
+  });
+
   it('rejects out-of-range fan profile values', async () => {
     const device = new DeviceClass();
     device.hasCapability.withArgs(EXHAUST_TEMP_CAPABILITY).returns(true);

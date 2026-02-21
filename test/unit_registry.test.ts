@@ -190,13 +190,17 @@ describe('UnitRegistry', () => {
     mockDevice.getSetting.withArgs('fan_profile_home_exhaust').returns(79);
     mockClient.readPropertyMultiple.resetBehavior();
     mockClient.readPropertyMultiple.callsFake((_ip: string, req: any[], cb: any) => {
-      const objectId = req?.[0]?.objectId;
-      if (objectId?.type === BACNET_ENUMS.ObjectType.ANALOG_VALUE && objectId?.instance === 1836) {
-        cb(null, { values: [makeReadObject(BACNET_ENUMS.ObjectType.ANALOG_VALUE, 1836, 70)] });
-        return;
-      }
-      if (objectId?.type === BACNET_ENUMS.ObjectType.ANALOG_VALUE && objectId?.instance === 1841) {
-        cb(null, { values: [makeReadObject(BACNET_ENUMS.ObjectType.ANALOG_VALUE, 1841, 60)] });
+      const requestedObjects = req
+        .map((entry) => `${entry?.objectId?.type}:${entry?.objectId?.instance}`)
+        .sort()
+        .join(',');
+      if (requestedObjects === '2:1836,2:1841') {
+        cb(null, {
+          values: [
+            makeReadObject(BACNET_ENUMS.ObjectType.ANALOG_VALUE, 1836, 70),
+            makeReadObject(BACNET_ENUMS.ObjectType.ANALOG_VALUE, 1841, 60),
+          ],
+        });
         return;
       }
       cb(null, { values: [] });
@@ -221,6 +225,16 @@ describe('UnitRegistry', () => {
     expect(homeExhaust[3][0].type).to.equal(BACNET_ENUMS.ApplicationTags.REAL);
     expect(homeExhaust[3][0].value).to.equal(60);
     expect(homeExhaust[4].priority).to.equal(16);
+
+    const verificationRead = mockClient.readPropertyMultiple.getCalls().find((call: any) => {
+      const request = call.args[1] as any[];
+      const requestedObjects = request
+        .map((entry) => `${entry?.objectId?.type}:${entry?.objectId?.instance}`)
+        .sort()
+        .join(',');
+      return requestedObjects === '2:1836,2:1841';
+    });
+    expect(verificationRead).to.not.equal(undefined);
 
     const settingsUpdate = mockDevice.setSettings.getCalls().find((call: any) => (
       call.args[0]?.fan_profile_home_supply === 70
