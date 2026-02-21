@@ -20,6 +20,8 @@ const EXHAUST_TEMP_CAPABILITY = 'measure_temperature.exhaust';
 const RESET_FILTER_CAPABILITY = 'button.reset_filter';
 const SUPPLY_SETPOINT_CAPABILITY = 'measure_fan_setpoint_percent';
 const EXTRACT_SETPOINT_CAPABILITY = 'measure_fan_setpoint_percent.extract';
+const REGISTRY_SETTING_SUPPRESSION_WINDOW_MS = 30_000;
+const SETTING_SYNC_TOLERANCE = 0.5;
 const REQUIRED_CAPABILITIES = [
   EXHAUST_TEMP_CAPABILITY,
   RESET_FILTER_CAPABILITY,
@@ -27,7 +29,14 @@ const REQUIRED_CAPABILITIES = [
   EXTRACT_SETPOINT_CAPABILITY,
 ] as const;
 
+interface SuppressedSetting {
+  value: unknown;
+  expiresAt: number;
+}
+
 export = class FlexitNordicDevice extends Homey.Device {
+  private suppressedRegistrySettings = new Map<string, SuppressedSetting>();
+
   async onInit() {
     this.log('Nordic device init', this.getName());
     await this.setClass('airtreatment');
@@ -71,9 +80,10 @@ export = class FlexitNordicDevice extends Homey.Device {
     newSettings: Record<string, unknown>;
     changedKeys: string[];
   }): Promise<void> {
-    const monthsChanged = changedKeys.includes(FILTER_CHANGE_INTERVAL_MONTHS_SETTING);
-    const legacyHoursChanged = changedKeys.includes(FILTER_CHANGE_INTERVAL_HOURS_LEGACY_SETTING);
-    const changedFanModes = this.getChangedFanModes(changedKeys);
+    const effectiveChangedKeys = this.filterSuppressedChangedKeys(changedKeys, newSettings);
+    const monthsChanged = effectiveChangedKeys.includes(FILTER_CHANGE_INTERVAL_MONTHS_SETTING);
+    const legacyHoursChanged = effectiveChangedKeys.includes(FILTER_CHANGE_INTERVAL_HOURS_LEGACY_SETTING);
+    const changedFanModes = this.getChangedFanModes(effectiveChangedKeys);
     if (!monthsChanged && !legacyHoursChanged && changedFanModes.length === 0) return;
 
     const { unitId } = this.getData();
@@ -180,6 +190,53 @@ export = class FlexitNordicDevice extends Homey.Device {
       this.error(`Failed to update ${mode} fan profile:`, error);
       throw new Error(`Failed to update ${mode} fan profile on the unit.`);
     }
+  }
+
+  async applyRegistrySettings(settings: Record<string, unknown>): Promise<void> {
+    const expiresAt = Date.now() + REGISTRY_SETTING_SUPPRESSION_WINDOW_MS;
+    for (const [key, value] of Object.entries(settings)) {
+      this.suppressedRegistrySettings.set(key, { value, expiresAt });
+    }
+    await this.setSettings(settings);
+  }
+
+  private filterSuppressedChangedKeys(
+    changedKeys: string[],
+    newSettings: Record<string, unknown>,
+  ): string[] {
+    const remaining: string[] = [];
+    for (const key of changedKeys) {
+      if (!this.isSuppressedRegistrySettingChange(key, newSettings[key])) {
+        remaining.push(key);
+      }
+    }
+    return remaining;
+  }
+
+  private isSuppressedRegistrySettingChange(key: string, nextValue: unknown): boolean {
+    const entry = this.suppressedRegistrySettings.get(key);
+    if (!entry) return false;
+
+    if (entry.expiresAt < Date.now()) {
+      this.suppressedRegistrySettings.delete(key);
+      return false;
+    }
+
+    if (!this.settingsValuesMatch(entry.value, nextValue)) {
+      return false;
+    }
+
+    this.suppressedRegistrySettings.delete(key);
+    return true;
+  }
+
+  private settingsValuesMatch(expected: unknown, actual: unknown): boolean {
+    const expectedNumber = Number(expected);
+    const actualNumber = Number(actual);
+    if (Number.isFinite(expectedNumber) && Number.isFinite(actualNumber)) {
+      return Math.abs(expectedNumber - actualNumber) < SETTING_SYNC_TOLERANCE;
+    }
+    return expected === actual;
   }
 
   async onDeleted() {

@@ -10,6 +10,7 @@ function clamp(n: number, min: number, max: number) {
 export interface FlexitDevice {
     getData(): { unitId: string };
     getSetting(key: string): string | number | boolean | null;
+    applyRegistrySettings?(settings: Record<string, any>): Promise<void>;
     setSetting?(settings: Record<string, any>): Promise<void>;
     setSettings?(settings: Record<string, any>): Promise<void>;
     setCapabilityValue(cap: string, value: any): Promise<void>;
@@ -862,13 +863,18 @@ export class UnitRegistry {
         });
         if (!exhaustWriteOk) throw new Error(`Failed to write exhaust fan profile for ${mode}`);
 
+        const verifiedValues = await this.readPresentValues(
+          context.client,
+          unit,
+          [objects.supply, objects.exhaust],
+        );
         const verifiedSupply = normalizeFanProfilePercent(
-          await this.readPresentValue(context.client, unit, objects.supply),
+          verifiedValues.get(objectKey(objects.supply.type, objects.supply.instance)),
           mode,
           'supply',
         );
         const verifiedExhaust = normalizeFanProfilePercent(
-          await this.readPresentValue(context.client, unit, objects.exhaust),
+          verifiedValues.get(objectKey(objects.exhaust.type, objects.exhaust.instance)),
           mode,
           'exhaust',
         );
@@ -1181,6 +1187,9 @@ export class UnitRegistry {
     }
 
     private updateDeviceSettings(device: FlexitDevice, settings: Record<string, any>) {
+      if (typeof device.applyRegistrySettings === 'function') {
+        return device.applyRegistrySettings(settings);
+      }
       if (typeof device.setSettings === 'function') return device.setSettings(settings);
       if (typeof device.setSetting === 'function') return device.setSetting(settings);
       return Promise.resolve();
@@ -1594,16 +1603,28 @@ export class UnitRegistry {
       unit: UnitState,
       objectId: { type: number; instance: number },
     ): Promise<number> {
-      return new Promise<number>((resolve, reject) => {
+      const values = await this.readPresentValues(client, unit, [objectId]);
+      return values.get(objectKey(objectId.type, objectId.instance)) as number;
+    }
+
+    private async readPresentValues(
+      client: any,
+      unit: UnitState,
+      objectIds: Array<{ type: number; instance: number }>,
+    ): Promise<Map<string, number>> {
+      return new Promise<Map<string, number>>((resolve, reject) => {
         let handled = false;
         const tm = setTimeout(() => {
           if (!handled) {
             handled = true;
-            reject(new Error(`Timeout reading ${objectId.type}:${objectId.instance}`));
+            reject(new Error(`Timeout reading ${objectIds.map((obj) => `${obj.type}:${obj.instance}`).join(', ')}`));
           }
         }, 5000);
 
-        const request = [{ objectId, properties: [{ id: PRESENT_VALUE_ID }] }];
+        const request = objectIds.map((objectId) => ({
+          objectId,
+          properties: [{ id: PRESENT_VALUE_ID }],
+        }));
 
         try {
           client.readPropertyMultiple(unit.ip, request, (err: any, value: any) => {
@@ -1620,15 +1641,25 @@ export class UnitRegistry {
             else if (Array.isArray(value?.values)) candidates = value.values;
             else candidates = [value];
 
+            const extracted = new Map<string, number>();
             for (const candidate of candidates) {
+              const type = Number(candidate?.objectId?.type);
+              const instance = Number(candidate?.objectId?.instance);
+              if (!Number.isFinite(type) || !Number.isFinite(instance)) continue;
               const raw = this.extractNumericPresentValue(candidate);
               if (typeof raw === 'number' && !Number.isNaN(raw)) {
-                resolve(raw);
-                return;
+                extracted.set(objectKey(type, instance), raw);
               }
             }
 
-            reject(new Error(`Missing present value for ${objectId.type}:${objectId.instance}`));
+            for (const objectId of objectIds) {
+              const key = objectKey(objectId.type, objectId.instance);
+              if (!extracted.has(key)) {
+                reject(new Error(`Missing present value for ${objectId.type}:${objectId.instance}`));
+                return;
+              }
+            }
+            resolve(extracted);
           });
         } catch (error) {
           if (handled) return;
