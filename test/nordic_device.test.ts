@@ -29,6 +29,7 @@ describe('Nordic device', () => {
       register: sinon.stub(),
       unregister: sinon.stub(),
       writeSetpoint: sinon.stub().resolves(),
+      setTemperatureSetpoint: sinon.stub().resolves(),
       setFanMode: sinon.stub().resolves(),
       setFanProfileMode: sinon.stub().resolves(),
       resetFilterTimer: sinon.stub().resolves(),
@@ -39,6 +40,10 @@ describe('Nordic device', () => {
       Registry: registryStub,
       FILTER_CHANGE_INTERVAL_MONTHS_SETTING: 'filter_change_interval_months',
       FILTER_CHANGE_INTERVAL_HOURS_LEGACY_SETTING: 'filter_change_interval_hours',
+      TARGET_TEMPERATURE_HOME_SETTING: 'target_temperature_home',
+      TARGET_TEMPERATURE_AWAY_SETTING: 'target_temperature_away',
+      MIN_TARGET_TEMPERATURE_C: 10,
+      MAX_TARGET_TEMPERATURE_C: 30,
       FAN_PROFILE_MODES: ['home', 'away', 'high', 'fireplace', 'cooker'],
       FAN_PROFILE_SETTING_KEYS: {
         home: { supply: 'fan_profile_home_supply', exhaust: 'fan_profile_home_exhaust' },
@@ -51,6 +56,10 @@ describe('Nordic device', () => {
       MAX_FILTER_CHANGE_INTERVAL_HOURS: 8784,
       MIN_FILTER_CHANGE_INTERVAL_MONTHS: 3,
       MAX_FILTER_CHANGE_INTERVAL_MONTHS: 12,
+      normalizeTargetTemperature: (value: number) => {
+        const clamped = Math.max(10, Math.min(30, value));
+        return Number((Math.round(clamped * 2) / 2).toFixed(1));
+      },
       normalizeFanProfilePercent: (value: number, mode: string, fan: string) => {
         const rounded = Math.round(value);
         const ranges: Record<string, Record<string, { min: number; max: number }>> = {
@@ -137,6 +146,44 @@ describe('Nordic device', () => {
     expect(registryStub.writeSetpoint.calledOnceWithExactly('test_unit', 21.5)).to.equal(true);
     expect(registryStub.setFanMode.calledOnceWithExactly('test_unit', 'high')).to.equal(true);
     expect(registryStub.resetFilterTimer.calledOnceWithExactly('test_unit')).to.equal(true);
+  });
+
+  it('normalizes legacy numeric connection label settings during init', async () => {
+    const device = new DeviceClass();
+    device.hasCapability.withArgs(EXHAUST_TEMP_CAPABILITY).returns(true);
+    device.hasCapability.withArgs(RESET_FILTER_CAPABILITY).returns(true);
+    device.getSetting.withArgs('ip').returns('192.0.2.10');
+    device.getSetting.withArgs('bacnetPort').returns(47808);
+    device.getSetting.withArgs('serial').returns('800131-000001');
+    device.getSetting.withArgs('mac').returns('02:00:00:00:00:01');
+
+    await device.onInit();
+
+    expect(device.setSettings.calledOnceWithExactly({ bacnetPort: '47808' })).to.equal(true);
+  });
+
+  it('continues initialization when legacy label normalization fails', async () => {
+    const device = new DeviceClass();
+    const normalizationError = new Error('settings unavailable');
+    device.hasCapability.withArgs(EXHAUST_TEMP_CAPABILITY).returns(true);
+    device.hasCapability.withArgs(RESET_FILTER_CAPABILITY).returns(true);
+    device.getSetting.withArgs('ip').returns('192.0.2.10');
+    device.getSetting.withArgs('bacnetPort').returns(47808);
+    device.getSetting.withArgs('serial').returns('800131-000001');
+    device.getSetting.withArgs('mac').returns('02:00:00:00:00:01');
+    device.setSettings.rejects(normalizationError);
+
+    await device.onInit();
+
+    expect(device.error.called).to.equal(true);
+    expect(
+      device.error.calledWith(
+        'Failed to normalize legacy connection settings:',
+        normalizationError,
+        { bacnetPort: '47808' },
+      ),
+    ).to.equal(true);
+    expect(registryStub.register.calledOnceWithExactly('test_unit', device)).to.equal(true);
   });
 
   it('unregisters device on deletion', async () => {
@@ -226,6 +273,49 @@ describe('Nordic device', () => {
     expect(thrownLow?.message).to.contain('between 3 and 12 months');
     expect(thrownHigh?.message).to.contain('between 3 and 12 months');
     expect(registryStub.setFilterChangeInterval.called).to.equal(false);
+  });
+
+  it('writes changed home and away target temperatures from settings with 0.5C normalization', async () => {
+    const device = new DeviceClass();
+    device.hasCapability.withArgs(EXHAUST_TEMP_CAPABILITY).returns(true);
+    device.hasCapability.withArgs(RESET_FILTER_CAPABILITY).returns(true);
+    device.getSetting.withArgs('target_temperature_home').returns(20);
+    device.getSetting.withArgs('target_temperature_away').returns(18);
+    await device.onInit();
+
+    await device.onSettings({
+      newSettings: {
+        target_temperature_home: 21.26,
+        target_temperature_away: 17.24,
+      },
+      changedKeys: ['target_temperature_home', 'target_temperature_away'],
+    });
+
+    expect(registryStub.setTemperatureSetpoint.firstCall.args).to.deep.equal(['test_unit', 'home', 21.5]);
+    expect(registryStub.setTemperatureSetpoint.secondCall.args).to.deep.equal(['test_unit', 'away', 17]);
+  });
+
+  it('rejects out-of-range target temperature settings', async () => {
+    const device = new DeviceClass();
+    device.hasCapability.withArgs(EXHAUST_TEMP_CAPABILITY).returns(true);
+    device.hasCapability.withArgs(RESET_FILTER_CAPABILITY).returns(true);
+    await device.onInit();
+
+    let thrown: Error | null = null;
+    try {
+      await device.onSettings({
+        newSettings: {
+          target_temperature_home: 31,
+        },
+        changedKeys: ['target_temperature_home'],
+      });
+    } catch (error) {
+      thrown = error as Error;
+    }
+
+    expect(thrown).to.not.equal(null);
+    expect(thrown?.message).to.contain('between 10 and 30');
+    expect(registryStub.setTemperatureSetpoint.called).to.equal(false);
   });
 
   it('writes changed fan profile settings by mode', async () => {

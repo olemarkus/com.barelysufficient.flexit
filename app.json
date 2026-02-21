@@ -387,6 +387,48 @@
         {
           "type": "group",
           "label": {
+            "en": "Temperature setpoints"
+          },
+          "children": [
+            {
+              "id": "target_temperature_home",
+              "type": "number",
+              "label": {
+                "en": "Target temperature, home"
+              },
+              "hint": {
+                "en": "Used in Home, High, Fireplace, and Cooker operation."
+              },
+              "units": {
+                "en": "degC"
+              },
+              "value": 20,
+              "min": 10,
+              "max": 30,
+              "step": 0.5
+            },
+            {
+              "id": "target_temperature_away",
+              "type": "number",
+              "label": {
+                "en": "Target temperature, away"
+              },
+              "hint": {
+                "en": "Used in Away operation."
+              },
+              "units": {
+                "en": "degC"
+              },
+              "value": 18,
+              "min": 10,
+              "max": 30,
+              "step": 0.5
+            }
+          ]
+        },
+        {
+          "type": "group",
+          "label": {
             "en": "Fan setpoints"
           },
           "children": [

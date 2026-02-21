@@ -48,7 +48,8 @@ export = class FlexitNordicDriver extends Homey.Driver {
       },
       settings: {
         ip: u.ip,
-        bacnetPort: u.bacnetPort,
+        // Connection settings are labels, so store as strings.
+        bacnetPort: String(u.bacnetPort),
         serial: u.serial,
         mac: u.mac ?? '',
       },

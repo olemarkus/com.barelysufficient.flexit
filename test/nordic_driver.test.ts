@@ -65,7 +65,7 @@ describe('Nordic driver', () => {
         },
         settings: {
           ip: '192.0.2.10',
-          bacnetPort: 47808,
+          bacnetPort: '47808',
           serial: '800131-000001',
           mac: '02:00:00:00:00:01',
         },

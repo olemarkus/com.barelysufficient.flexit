@@ -41,6 +41,10 @@ const DEFAULT_FAN_SETTINGS: Record<string, number> = {
   fan_profile_cooker_supply: 90,
   fan_profile_cooker_exhaust: 50,
 };
+const DEFAULT_TARGET_TEMPERATURE_SETTINGS: Record<string, number> = {
+  target_temperature_home: 20,
+  target_temperature_away: 18,
+};
 
 function createState() {
   return new FakeNordicUnitState({
@@ -64,13 +68,18 @@ function makeMockDevice(serverIp: string, serverPort: number, filterIntervalHour
     Math.round(filterIntervalHours / FILTER_CHANGE_INTERVAL_HOURS_PER_MONTH),
   );
   const currentFanSettings = { ...DEFAULT_FAN_SETTINGS };
+  const currentTargetTemperatureSettings = { ...DEFAULT_TARGET_TEMPERATURE_SETTINGS };
   const getSetting = sinon.stub();
   getSetting.withArgs('ip').returns(serverIp);
   getSetting.withArgs('bacnetPort').returns(serverPort);
   getSetting.withArgs('serial').returns('800131-123456');
   getSetting.withArgs('filter_change_interval_hours').callsFake(() => currentFilterIntervalHours);
   getSetting.withArgs('filter_change_interval_months').callsFake(() => currentFilterIntervalMonths);
-  getSetting.callsFake((key: string) => currentFanSettings[key]);
+  getSetting.callsFake((key: string) => {
+    if (Object.prototype.hasOwnProperty.call(currentFanSettings, key)) return currentFanSettings[key];
+    if (Object.prototype.hasOwnProperty.call(currentTargetTemperatureSettings, key)) return currentTargetTemperatureSettings[key];
+    return undefined;
+  });
 
   const setSettings = sinon.stub().callsFake(async (settings: Record<string, any>) => {
     const nextHours = settings?.filter_change_interval_hours;
@@ -89,6 +98,12 @@ function makeMockDevice(serverIp: string, serverPort: number, filterIntervalHour
         currentFanSettings[key] = value;
       }
     }
+    for (const [key, value] of Object.entries(settings ?? {})) {
+      if (!Object.prototype.hasOwnProperty.call(currentTargetTemperatureSettings, key)) continue;
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        currentTargetTemperatureSettings[key] = value;
+      }
+    }
   });
   const setSetting = sinon.stub().callsFake(async (settings: Record<string, any>) => {
     const nextHours = settings?.filter_change_interval_hours;
@@ -105,6 +120,12 @@ function makeMockDevice(serverIp: string, serverPort: number, filterIntervalHour
       if (!Object.prototype.hasOwnProperty.call(currentFanSettings, key)) continue;
       if (typeof value === 'number' && Number.isFinite(value)) {
         currentFanSettings[key] = value;
+      }
+    }
+    for (const [key, value] of Object.entries(settings ?? {})) {
+      if (!Object.prototype.hasOwnProperty.call(currentTargetTemperatureSettings, key)) continue;
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        currentTargetTemperatureSettings[key] = value;
       }
     }
   });

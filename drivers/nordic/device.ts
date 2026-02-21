@@ -14,14 +14,20 @@ import {
   normalizeFanProfilePercent,
   filterIntervalMonthsToHours,
   filterIntervalHoursToMonths,
+  TARGET_TEMPERATURE_HOME_SETTING,
+  TARGET_TEMPERATURE_AWAY_SETTING,
+  MIN_TARGET_TEMPERATURE_C,
+  MAX_TARGET_TEMPERATURE_C,
+  normalizeTargetTemperature,
 } from '../../lib/UnitRegistry';
 
 const EXHAUST_TEMP_CAPABILITY = 'measure_temperature.exhaust';
 const RESET_FILTER_CAPABILITY = 'button.reset_filter';
 const SUPPLY_SETPOINT_CAPABILITY = 'measure_fan_setpoint_percent';
 const EXTRACT_SETPOINT_CAPABILITY = 'measure_fan_setpoint_percent.extract';
+const CONNECTION_LABEL_SETTING_KEYS = ['ip', 'bacnetPort', 'serial', 'mac'] as const;
 const REGISTRY_SETTING_SUPPRESSION_WINDOW_MS = 30_000;
-const SETTING_SYNC_TOLERANCE = 0.5;
+const SETTING_SYNC_TOLERANCE = 0.1;
 const REQUIRED_CAPABILITIES = [
   EXHAUST_TEMP_CAPABILITY,
   RESET_FILTER_CAPABILITY,
@@ -49,6 +55,7 @@ export = class FlexitNordicDevice extends Homey.Device {
         this.error(`Failed adding capability '${capability}':`, e);
       }
     }
+    await this.normalizeConnectionLabelSettings();
 
     const { unitId } = this.getData();
     try {
@@ -73,6 +80,24 @@ export = class FlexitNordicDevice extends Homey.Device {
     });
   }
 
+  private async normalizeConnectionLabelSettings() {
+    const updates: Record<string, string> = {};
+    for (const key of CONNECTION_LABEL_SETTING_KEYS) {
+      const value = this.getSetting(key);
+      if (typeof value === 'string') continue;
+      if (value === null || value === undefined) continue;
+      updates[key] = String(value);
+    }
+    if (Object.keys(updates).length === 0) return;
+
+    try {
+      await this.setSettings(updates);
+      this.log('Normalized legacy connection settings:', updates);
+    } catch (error) {
+      this.error('Failed to normalize legacy connection settings:', error, updates);
+    }
+  }
+
   async onSettings({
     newSettings,
     changedKeys,
@@ -83,13 +108,59 @@ export = class FlexitNordicDevice extends Homey.Device {
     const effectiveChangedKeys = this.filterSuppressedChangedKeys(changedKeys, newSettings);
     const monthsChanged = effectiveChangedKeys.includes(FILTER_CHANGE_INTERVAL_MONTHS_SETTING);
     const legacyHoursChanged = effectiveChangedKeys.includes(FILTER_CHANGE_INTERVAL_HOURS_LEGACY_SETTING);
+    const homeTargetTemperatureChanged = effectiveChangedKeys.includes(TARGET_TEMPERATURE_HOME_SETTING);
+    const awayTargetTemperatureChanged = effectiveChangedKeys.includes(TARGET_TEMPERATURE_AWAY_SETTING);
     const changedFanModes = this.getChangedFanModes(effectiveChangedKeys);
-    if (!monthsChanged && !legacyHoursChanged && changedFanModes.length === 0) return;
+    if (
+      !monthsChanged
+      && !legacyHoursChanged
+      && !homeTargetTemperatureChanged
+      && !awayTargetTemperatureChanged
+      && changedFanModes.length === 0
+    ) return;
 
     const { unitId } = this.getData();
     await this.maybeHandleFilterIntervalSetting(unitId, newSettings, monthsChanged, legacyHoursChanged);
+    await this.maybeHandleTargetTemperatureSetting(unitId, 'home', newSettings, homeTargetTemperatureChanged);
+    await this.maybeHandleTargetTemperatureSetting(unitId, 'away', newSettings, awayTargetTemperatureChanged);
     for (const mode of changedFanModes) {
       await this.maybeHandleFanProfileModeSetting(unitId, mode, newSettings);
+    }
+  }
+
+  private async maybeHandleTargetTemperatureSetting(
+    unitId: string,
+    mode: 'home' | 'away',
+    newSettings: Record<string, unknown>,
+    changed: boolean,
+  ) {
+    if (!changed) return;
+
+    const settingKey = mode === 'home' ? TARGET_TEMPERATURE_HOME_SETTING : TARGET_TEMPERATURE_AWAY_SETTING;
+    const requestedValue = Number(newSettings[settingKey]);
+    if (!Number.isFinite(requestedValue)) {
+      throw new Error(`${mode} target temperature must be numeric.`);
+    }
+    if (requestedValue < MIN_TARGET_TEMPERATURE_C || requestedValue > MAX_TARGET_TEMPERATURE_C) {
+      throw new Error(
+        `${mode} target temperature must be between ${MIN_TARGET_TEMPERATURE_C}`
+        + ` and ${MAX_TARGET_TEMPERATURE_C} degC.`,
+      );
+    }
+    const normalizedRequestedValue = normalizeTargetTemperature(requestedValue);
+
+    const currentValue = Number(this.getSetting(settingKey));
+    if (
+      Number.isFinite(currentValue)
+      && Math.abs(currentValue - normalizedRequestedValue) < SETTING_SYNC_TOLERANCE
+    ) return;
+
+    try {
+      this.log(`Updating ${mode} target temperature to ${normalizedRequestedValue}C for unit ${unitId}`);
+      await Registry.setTemperatureSetpoint(unitId, mode, normalizedRequestedValue);
+    } catch (error) {
+      this.error(`Failed to update ${mode} target temperature:`, error);
+      throw new Error(`Failed to update ${mode} target temperature on the unit.`);
     }
   }
 
