@@ -28,5 +28,8 @@
   },
   "1.1.1": {
     "en": "Restoring missing images."
+  },
+  "1.2.0": {
+    "en": "Added separate Home and Away target temperature settings in Advanced Settings, and the main target temperature now follows the active mode automatically. Added per-mode fan profile settings (Home/Away/High/Fireplace/Cooker), current supply and extract fan setpoint readouts, and new Flow cards to set a fan profile for a selected mode or trigger when supply/extract fan setpoints change. Improved mode handling so fan mode and active setpoints stay consistent."
   }
 }
