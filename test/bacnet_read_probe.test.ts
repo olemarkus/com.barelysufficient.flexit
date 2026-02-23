@@ -31,6 +31,34 @@ describe('bacnet-read-probe', () => {
     expect(parsed.queries[0].objectType).to.equal(264);
   });
 
+  it('parses watch options and interval', () => {
+    const parsed = probe.parseArgs([
+      '--ip',
+      '192.0.2.15',
+      '--query',
+      '264:2:4743',
+      '--watch',
+      '--interval',
+      '250',
+      '--changes-only',
+    ]);
+    expect(parsed.watch).to.equal(true);
+    expect(parsed.intervalMs).to.equal(250);
+    expect(parsed.changesOnly).to.equal(true);
+  });
+
+  it('enables watch when changes-only is set', () => {
+    const parsed = probe.parseArgs([
+      '--ip',
+      '192.0.2.15',
+      '--query',
+      '264:2:4743',
+      '--changes-only',
+    ]);
+    expect(parsed.watch).to.equal(true);
+    expect(parsed.changesOnly).to.equal(true);
+  });
+
   it('rejects invalid mode values', () => {
     expect(() => probe.parseArgs(['--ip', '127.0.0.1', '--mode', 'bad', '--query', '264:2:4743']))
       .to.throw('Invalid mode');
@@ -142,5 +170,128 @@ describe('bacnet-read-probe', () => {
     expect(probe.formatIndex(probe.ASN1_ARRAY_ALL)).to.equal('all');
     expect(probe.renderBacnetValue({ type: Bacnet.enum.ApplicationTags.REAL, value: 1.25 }))
       .to.include('REAL=');
+  });
+
+  it('normalizes rpm property/object results and composes snapshot keys', () => {
+    const rawProp = {
+      property: { id: Bacnet.enum.PropertyIdentifier.PRESENT_VALUE, index: probe.ASN1_ARRAY_ALL },
+      value: [{ type: Bacnet.enum.ApplicationTags.REAL, value: 42.5 }],
+    };
+    const normalizedProp = probe.normalizePropertyResult(rawProp);
+    expect(normalizedProp).to.deep.equal({
+      property: { id: Bacnet.enum.PropertyIdentifier.PRESENT_VALUE, index: probe.ASN1_ARRAY_ALL },
+      value: [{ type: 'REAL', value: 42.5 }],
+    });
+
+    const normalizedObjects = probe.normalizeRpmObjects([
+      {
+        objectId: { type: Bacnet.enum.ObjectType.ANALOG_VALUE, instance: 60 },
+        values: [rawProp],
+      },
+    ]);
+    expect(normalizedObjects).to.deep.equal([
+      {
+        objectId: { type: Bacnet.enum.ObjectType.ANALOG_VALUE, instance: 60 },
+        values: [normalizedProp],
+      },
+    ]);
+
+    expect(
+      probe.snapshotEntryKey(
+        { type: Bacnet.enum.ObjectType.ANALOG_VALUE, instance: 60 },
+        { id: Bacnet.enum.PropertyIdentifier.PRESENT_VALUE, index: probe.ASN1_ARRAY_ALL },
+      ),
+    ).to.equal('ANALOG_VALUE:60 PRESENT_VALUE(85)[all]');
+  });
+
+  it('computes snapshot diffs for changed, added, and removed entries', () => {
+    const previous = new Map<string, any>([
+      ['ANALOG_VALUE:60 PRESENT_VALUE(85)[all]', [{ type: 'REAL', value: 10 }]],
+      ['ANALOG_VALUE:61 PRESENT_VALUE(85)[all]', [{ type: 'REAL', value: 20 }]],
+    ]);
+    const current = new Map<string, any>([
+      ['ANALOG_VALUE:60 PRESENT_VALUE(85)[all]', [{ type: 'REAL', value: 11 }]],
+      ['ANALOG_VALUE:62 PRESENT_VALUE(85)[all]', [{ type: 'REAL', value: 30 }]],
+    ]);
+
+    const changes = probe.diffSnapshots(previous, current);
+    expect(changes).to.deep.equal([
+      {
+        key: 'ANALOG_VALUE:60 PRESENT_VALUE(85)[all]',
+        kind: 'changed',
+        before: [{ type: 'REAL', value: 10 }],
+        after: [{ type: 'REAL', value: 11 }],
+      },
+      {
+        key: 'ANALOG_VALUE:61 PRESENT_VALUE(85)[all]',
+        kind: 'removed',
+        before: [{ type: 'REAL', value: 20 }],
+        after: undefined,
+      },
+      {
+        key: 'ANALOG_VALUE:62 PRESENT_VALUE(85)[all]',
+        kind: 'added',
+        before: undefined,
+        after: [{ type: 'REAL', value: 30 }],
+      },
+    ]);
+  });
+
+  it('builds empty snapshots for nullish or empty rp/rpm inputs', () => {
+    const rpFromNull = probe.buildSnapshotFromRpResponses(null as any);
+    const rpFromUndefined = probe.buildSnapshotFromRpResponses(undefined as any);
+    const rpFromEmpty = probe.buildSnapshotFromRpResponses([]);
+    const rpmFromNull = probe.buildSnapshotFromRpmResponse(null as any);
+    const rpmFromUndefined = probe.buildSnapshotFromRpmResponse(undefined as any);
+    const rpmFromEmpty = probe.buildSnapshotFromRpmResponse([]);
+
+    expect(rpFromNull).to.be.instanceOf(Map);
+    expect(rpFromUndefined).to.be.instanceOf(Map);
+    expect(rpFromEmpty).to.be.instanceOf(Map);
+    expect(rpmFromNull).to.be.instanceOf(Map);
+    expect(rpmFromUndefined).to.be.instanceOf(Map);
+    expect(rpmFromEmpty).to.be.instanceOf(Map);
+    expect((rpFromNull as Map<unknown, unknown>).size).to.equal(0);
+    expect((rpFromUndefined as Map<unknown, unknown>).size).to.equal(0);
+    expect((rpFromEmpty as Map<unknown, unknown>).size).to.equal(0);
+    expect((rpmFromNull as Map<unknown, unknown>).size).to.equal(0);
+    expect((rpmFromUndefined as Map<unknown, unknown>).size).to.equal(0);
+    expect((rpmFromEmpty as Map<unknown, unknown>).size).to.equal(0);
+  });
+
+  it('builds snapshots with stable keys for rp and rpm normalized payloads', () => {
+    const rpSnapshot = probe.buildSnapshotFromRpResponses([
+      {
+        objectId: { type: Bacnet.enum.ObjectType.ANALOG_VALUE, instance: 60 },
+        property: { id: Bacnet.enum.PropertyIdentifier.PRESENT_VALUE, index: probe.ASN1_ARRAY_ALL },
+        values: [{ type: 'REAL', value: 50 }],
+      },
+    ]);
+    const rpmSnapshot = probe.buildSnapshotFromRpmResponse([
+      {
+        objectId: { type: Bacnet.enum.ObjectType.ANALOG_VALUE, instance: 60 },
+        values: [
+          {
+            property: { id: Bacnet.enum.PropertyIdentifier.PRESENT_VALUE, index: probe.ASN1_ARRAY_ALL },
+            value: [{ type: 'REAL', value: 50 }],
+          },
+        ],
+      },
+    ]);
+    const expectedKey = 'ANALOG_VALUE:60 PRESENT_VALUE(85)[all]';
+    expect(Array.from(rpSnapshot.keys())).to.deep.equal([expectedKey]);
+    expect(Array.from(rpmSnapshot.keys())).to.deep.equal([expectedKey]);
+  });
+
+  it('compares values deeply independent of key order and with float tolerance', () => {
+    expect(probe.valuesEqual({ a: 1, b: 2 }, { b: 2, a: 1 })).to.equal(true);
+    expect(probe.valuesEqual(
+      [{ type: 'REAL', value: 10.0000001 }],
+      [{ type: 'REAL', value: 10.0000002 }],
+    )).to.equal(true);
+    expect(probe.valuesEqual(
+      [{ type: 'REAL', value: 10.0001 }],
+      [{ type: 'REAL', value: 10.0002 }],
+    )).to.equal(false);
   });
 });
