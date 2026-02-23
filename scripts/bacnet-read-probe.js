@@ -54,6 +54,9 @@ function printUsage() {
   console.log('  --bind <ipv4>               Local bind interface address');
   console.log('  --timeout <ms>              APDU timeout (default 5000)');
   console.log('  --mode <rpm|rp>             readPropertyMultiple (default) or readProperty');
+  console.log('  --watch                     Continuously poll until Ctrl+C');
+  console.log('  --interval <ms>             Poll interval for watch mode (default 1000)');
+  console.log('  --changes-only              In watch mode, print only changed values');
   console.log('  --query <spec>              Query, repeatable');
   console.log('  --json                      Print normalized JSON response');
   console.log('  --help                      Show this help');
@@ -140,6 +143,9 @@ function parseArgs(argv) {
     bindAddress: undefined,
     timeoutMs: 5000,
     mode: 'rpm',
+    watch: false,
+    intervalMs: 1000,
+    changesOnly: false,
     querySpecs: [],
     json: false,
   };
@@ -155,6 +161,16 @@ function parseArgs(argv) {
 
     if (arg === '--json') {
       options.json = true;
+      continue;
+    }
+
+    if (arg === '--watch') {
+      options.watch = true;
+      continue;
+    }
+
+    if (arg === '--changes-only') {
+      options.changesOnly = true;
       continue;
     }
 
@@ -188,6 +204,12 @@ function parseArgs(argv) {
       continue;
     }
 
+    if (arg === '--interval') {
+      options.intervalMs = parseNumber(requireValue(i, '--interval'), 'interval', 1);
+      i += 1;
+      continue;
+    }
+
     if (arg === '--mode') {
       const mode = String(requireValue(i, '--mode')).toLowerCase();
       if (mode !== 'rpm' && mode !== 'rp') {
@@ -216,6 +238,7 @@ function parseArgs(argv) {
 
   if (!options.ip) throw new Error('Missing --ip');
   if (options.querySpecs.length === 0) throw new Error('At least one --query is required');
+  if (options.changesOnly) options.watch = true;
 
   return {
     ...options,
@@ -237,6 +260,90 @@ function appTagName(id) {
 
 function formatIndex(index) {
   return index === ASN1_ARRAY_ALL ? 'all' : String(index);
+}
+
+function normalizePropertyResult(propResult) {
+  const id = propResult?.property?.id ?? propResult?.id;
+  const index = propResult?.property?.index ?? propResult?.index ?? ASN1_ARRAY_ALL;
+  return {
+    property: { id, index },
+    value: (propResult?.value || []).map(normalizeBacnetValue),
+  };
+}
+
+function normalizeRpmObjects(objects) {
+  return (objects || []).map((objectResult) => ({
+    objectId: objectResult?.objectId,
+    values: (objectResult?.values || []).map(normalizePropertyResult),
+  }));
+}
+
+function normalizedValueText(value) {
+  if (!value) return '<no-value>';
+  if (value.type === 'ERROR') return `ERROR(${value.errorClass}:${value.errorCode})`;
+  return `${value.type}=${JSON.stringify(value.value)}`;
+}
+
+function renderNormalizedValues(values) {
+  if (!Array.isArray(values) || values.length === 0) return '<empty>';
+  return values.map(normalizedValueText).join(', ');
+}
+
+function snapshotEntryKey(objectId, property) {
+  return (
+    `${objectTypeName(objectId?.type)}:${objectId?.instance}`
+    + ` ${propertyName(property?.id)}(${property?.id})[${formatIndex(property?.index ?? ASN1_ARRAY_ALL)}]`
+  );
+}
+
+function buildSnapshotFromRpResponses(responses) {
+  const snapshot = new Map();
+  for (const entry of responses || []) {
+    snapshot.set(snapshotEntryKey(entry.objectId, entry.property), entry.values || []);
+  }
+  return snapshot;
+}
+
+function buildSnapshotFromRpmResponse(response) {
+  const snapshot = new Map();
+  for (const objectResult of response || []) {
+    const objectId = objectResult?.objectId || {};
+    for (const propResult of objectResult?.values || []) {
+      snapshot.set(
+        snapshotEntryKey(objectId, propResult?.property || {}),
+        propResult?.value || [],
+      );
+    }
+  }
+  return snapshot;
+}
+
+function valuesEqual(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function diffSnapshots(previous, current) {
+  const changes = [];
+  for (const [key, value] of current.entries()) {
+    if (!previous.has(key)) {
+      changes.push({ key, kind: 'added', before: undefined, after: value });
+      continue;
+    }
+    const oldValue = previous.get(key);
+    if (!valuesEqual(oldValue, value)) {
+      changes.push({ key, kind: 'changed', before: oldValue, after: value });
+    }
+  }
+  for (const [key, value] of previous.entries()) {
+    if (!current.has(key)) {
+      changes.push({ key, kind: 'removed', before: value, after: undefined });
+    }
+  }
+  return changes.sort((a, b) => a.key.localeCompare(b.key));
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function renderBacnetValue(value) {
@@ -327,10 +434,170 @@ async function main(argv = process.argv.slice(2)) {
     console.error('[Probe] BACnet client error:', err);
   });
 
+  const collectRpPoll = async () => {
+    const responses = [];
+    for (const query of options.queries) {
+      const result = await readProperty(client, options.ip, query);
+      const nodes = extractReadPropertyNodes(result);
+      responses.push({
+        objectId: { type: query.objectType, instance: query.instance },
+        property: { id: query.propertyId, index: query.index },
+        values: nodes.map(normalizeBacnetValue),
+      });
+    }
+    return { mode: 'rp', responses };
+  };
+
+  const collectRpmPoll = async () => {
+    const { requestArray, value } = await readPropertyMultiple(client, options.ip, options.queries);
+    const response = normalizeRpmObjects(value?.values || []);
+    return {
+      mode: 'rpm',
+      request: requestArray.map((entry) => ({
+        objectId: entry.objectId,
+        properties: entry.properties,
+      })),
+      response,
+    };
+  };
+
+  const collectPoll = async () => (options.mode === 'rp' ? collectRpPoll() : collectRpmPoll());
+
+  const printRpResponses = (responses) => {
+    for (const entry of responses || []) {
+      console.log(
+        `[RP] ${objectTypeName(entry.objectId?.type)}:${entry.objectId?.instance}`
+        + ` ${propertyName(entry.property?.id)}(${entry.property?.id})[${formatIndex(entry.property?.index)}]`
+        + ` -> ${renderNormalizedValues(entry.values)}`,
+      );
+    }
+  };
+
+  const printRpmResponse = (response) => {
+    for (const objectResult of response || []) {
+      const objectId = objectResult?.objectId || {};
+      console.log(`[RPM] object ${objectTypeName(objectId.type)}:${objectId.instance}`);
+      for (const propResult of objectResult?.values || []) {
+        console.log(
+          `  ${propertyName(propResult.property?.id)}(${propResult.property?.id})`
+          + `[${formatIndex(propResult.property?.index)}] -> ${renderNormalizedValues(propResult.value)}`,
+        );
+      }
+    }
+  };
+
+  const printPollResult = (result) => {
+    if (result.mode === 'rp') printRpResponses(result.responses);
+    else printRpmResponse(result.response);
+  };
+
+  const pollJsonPayload = (result) => {
+    if (result.mode === 'rp') {
+      return { mode: 'rp', responses: result.responses };
+    }
+    return {
+      mode: 'rpm',
+      request: result.request,
+      response: result.response,
+    };
+  };
+
+  const buildSnapshot = (result) => (
+    result.mode === 'rp'
+      ? buildSnapshotFromRpResponses(result.responses)
+      : buildSnapshotFromRpmResponse(result.response)
+  );
+
+  const printChanges = (changes) => {
+    for (const change of changes) {
+      if (change.kind === 'added') {
+        console.log(`[CHANGED] + ${change.key} -> ${renderNormalizedValues(change.after)}`);
+      } else if (change.kind === 'removed') {
+        console.log(`[CHANGED] - ${change.key} (removed, was ${renderNormalizedValues(change.before)})`);
+      } else {
+        console.log(
+          `[CHANGED] ~ ${change.key}:`
+          + ` ${renderNormalizedValues(change.before)} => ${renderNormalizedValues(change.after)}`,
+        );
+      }
+    }
+  };
+
+  const watchPolls = async () => {
+    let iteration = 0;
+    let previous = null;
+    let stopRequested = false;
+    const stopHandler = () => {
+      if (!stopRequested) {
+        stopRequested = true;
+        console.log('\n[Watch] Stop requested, exiting after current cycle...');
+      }
+    };
+    process.on('SIGINT', stopHandler);
+    process.on('SIGTERM', stopHandler);
+
+    try {
+      while (!stopRequested) {
+        iteration += 1;
+        const timestamp = new Date().toISOString();
+        try {
+          const result = await collectPoll();
+          const snapshot = buildSnapshot(result);
+          if (options.changesOnly) {
+            if (previous === null) {
+              console.log(`[Watch] ${timestamp} baseline captured (${snapshot.size} values)`);
+              if (options.json) {
+                console.log(JSON.stringify({
+                  mode: 'watch',
+                  kind: 'baseline',
+                  timestamp,
+                  iteration,
+                  size: snapshot.size,
+                }, null, 2));
+              }
+            } else {
+              const changes = diffSnapshots(previous, snapshot);
+              if (changes.length > 0) {
+                console.log(`[Watch] ${timestamp} ${changes.length} change(s)`);
+                printChanges(changes);
+                if (options.json) {
+                  console.log(JSON.stringify({
+                    mode: 'watch',
+                    kind: 'changes',
+                    timestamp,
+                    iteration,
+                    changes,
+                  }, null, 2));
+                }
+              }
+            }
+          } else {
+            console.log(`[Watch] ${timestamp} poll=${iteration}`);
+            printPollResult(result);
+            if (options.json) {
+              console.log(JSON.stringify(pollJsonPayload(result), null, 2));
+            }
+          }
+          previous = snapshot;
+        } catch (error) {
+          console.error(`[Watch] ${timestamp} poll failed:`, error?.message || error);
+        }
+        if (stopRequested) break;
+        await sleep(options.intervalMs);
+      }
+    } finally {
+      process.off('SIGINT', stopHandler);
+      process.off('SIGTERM', stopHandler);
+    }
+  };
+
   console.log(
     `[Probe] target=${options.ip}:${options.targetPort}`
     + ` local=${options.bindAddress || '0.0.0.0'}:${options.localPort}`
-    + ` mode=${options.mode} timeoutMs=${options.timeoutMs}`,
+    + ` mode=${options.mode} timeoutMs=${options.timeoutMs}`
+    + (options.watch
+      ? ` watch intervalMs=${options.intervalMs} changesOnly=${options.changesOnly}`
+      : ''),
   );
   options.queries.forEach((query) => {
     console.log(
@@ -340,65 +607,13 @@ async function main(argv = process.argv.slice(2)) {
   });
 
   try {
-    if (options.mode === 'rp') {
-      const out = [];
-      for (const query of options.queries) {
-        const result = await readProperty(client, options.ip, query);
-        const nodes = extractReadPropertyNodes(result);
-        const line = nodes.map(renderBacnetValue).join(', ');
-        console.log(
-          `[RP] ${objectTypeName(query.objectType)}:${query.instance}`
-          + ` ${propertyName(query.propertyId)}(${query.propertyId})[${formatIndex(query.index)}]`
-          + ` -> ${line || '<empty>'}`,
-        );
-
-        out.push({
-          objectId: { type: query.objectType, instance: query.instance },
-          property: { id: query.propertyId, index: query.index },
-          values: nodes.map(normalizeBacnetValue),
-        });
-      }
-
-      if (options.json) {
-        console.log(JSON.stringify({ mode: 'rp', responses: out }, null, 2));
-      }
+    if (options.watch) {
+      await watchPolls();
     } else {
-      const { requestArray, value } = await readPropertyMultiple(client, options.ip, options.queries);
-      const objects = value?.values || [];
-
-      for (const objectResult of objects) {
-        const objectId = objectResult?.objectId || {};
-        console.log(`[RPM] object ${objectTypeName(objectId.type)}:${objectId.instance}`);
-        for (const propResult of objectResult?.values || []) {
-          const id = propResult?.property?.id ?? propResult?.id;
-          const index = propResult?.property?.index ?? propResult?.index ?? ASN1_ARRAY_ALL;
-          const nodes = Array.isArray(propResult?.value) ? propResult.value : [];
-          const line = nodes.map(renderBacnetValue).join(', ');
-          console.log(
-            `  ${propertyName(id)}(${id})[${formatIndex(index)}] -> ${line || '<empty>'}`,
-          );
-        }
-      }
-
+      const result = await collectPoll();
+      printPollResult(result);
       if (options.json) {
-        const normalized = {
-          mode: 'rpm',
-          request: requestArray.map((entry) => ({
-            objectId: entry.objectId,
-            properties: entry.properties,
-          })),
-          response: objects.map((objectResult) => ({
-            objectId: objectResult.objectId,
-            values: (objectResult.values || []).map((propResult) => ({
-              property: {
-                id: propResult?.property?.id ?? propResult?.id,
-                index: propResult?.property?.index ?? propResult?.index ?? ASN1_ARRAY_ALL,
-              },
-              value: (propResult.value || []).map(normalizeBacnetValue),
-            })),
-          })),
-        };
-        console.log(JSON.stringify(normalized, null, 2));
+        console.log(JSON.stringify(pollJsonPayload(result), null, 2));
       }
     }
   } finally {
@@ -426,6 +641,16 @@ module.exports = {
   propertyName,
   appTagName,
   formatIndex,
+  normalizePropertyResult,
+  normalizeRpmObjects,
+  normalizedValueText,
+  renderNormalizedValues,
+  snapshotEntryKey,
+  buildSnapshotFromRpResponses,
+  buildSnapshotFromRpmResponse,
+  valuesEqual,
+  diffSnapshots,
+  sleep,
   renderBacnetValue,
   normalizeBacnetValue,
   extractReadPropertyNodes,
