@@ -6,7 +6,7 @@
     "en": "Supply fan setpoint changed"
   },
   "hint": {
-    "en": "Triggers when the active supply fan setpoint changes. Token is percentage (0-100%)."
+    "en": "Triggers when the active supply fan setpoint changes. Token value is percent in the range 0 to 100."
   },
   "args": [
     {
@@ -20,7 +20,7 @@
       "name": "setpoint_percent",
       "type": "number",
       "title": {
-        "en": "Setpoint (%)"
+        "en": "Setpoint"
       }
     }
   ]
