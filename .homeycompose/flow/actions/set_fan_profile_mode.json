@@ -57,7 +57,7 @@
       "name": "supply_percent",
       "type": "number",
       "title": {
-        "en": "Supply fan %"
+        "en": "Supply fan"
       },
       "min": 30,
       "max": 100,
@@ -67,7 +67,7 @@
       "name": "exhaust_percent",
       "type": "number",
       "title": {
-        "en": "Exhaust fan %"
+        "en": "Exhaust fan"
       },
       "min": 30,
       "max": 100,
