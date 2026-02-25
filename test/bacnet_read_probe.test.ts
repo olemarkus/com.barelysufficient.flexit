@@ -31,6 +31,34 @@ describe('bacnet-read-probe', () => {
     expect(parsed.queries[0].objectType).to.equal(264);
   });
 
+  it('parses watch options and interval', () => {
+    const parsed = probe.parseArgs([
+      '--ip',
+      '192.0.2.15',
+      '--query',
+      '264:2:4743',
+      '--watch',
+      '--interval',
+      '250',
+      '--changes-only',
+    ]);
+    expect(parsed.watch).to.equal(true);
+    expect(parsed.intervalMs).to.equal(250);
+    expect(parsed.changesOnly).to.equal(true);
+  });
+
+  it('enables watch when changes-only is set', () => {
+    const parsed = probe.parseArgs([
+      '--ip',
+      '192.0.2.15',
+      '--query',
+      '264:2:4743',
+      '--changes-only',
+    ]);
+    expect(parsed.watch).to.equal(true);
+    expect(parsed.changesOnly).to.equal(true);
+  });
+
   it('rejects invalid mode values', () => {
     expect(() => probe.parseArgs(['--ip', '127.0.0.1', '--mode', 'bad', '--query', '264:2:4743']))
       .to.throw('Invalid mode');
@@ -142,5 +170,38 @@ describe('bacnet-read-probe', () => {
     expect(probe.formatIndex(probe.ASN1_ARRAY_ALL)).to.equal('all');
     expect(probe.renderBacnetValue({ type: Bacnet.enum.ApplicationTags.REAL, value: 1.25 }))
       .to.include('REAL=');
+  });
+
+  it('computes snapshot diffs for changed, added, and removed entries', () => {
+    const previous = new Map<string, any>([
+      ['ANALOG_VALUE:60 PRESENT_VALUE(85)[all]', [{ type: 'REAL', value: 10 }]],
+      ['ANALOG_VALUE:61 PRESENT_VALUE(85)[all]', [{ type: 'REAL', value: 20 }]],
+    ]);
+    const current = new Map<string, any>([
+      ['ANALOG_VALUE:60 PRESENT_VALUE(85)[all]', [{ type: 'REAL', value: 11 }]],
+      ['ANALOG_VALUE:62 PRESENT_VALUE(85)[all]', [{ type: 'REAL', value: 30 }]],
+    ]);
+
+    const changes = probe.diffSnapshots(previous, current);
+    expect(changes).to.deep.equal([
+      {
+        key: 'ANALOG_VALUE:60 PRESENT_VALUE(85)[all]',
+        kind: 'changed',
+        before: [{ type: 'REAL', value: 10 }],
+        after: [{ type: 'REAL', value: 11 }],
+      },
+      {
+        key: 'ANALOG_VALUE:61 PRESENT_VALUE(85)[all]',
+        kind: 'removed',
+        before: [{ type: 'REAL', value: 20 }],
+        after: undefined,
+      },
+      {
+        key: 'ANALOG_VALUE:62 PRESENT_VALUE(85)[all]',
+        kind: 'added',
+        before: undefined,
+        after: [{ type: 'REAL', value: 30 }],
+      },
+    ]);
   });
 });
