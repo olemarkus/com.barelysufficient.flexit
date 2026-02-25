@@ -403,6 +403,77 @@ describe('UnitRegistry fake-unit e2e', function unitRegistryFakeUdpE2e() {
     );
   });
 
+  it('writes heating coil enable/disable using BV:445 with priority 13', async () => {
+    const device = makeMockDevice(SERVER_BIND_ADDRESS, serverPort, 4380);
+    registry.register('test_unit', device);
+
+    await registry.setHeatingCoilEnabled('test_unit', false);
+    await waitFor(() => {
+      const read = state.readPresentValue(OBJECT_TYPE.BINARY_VALUE, 445, PROPERTY_ID.PRESENT_VALUE);
+      return read.ok && read.value.value === 0;
+    });
+
+    await registry.setHeatingCoilEnabled('test_unit', true);
+    await waitFor(() => {
+      const read = state.readPresentValue(OBJECT_TYPE.BINARY_VALUE, 445, PROPERTY_ID.PRESENT_VALUE);
+      return read.ok && read.value.value === 1;
+    });
+
+    const writes = writePresentValueSpy.getCalls().filter((call: any) => (
+      call.args[0] === OBJECT_TYPE.BINARY_VALUE
+      && call.args[1] === 445
+      && call.args[2] === PROPERTY_ID.PRESENT_VALUE
+      && call.args[4] === 13
+    ));
+
+    expect(writes.some((call: any) => call.args[3] === 0)).to.equal(true);
+    expect(writes.some((call: any) => call.args[3] === 1)).to.equal(true);
+  });
+
+  it('reads and toggles heating coil state via BV:445', async () => {
+    const device = makeMockDevice(SERVER_BIND_ADDRESS, serverPort, 4380);
+    registry.register('test_unit', device);
+
+    const initialState = await registry.getHeatingCoilEnabled('test_unit');
+    expect(initialState).to.equal(true);
+
+    const toggledState = await registry.toggleHeatingCoilEnabled('test_unit');
+    expect(toggledState).to.equal(false);
+    await waitFor(() => {
+      const read = state.readPresentValue(OBJECT_TYPE.BINARY_VALUE, 445, PROPERTY_ID.PRESENT_VALUE);
+      return read.ok && read.value.value === 0;
+    });
+
+    const toggleWrite = writePresentValueSpy.getCalls().find((call: any) => (
+      call.args[0] === OBJECT_TYPE.BINARY_VALUE
+      && call.args[1] === 445
+      && call.args[2] === PROPERTY_ID.PRESENT_VALUE
+      && call.args[3] === 0
+      && call.args[4] === 13
+    ));
+    expect(toggleWrite).to.not.equal(undefined);
+  });
+
+  it('emits heating coil state change callback when the state changes', async () => {
+    const device = makeMockDevice(SERVER_BIND_ADDRESS, serverPort, 4380);
+    registry.register('test_unit', device);
+
+    const events: boolean[] = [];
+    registry.setHeatingCoilStateChangedHandler((event: any) => {
+      events.push(Boolean(event.enabled));
+    });
+
+    await registry.getHeatingCoilEnabled('test_unit');
+    await registry.setHeatingCoilEnabled('test_unit', false);
+    await waitFor(() => events.includes(false));
+
+    await registry.setHeatingCoilEnabled('test_unit', true);
+    await waitFor(() => events.includes(true) && events.length >= 2);
+
+    expect(events[0]).to.equal(false);
+    expect(events[1]).to.equal(true);
+  });
+
   it('writes home fan profile using AV 1836/1841 with priority 16', async () => {
     const device = makeMockDevice(SERVER_BIND_ADDRESS, serverPort, 4380);
     registry.register('test_unit', device);

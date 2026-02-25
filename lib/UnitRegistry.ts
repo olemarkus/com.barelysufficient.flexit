@@ -166,12 +166,15 @@ const OPERATION_MODE_VALUES = {
 };
 
 const TRIGGER_VALUE = 2;
+const HEATING_COIL_OFF = 0;
+const HEATING_COIL_ON = 1;
 
 const BACNET_OBJECTS = {
   comfortButton: { type: OBJECT_TYPE.BINARY_VALUE, instance: 50 },
   comfortButtonDelay: { type: OBJECT_TYPE.POSITIVE_INTEGER_VALUE, instance: 318 },
   ventilationMode: { type: OBJECT_TYPE.MULTI_STATE_VALUE, instance: 42 },
   operationMode: { type: OBJECT_TYPE.MULTI_STATE_VALUE, instance: 361 },
+  heatingCoilEnable: { type: OBJECT_TYPE.BINARY_VALUE, instance: 445 },
   rapidVentilationTrigger: { type: OBJECT_TYPE.MULTI_STATE_VALUE, instance: 357 },
   rapidVentilationRuntime: { type: OBJECT_TYPE.POSITIVE_INTEGER_VALUE, instance: 293 },
   rapidVentilationRemaining: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 2031 },
@@ -215,6 +218,10 @@ const OPERATION_MODE_KEY = objectKey(
 const COMFORT_BUTTON_KEY = objectKey(
   BACNET_OBJECTS.comfortButton.type,
   BACNET_OBJECTS.comfortButton.instance,
+);
+const HEATING_COIL_ENABLE_KEY = objectKey(
+  BACNET_OBJECTS.heatingCoilEnable.type,
+  BACNET_OBJECTS.heatingCoilEnable.instance,
 );
 const RAPID_ACTIVE_KEY = objectKey(OBJECT_TYPE.BINARY_VALUE, 15);
 const FIREPLACE_ACTIVE_KEY = objectKey(
@@ -406,6 +413,8 @@ interface UnitState {
   currentFanSetpointMode?: FanProfileMode;
   currentFanSetpoints: Partial<Record<FanProfileFan, number>>;
   currentFanSetpointsInitialized: boolean;
+  heatingCoilEnabled?: boolean;
+  heatingCoilStateInitialized: boolean;
 }
 
 interface PollParseTarget {
@@ -464,6 +473,11 @@ interface FanSetpointChangedEvent {
   setpointPercent: number;
 }
 
+interface HeatingCoilStateChangedEvent {
+  device: FlexitDevice;
+  enabled: boolean;
+}
+
 // The core poll request — only objects that drive device capabilities.
 function buildPollRequest() {
   return [
@@ -477,6 +491,7 @@ function buildPollRequest() {
     { objectId: { type: OBJECT_TYPE.ANALOG_INPUT, instance: EXTRACT_AIR_TEMPERATURE_ALT_INSTANCE }, properties: [{ id: PRESENT_VALUE_ID }] }, // Extract Temp (alternate mapping)
     { objectId: { type: OBJECT_TYPE.ANALOG_INPUT, instance: 96 }, properties: [{ id: PRESENT_VALUE_ID }] }, // Humidity
     { objectId: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 194 }, properties: [{ id: PRESENT_VALUE_ID }] }, // Heater Power
+    { objectId: BACNET_OBJECTS.heatingCoilEnable, properties: [{ id: PRESENT_VALUE_ID }] }, // Heating coil enable
 
     // Fan capabilities
     { objectId: { type: OBJECT_TYPE.ANALOG_INPUT, instance: 5 }, properties: [{ id: PRESENT_VALUE_ID }] }, // Fan RPM Supply
@@ -535,6 +550,7 @@ const POLL_VALUE_MAPPINGS: Record<string, (value: number, target: PollParseTarge
   },
   [objectKey(OBJECT_TYPE.ANALOG_INPUT, 96)]: mapPollValue('measure_humidity'),
   [objectKey(OBJECT_TYPE.ANALOG_VALUE, 194)]: mapPollValue('measure_power', (value) => value * 1000),
+  [HEATING_COIL_ENABLE_KEY]: mapPollValue('heating_coil_enabled'),
   [objectKey(OBJECT_TYPE.ANALOG_INPUT, 5)]: mapPollValue('measure_motor_rpm'),
   [objectKey(OBJECT_TYPE.ANALOG_INPUT, 12)]: mapPollValue('measure_motor_rpm.extract'),
   [objectKey(OBJECT_TYPE.ANALOG_OUTPUT, 3)]: mapPollValue('measure_fan_speed_percent'),
@@ -571,6 +587,7 @@ export class UnitRegistry {
     private logger?: RegistryLogger;
     private readonly dependencies: RegistryDependencies;
     private fanSetpointChangedHandler?: (event: FanSetpointChangedEvent) => void;
+    private heatingCoilStateChangedHandler?: (event: HeatingCoilStateChangedEvent) => void;
 
     constructor(dependencies?: Partial<RegistryDependencies>) {
       this.dependencies = {
@@ -587,6 +604,10 @@ export class UnitRegistry {
 
     setFanSetpointChangedHandler(handler?: (event: FanSetpointChangedEvent) => void) {
       this.fanSetpointChangedHandler = handler;
+    }
+
+    setHeatingCoilStateChangedHandler(handler?: (event: HeatingCoilStateChangedEvent) => void) {
+      this.heatingCoilStateChangedHandler = handler;
     }
 
     private syncBacnetLogger() {
@@ -665,6 +686,8 @@ export class UnitRegistry {
           currentFanSetpointMode: undefined,
           currentFanSetpoints: {},
           currentFanSetpointsInitialized: false,
+          heatingCoilEnabled: undefined,
+          heatingCoilStateInitialized: false,
         };
         this.units.set(unitId, unit);
 
@@ -1139,6 +1162,8 @@ export class UnitRegistry {
     }
 
     private distributeData(unit: UnitState, data: Record<string, number>) {
+      this.observeHeatingCoilState(unit, data.heating_coil_enabled);
+
       const mode = this.resolveFanMode(unit, data);
       const setpointMode = this.resolveCurrentFanSetpointMode(data, mode);
       const temperatureMode = this.resolveCurrentTemperatureSetpointMode(data, mode);
@@ -1280,6 +1305,39 @@ export class UnitRegistry {
         this.fanSetpointChangedHandler(event);
       } catch (error) {
         this.warn('[UnitRegistry] Failed to handle fan setpoint changed callback:', error);
+      }
+    }
+
+    private parseHeatingCoilEnabled(value: number): boolean {
+      return Math.round(value) !== HEATING_COIL_OFF;
+    }
+
+    private observeHeatingCoilState(unit: UnitState, rawValue: number | undefined) {
+      if (rawValue === undefined || !Number.isFinite(rawValue)) return;
+
+      const enabled = this.parseHeatingCoilEnabled(rawValue);
+      if (!unit.heatingCoilStateInitialized) {
+        unit.heatingCoilEnabled = enabled;
+        unit.heatingCoilStateInitialized = true;
+        return;
+      }
+      if (unit.heatingCoilEnabled === enabled) return;
+
+      unit.heatingCoilEnabled = enabled;
+      for (const device of unit.devices) {
+        this.triggerHeatingCoilStateChanged({
+          device,
+          enabled,
+        });
+      }
+    }
+
+    private triggerHeatingCoilStateChanged(event: HeatingCoilStateChangedEvent) {
+      if (!this.heatingCoilStateChangedHandler) return;
+      try {
+        this.heatingCoilStateChangedHandler(event);
+      } catch (error) {
+        this.warn('[UnitRegistry] Failed to handle heating coil state changed callback:', error);
       }
     }
 
@@ -1485,6 +1543,81 @@ export class UnitRegistry {
       device.setCapabilityValue(capability, value).catch(() => { });
     }
 
+    async getHeatingCoilEnabled(unitId: string): Promise<boolean> {
+      const unit = this.units.get(unitId);
+      if (!unit) throw new Error('Unit not found');
+
+      const client = this.dependencies.getBacnetClient(unit.bacnetPort);
+      try {
+        const value = await this.readPresentValue(client, unit, BACNET_OBJECTS.heatingCoilEnable);
+        const enabled = this.parseHeatingCoilEnabled(value);
+        unit.probeValues.set(HEATING_COIL_ENABLE_KEY, value);
+        unit.heatingCoilEnabled = enabled;
+        unit.heatingCoilStateInitialized = true;
+        return enabled;
+      } catch (error) {
+        if (unit.heatingCoilStateInitialized && typeof unit.heatingCoilEnabled === 'boolean') {
+          this.warn(
+            `[UnitRegistry] Falling back to cached heating coil state for ${unitId} after read error:`,
+            error,
+          );
+          return unit.heatingCoilEnabled;
+        }
+
+        const cachedValue = unit.probeValues.get(HEATING_COIL_ENABLE_KEY);
+        if (typeof cachedValue === 'number' && Number.isFinite(cachedValue)) {
+          const enabled = this.parseHeatingCoilEnabled(cachedValue);
+          unit.heatingCoilEnabled = enabled;
+          unit.heatingCoilStateInitialized = true;
+          return enabled;
+        }
+        throw error;
+      }
+    }
+
+    async toggleHeatingCoilEnabled(unitId: string): Promise<boolean> {
+      const currentlyEnabled = await this.getHeatingCoilEnabled(unitId);
+      const nextState = !currentlyEnabled;
+      await this.setHeatingCoilEnabled(unitId, nextState);
+      return nextState;
+    }
+
+    async setHeatingCoilEnabled(unitId: string, enabled: boolean) {
+      const unit = this.units.get(unitId);
+      if (!unit) throw new Error('Unit not found');
+
+      const state = enabled ? 'on' : 'off';
+      this.log(`[UnitRegistry] Setting heating coil ${state} for ${unitId}`);
+      const writeOptions: WriteOptions = {
+        maxSegments: BacnetEnums.MaxSegmentsAccepted.SEGMENTS_0,
+        maxApdu: BacnetEnums.MaxApduLengthAccepted.OCTETS_1476,
+        priority: DEFAULT_WRITE_PRIORITY,
+      };
+
+      unit.writeQueue = unit.writeQueue.then(async () => {
+        const context: FanModeWriteContext = {
+          unit,
+          mode: `heating_coil:${state}`,
+          writeOptions,
+          client: this.dependencies.getBacnetClient(unit.bacnetPort),
+          ventilationModeKey: VENTILATION_MODE_KEY,
+          comfortButtonKey: COMFORT_BUTTON_KEY,
+        };
+
+        const writeOk = await this.writeUpdate(context, {
+          objectId: BACNET_OBJECTS.heatingCoilEnable,
+          tag: BacnetEnums.ApplicationTags.ENUMERATED,
+          value: enabled ? HEATING_COIL_ON : HEATING_COIL_OFF,
+          priority: DEFAULT_WRITE_PRIORITY,
+        });
+        if (!writeOk) throw new Error(`Failed to set heating coil ${state}`);
+
+        this.pollUnit(unitId);
+      });
+
+      return unit.writeQueue;
+    }
+
     async setFanMode(unitId: string, mode: string) {
       const unit = this.units.get(unitId);
       if (!unit) throw new Error('Unit not found');
@@ -1627,6 +1760,19 @@ export class UnitRegistry {
                 unit.pendingWriteErrors.set(writeKey, { value: update.value, code });
                 this.warn(`[UnitRegistry] Write returned Code:37 for ${writeKey}; will verify on next poll.`);
                 resolve(true);
+                return;
+              }
+
+              const unsupportedObject = code === 31 || /(?:\bCode:31\b|\b1:31\b)/.test(message);
+              if (unsupportedObject) {
+                unit.lastWriteValues.set(writeKey, { value: update.value, at: now });
+                if (NEVER_BLOCK_KEYS.has(writeKey)) {
+                  this.warn(`[UnitRegistry] Write unsupported for ${writeKey}, but will keep retrying.`);
+                } else {
+                  unit.blockedWrites.add(writeKey);
+                  this.warn(`[UnitRegistry] Disabling writes for ${writeKey} (unsupported object on unit).`);
+                }
+                resolve(false);
                 return;
               }
 

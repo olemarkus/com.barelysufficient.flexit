@@ -1,0 +1,18 @@
+{
+  "title": {
+    "en": "Toggle heating coil on or off"
+  },
+  "titleFormatted": {
+    "en": "Toggle heating coil on or off"
+  },
+  "hint": {
+    "en": "Toggles the electric heating coil state on supported units."
+  },
+  "args": [
+    {
+      "type": "device",
+      "name": "device",
+      "filter": "driver_id=nordic"
+    }
+  ]
+}

@@ -15,6 +15,18 @@
     {
       "point": "2:286",
       "note": "Flexit GO shows filter interval in months (3..12), but writes/reads this point in hours."
+    },
+    {
+      "point": "5:445",
+      "note": "Flexit GO additional-heating menu reads presentValue and proprietary property 5093; observed writes use priority 13."
+    },
+    {
+      "point": "2:1921",
+      "note": "Flexit GO additional-heating menu reads this point as heating neutral-zone value for HOME mode."
+    },
+    {
+      "point": "2:1987",
+      "note": "Flexit GO additional-heating menu reads this point as heating neutral-zone value for AWAY mode."
     }
   ],
   "points": [

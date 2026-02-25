@@ -1,0 +1,18 @@
+{
+  "title": {
+    "en": "Heating coil is turned on"
+  },
+  "titleFormatted": {
+    "en": "Heating coil is turned on"
+  },
+  "hint": {
+    "en": "Checks whether the electric heating coil is currently on."
+  },
+  "args": [
+    {
+      "type": "device",
+      "name": "device",
+      "filter": "driver_id=nordic"
+    }
+  ]
+}

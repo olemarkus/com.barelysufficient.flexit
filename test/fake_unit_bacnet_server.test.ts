@@ -171,6 +171,21 @@ describe('fake-unit bacnet server', () => {
             properties: [{ id: 5093, index: BacnetEnums.ASN1_ARRAY_ALL }],
           },
           {
+            objectId: { type: BacnetEnums.ObjectType.BINARY_VALUE, instance: 445 },
+            properties: [
+              { id: BacnetEnums.PropertyIdentifier.PRESENT_VALUE, index: BacnetEnums.ASN1_ARRAY_ALL },
+              { id: 5093, index: BacnetEnums.ASN1_ARRAY_ALL },
+            ],
+          },
+          {
+            objectId: { type: BacnetEnums.ObjectType.ANALOG_VALUE, instance: 1921 },
+            properties: [{ id: BacnetEnums.PropertyIdentifier.PRESENT_VALUE, index: BacnetEnums.ASN1_ARRAY_ALL }],
+          },
+          {
+            objectId: { type: BacnetEnums.ObjectType.ANALOG_VALUE, instance: 1987 },
+            properties: [{ id: BacnetEnums.PropertyIdentifier.PRESENT_VALUE, index: BacnetEnums.ASN1_ARRAY_ALL }],
+          },
+          {
             objectId: { type: BacnetEnums.ObjectType.ANALOG_VALUE, instance: 1837 },
             properties: [
               { id: BacnetEnums.PropertyIdentifier.PRESENT_VALUE, index: BacnetEnums.ASN1_ARRAY_ALL },
@@ -193,6 +208,14 @@ describe('fake-unit bacnet server', () => {
       .to.equal(BacnetEnums.ApplicationTags.REAL);
     expect(findNode(rpmResult, BacnetEnums.ObjectType.MULTI_STATE_VALUE, 42, 5093)?.type)
       .to.equal(BacnetEnums.ApplicationTags.UNSIGNED_INTEGER);
+    expect(findNode(rpmResult, BacnetEnums.ObjectType.BINARY_VALUE, 445, BacnetEnums.PropertyIdentifier.PRESENT_VALUE)?.type)
+      .to.equal(BacnetEnums.ApplicationTags.ENUMERATED);
+    expect(findNode(rpmResult, BacnetEnums.ObjectType.BINARY_VALUE, 445, 5093)?.type)
+      .to.equal(BacnetEnums.ApplicationTags.UNSIGNED_INTEGER);
+    expect(findNode(rpmResult, BacnetEnums.ObjectType.ANALOG_VALUE, 1921, BacnetEnums.PropertyIdentifier.PRESENT_VALUE)?.type)
+      .to.equal(BacnetEnums.ApplicationTags.REAL);
+    expect(findNode(rpmResult, BacnetEnums.ObjectType.ANALOG_VALUE, 1987, BacnetEnums.PropertyIdentifier.PRESENT_VALUE)?.type)
+      .to.equal(BacnetEnums.ApplicationTags.REAL);
     expect(findNode(rpmResult, BacnetEnums.ObjectType.ANALOG_VALUE, 1837, BacnetEnums.PropertyIdentifier.PRESENT_VALUE)?.type)
       .to.equal(BacnetEnums.ApplicationTags.REAL);
     expect(findNode(rpmResult, BacnetEnums.ObjectType.ANALOG_VALUE, 1837, 5037)?.type)

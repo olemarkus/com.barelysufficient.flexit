@@ -108,7 +108,7 @@ Compatibility is best-effort:
 - BACnet private-transfer discovery requests are logged and answered.
 - Proprietary compatibility points used by Flexit GO login are implemented separately.
 - Current proprietary object shims include `264:2:4743`, `AV 8/60/126/130/1831/1833/1834/1835/1836/1837/1838/1839/1840/1841/1842/1843/1844/1919/2090/2096/2113/2114/2115/2118/2119/2120/2121/2122`, `AV 2275`, `MSV 7/18/340/341/343/344`, and `BV 474`.
-- Current proprietary property overlays include `5093` on `MSV 42` and `BV 50`; proprietary AV range hints `5036/5037` are implemented on compatibility `AV 1835..1844`.
+- Current proprietary property overlays include `5093` on `MSV 42`, `BV 50`, and `BV 445`; proprietary AV range hints `5036/5037` are implemented on compatibility `AV 1835..1844`.
 - External `7:516` identification payloads observed on LAN are logged (hex + ASCII) to aid emulation.
 - `7:516` responses mimic observed real-unit structure and echo the request `ABTMobile:<uuid>` token.
 

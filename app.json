@@ -78,6 +78,44 @@
       },
       {
         "title": {
+          "en": "Heating coil turned off"
+        },
+        "titleFormatted": {
+          "en": "Heating coil turned off"
+        },
+        "hint": {
+          "en": "Triggers when the electric heating coil changes to off."
+        },
+        "args": [
+          {
+            "type": "device",
+            "name": "device",
+            "filter": "driver_id=nordic"
+          }
+        ],
+        "id": "heating_coil_turned_off"
+      },
+      {
+        "title": {
+          "en": "Heating coil turned on"
+        },
+        "titleFormatted": {
+          "en": "Heating coil turned on"
+        },
+        "hint": {
+          "en": "Triggers when the electric heating coil changes to on."
+        },
+        "args": [
+          {
+            "type": "device",
+            "name": "device",
+            "filter": "driver_id=nordic"
+          }
+        ],
+        "id": "heating_coil_turned_on"
+      },
+      {
+        "title": {
           "en": "Supply fan setpoint changed"
         },
         "titleFormatted": {
@@ -103,6 +141,27 @@
           }
         ],
         "id": "supply_fan_setpoint_changed"
+      }
+    ],
+    "conditions": [
+      {
+        "title": {
+          "en": "Heating coil is turned on"
+        },
+        "titleFormatted": {
+          "en": "Heating coil is turned on"
+        },
+        "hint": {
+          "en": "Checks whether the electric heating coil is currently on."
+        },
+        "args": [
+          {
+            "type": "device",
+            "name": "device",
+            "filter": "driver_id=nordic"
+          }
+        ],
+        "id": "heating_coil_is_on"
       }
     ],
     "actions": [
@@ -183,6 +242,63 @@
           }
         ],
         "id": "set_fan_profile_mode"
+      },
+      {
+        "title": {
+          "en": "Toggle heating coil on or off"
+        },
+        "titleFormatted": {
+          "en": "Toggle heating coil on or off"
+        },
+        "hint": {
+          "en": "Toggles the electric heating coil state on supported units."
+        },
+        "args": [
+          {
+            "type": "device",
+            "name": "device",
+            "filter": "driver_id=nordic"
+          }
+        ],
+        "id": "toggle_heating_coil_onoff"
+      },
+      {
+        "title": {
+          "en": "Turn heating coil off"
+        },
+        "titleFormatted": {
+          "en": "Turn heating coil off"
+        },
+        "hint": {
+          "en": "Turns off the electric heating coil on supported units."
+        },
+        "args": [
+          {
+            "type": "device",
+            "name": "device",
+            "filter": "driver_id=nordic"
+          }
+        ],
+        "id": "turn_heating_coil_off"
+      },
+      {
+        "title": {
+          "en": "Turn heating coil on"
+        },
+        "titleFormatted": {
+          "en": "Turn heating coil on"
+        },
+        "hint": {
+          "en": "Turns on the electric heating coil on supported units."
+        },
+        "args": [
+          {
+            "type": "device",
+            "name": "device",
+            "filter": "driver_id=nordic"
+          }
+        ],
+        "id": "turn_heating_coil_on"
       }
     ]
   },
