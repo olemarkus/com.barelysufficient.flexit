@@ -39,7 +39,7 @@ Used in `lib/UnitRegistry.ts`:
 - AO 1:4 -> Fan Speed % Extract
 - AV 2:285 -> Filter Time
 - AV 2:286 -> Filter Limit
-- BV 5:445 -> Heating coil enable (ENUMERATED OFF/ON)
+- BV 5:445 -> Electric heater enable (ENUMERATED OFF/ON)
 - AV 2:285 is documented read-only, but observed Flexit GO traffic writes `presentValue=0` with priority 16 during filter replacement flow. Treat this as compatibility behavior and track as a doc deviation.
 - Flexit GO shows filter interval in months (range observed in app UI: 3..12), but writes AV 2:286 in hours (observed: 5 months -> `presentValue=3660`) with priority 16.
 - BV 5:50 -> Mode Home/Away (ENUMERATED)

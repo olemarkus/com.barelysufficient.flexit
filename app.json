@@ -78,13 +78,13 @@
       },
       {
         "title": {
-          "en": "Heating coil turned off"
+          "en": "Electric heater turned off"
         },
         "titleFormatted": {
-          "en": "Heating coil turned off"
+          "en": "Electric heater turned off"
         },
         "hint": {
-          "en": "Triggers when the electric heating coil changes to off."
+          "en": "Triggers when the electric heater changes to off."
         },
         "args": [
           {
@@ -97,13 +97,13 @@
       },
       {
         "title": {
-          "en": "Heating coil turned on"
+          "en": "Electric heater turned on"
         },
         "titleFormatted": {
-          "en": "Heating coil turned on"
+          "en": "Electric heater turned on"
         },
         "hint": {
-          "en": "Triggers when the electric heating coil changes to on."
+          "en": "Triggers when the electric heater changes to on."
         },
         "args": [
           {
@@ -146,13 +146,13 @@
     "conditions": [
       {
         "title": {
-          "en": "Heating coil is turned on"
+          "en": "Electric heater is turned on"
         },
         "titleFormatted": {
-          "en": "Heating coil is turned on"
+          "en": "Electric heater is turned on"
         },
         "hint": {
-          "en": "Checks whether the electric heating coil is currently on."
+          "en": "Checks whether the electric heater is currently on."
         },
         "args": [
           {
@@ -245,13 +245,13 @@
       },
       {
         "title": {
-          "en": "Toggle heating coil on or off"
+          "en": "Toggle electric heater on or off"
         },
         "titleFormatted": {
-          "en": "Toggle heating coil on or off"
+          "en": "Toggle electric heater on or off"
         },
         "hint": {
-          "en": "Toggles the electric heating coil state on supported units."
+          "en": "Toggles the electric heater state on supported units."
         },
         "args": [
           {
@@ -264,13 +264,13 @@
       },
       {
         "title": {
-          "en": "Turn heating coil off"
+          "en": "Turn electric heater off"
         },
         "titleFormatted": {
-          "en": "Turn heating coil off"
+          "en": "Turn electric heater off"
         },
         "hint": {
-          "en": "Turns off the electric heating coil on supported units."
+          "en": "Turns off the electric heater on supported units."
         },
         "args": [
           {
@@ -283,13 +283,13 @@
       },
       {
         "title": {
-          "en": "Turn heating coil on"
+          "en": "Turn electric heater on"
         },
         "titleFormatted": {
-          "en": "Turn heating coil on"
+          "en": "Turn electric heater on"
         },
         "hint": {
-          "en": "Turns on the electric heating coil on supported units."
+          "en": "Turns on the electric heater on supported units."
         },
         "args": [
           {
@@ -339,7 +339,7 @@
         },
         "measure_power": {
           "title": {
-            "en": "Heating coil power usage"
+            "en": "Electric heater power usage"
           }
         },
         "measure_temperature": {

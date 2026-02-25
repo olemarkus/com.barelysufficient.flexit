@@ -71,7 +71,7 @@ export = class App extends Homey.App {
         event.device as unknown as Homey.Device,
         {},
       ).catch((error: unknown) => {
-        this.error('Failed to trigger heating coil state flow:', error);
+        this.error('Failed to trigger electric heater state flow:', error);
       });
     });
   }

@@ -1,12 +1,12 @@
 {
   "title": {
-    "en": "Heating coil turned on"
+    "en": "Electric heater turned on"
   },
   "titleFormatted": {
-    "en": "Heating coil turned on"
+    "en": "Electric heater turned on"
   },
   "hint": {
-    "en": "Triggers when the electric heating coil changes to on."
+    "en": "Triggers when the electric heater changes to on."
   },
   "args": [
     {

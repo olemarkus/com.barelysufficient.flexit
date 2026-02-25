@@ -1,12 +1,12 @@
 {
   "title": {
-    "en": "Heating coil is turned on"
+    "en": "Electric heater is turned on"
   },
   "titleFormatted": {
-    "en": "Heating coil is turned on"
+    "en": "Electric heater is turned on"
   },
   "hint": {
-    "en": "Checks whether the electric heating coil is currently on."
+    "en": "Checks whether the electric heater is currently on."
   },
   "args": [
     {

@@ -1,12 +1,12 @@
 {
   "title": {
-    "en": "Turn heating coil on"
+    "en": "Turn electric heater on"
   },
   "titleFormatted": {
-    "en": "Turn heating coil on"
+    "en": "Turn electric heater on"
   },
   "hint": {
-    "en": "Turns on the electric heating coil on supported units."
+    "en": "Turns on the electric heater on supported units."
   },
   "args": [
     {

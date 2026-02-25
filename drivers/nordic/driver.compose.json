@@ -34,7 +34,7 @@
     },
     "measure_power": {
       "title": {
-        "en": "Heating coil power usage"
+        "en": "Electric heater power usage"
       }
     },
     "measure_temperature": {

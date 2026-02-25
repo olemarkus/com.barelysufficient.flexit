@@ -1,12 +1,12 @@
 {
   "title": {
-    "en": "Toggle heating coil on or off"
+    "en": "Toggle electric heater on or off"
   },
   "titleFormatted": {
-    "en": "Toggle heating coil on or off"
+    "en": "Toggle electric heater on or off"
   },
   "hint": {
-    "en": "Toggles the electric heating coil state on supported units."
+    "en": "Toggles the electric heater state on supported units."
   },
   "args": [
     {

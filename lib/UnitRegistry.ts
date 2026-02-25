@@ -491,7 +491,7 @@ function buildPollRequest() {
     { objectId: { type: OBJECT_TYPE.ANALOG_INPUT, instance: EXTRACT_AIR_TEMPERATURE_ALT_INSTANCE }, properties: [{ id: PRESENT_VALUE_ID }] }, // Extract Temp (alternate mapping)
     { objectId: { type: OBJECT_TYPE.ANALOG_INPUT, instance: 96 }, properties: [{ id: PRESENT_VALUE_ID }] }, // Humidity
     { objectId: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 194 }, properties: [{ id: PRESENT_VALUE_ID }] }, // Heater Power
-    { objectId: BACNET_OBJECTS.heatingCoilEnable, properties: [{ id: PRESENT_VALUE_ID }] }, // Heating coil enable
+    { objectId: BACNET_OBJECTS.heatingCoilEnable, properties: [{ id: PRESENT_VALUE_ID }] }, // Electric heater enable
 
     // Fan capabilities
     { objectId: { type: OBJECT_TYPE.ANALOG_INPUT, instance: 5 }, properties: [{ id: PRESENT_VALUE_ID }] }, // Fan RPM Supply
@@ -1337,7 +1337,7 @@ export class UnitRegistry {
       try {
         this.heatingCoilStateChangedHandler(event);
       } catch (error) {
-        this.warn('[UnitRegistry] Failed to handle heating coil state changed callback:', error);
+        this.warn('[UnitRegistry] Failed to handle electric heater state changed callback:', error);
       }
     }
 
@@ -1558,7 +1558,7 @@ export class UnitRegistry {
       } catch (error) {
         if (unit.heatingCoilStateInitialized && typeof unit.heatingCoilEnabled === 'boolean') {
           this.warn(
-            `[UnitRegistry] Falling back to cached heating coil state for ${unitId} after read error:`,
+            `[UnitRegistry] Falling back to cached electric heater state for ${unitId} after read error:`,
             error,
           );
           return unit.heatingCoilEnabled;
@@ -1587,7 +1587,7 @@ export class UnitRegistry {
       if (!unit) throw new Error('Unit not found');
 
       const state = enabled ? 'on' : 'off';
-      this.log(`[UnitRegistry] Setting heating coil ${state} for ${unitId}`);
+      this.log(`[UnitRegistry] Setting electric heater ${state} for ${unitId}`);
       const writeOptions: WriteOptions = {
         maxSegments: BacnetEnums.MaxSegmentsAccepted.SEGMENTS_0,
         maxApdu: BacnetEnums.MaxApduLengthAccepted.OCTETS_1476,
@@ -1610,7 +1610,7 @@ export class UnitRegistry {
           value: enabled ? HEATING_COIL_ON : HEATING_COIL_OFF,
           priority: DEFAULT_WRITE_PRIORITY,
         });
-        if (!writeOk) throw new Error(`Failed to set heating coil ${state}`);
+        if (!writeOk) throw new Error(`Failed to set electric heater ${state}`);
 
         this.pollUnit(unitId);
       });

@@ -1,12 +1,12 @@
 {
   "title": {
-    "en": "Turn heating coil off"
+    "en": "Turn electric heater off"
   },
   "titleFormatted": {
-    "en": "Turn heating coil off"
+    "en": "Turn electric heater off"
   },
   "hint": {
-    "en": "Turns off the electric heating coil on supported units."
+    "en": "Turns off the electric heater on supported units."
   },
   "args": [
     {

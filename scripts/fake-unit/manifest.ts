@@ -69,7 +69,7 @@ function point(
 
 export const SUPPORTED_POINTS: SupportedPoint[] = [
   point('comfort_button', 'BINARY_VALUE', 50, 'enum', 'RW', 'xlsx', 'Comfort button', { min: 0, max: 1, requiresPriority13: true }),
-  point('heating_coil_enable', 'BINARY_VALUE', 445, 'enum', 'RW', 'observed', 'Enable electric heating coil (OFF/ON)', { min: 0, max: 1, requiresPriority13: true }),
+  point('heating_coil_enable', 'BINARY_VALUE', 445, 'enum', 'RW', 'observed', 'Enable electric heater (OFF/ON)', { min: 0, max: 1, requiresPriority13: true }),
   point('operation_mode', 'MULTI_STATE_VALUE', 361, 'enum', 'R', 'xlsx', 'Heat recovery ventilation state', { min: 1, max: 7 }),
   point('ventilation_mode', 'MULTI_STATE_VALUE', 42, 'enum', 'RW', 'xlsx', 'Room operating mode', { min: 1, max: 4, requiresPriority13: true }),
   point('heating_delta_setpoint_home', 'ANALOG_VALUE', 1921, 'real', 'RW', 'observed', 'Additional heating neutral-zone delta HOME', { units: 'degC' }),
@@ -93,7 +93,7 @@ export const SUPPORTED_POINTS: SupportedPoint[] = [
   point('supply_pressure', 'ANALOG_INPUT', 73, 'real', 'R', 'xlsx', 'Supply air pressure', { min: -3000, max: 3000, units: 'Pa' }),
   point('temp_exhaust', 'ANALOG_INPUT', 11, 'real', 'R', 'xlsx', 'Exhaust air temperature', { min: -50, max: 80, units: 'degC' }),
   point('temp_extract_doc', 'ANALOG_INPUT', 59, 'real', 'R', 'xlsx', 'Extract air temperature (documented)', { min: -50, max: 80, units: 'degC' }),
-  point('temp_frost_protection', 'ANALOG_INPUT', 31, 'real', 'R', 'xlsx', 'Frost protection temperature for heating coil', { min: -30, max: 80, units: 'degC' }),
+  point('temp_frost_protection', 'ANALOG_INPUT', 31, 'real', 'R', 'xlsx', 'Frost protection temperature for electric heater', { min: -30, max: 80, units: 'degC' }),
   point('temp_outside', 'ANALOG_INPUT', 1, 'real', 'R', 'xlsx', 'Outside air temperature', { min: -50, max: 50, units: 'degC' }),
   point('temp_room', 'ANALOG_INPUT', 75, 'real', 'R', 'xlsx', 'Room temperature', { min: 0, max: 50, units: 'degC' }),
   point('humidity_room_1', 'ANALOG_VALUE', 2093, 'real', 'R', 'xlsx', 'Room air humidity 1', { min: 0, max: 100, units: '%' }),
@@ -163,8 +163,8 @@ export const SUPPORTED_POINTS: SupportedPoint[] = [
     units: '%',
     requiresPriority13: true,
   }),
-  point('heater_electric_position_percent', 'ANALOG_OUTPUT', 29, 'real', 'R', 'xlsx', 'Heating coil electric position', { min: 0, max: 100, units: '%' }),
-  point('heater_valve_position_percent', 'ANALOG_OUTPUT', 12, 'real', 'R', 'xlsx', 'Heating coil valve position', { min: 0, max: 100, units: '%' }),
+  point('heater_electric_position_percent', 'ANALOG_OUTPUT', 29, 'real', 'R', 'xlsx', 'Electric heater position', { min: 0, max: 100, units: '%' }),
+  point('heater_valve_position_percent', 'ANALOG_OUTPUT', 12, 'real', 'R', 'xlsx', 'Electric heater valve position', { min: 0, max: 100, units: '%' }),
   point('rotor_speed_percent', 'ANALOG_OUTPUT', 0, 'real', 'R', 'xlsx', 'Rotary heat exchanger speed', { min: 0, max: 100, units: '%' }),
   point('filter_operating_time', 'ANALOG_VALUE', 285, 'real', 'R', 'xlsx', 'Operating time filter', { min: 0, max: 99999, units: 'h' }),
   point('filter_exchange_limit', 'ANALOG_VALUE', 286, 'real', 'RW', 'xlsx', 'Operating time for filter replacement', { min: 1, max: 99990, units: 'h' }),
@@ -178,7 +178,7 @@ export const SUPPORTED_POINTS: SupportedPoint[] = [
   // Observed points used by current Nordic integrations and packet dumps.
   point('temp_extract', 'ANALOG_INPUT', 95, 'real', 'R', 'observed', 'Extract air temperature (observed)', { min: -50, max: 80, units: 'degC' }),
   point('humidity_extract', 'ANALOG_INPUT', 96, 'real', 'R', 'observed', 'Relative humidity for extract air (observed)', { min: 0, max: 100, units: '%' }),
-  point('heater_power_kw', 'ANALOG_VALUE', 194, 'real', 'R', 'observed', 'Heating coil electric power', { min: 0, max: 10, units: 'kW' }),
+  point('heater_power_kw', 'ANALOG_VALUE', 194, 'real', 'R', 'observed', 'Electric heater power', { min: 0, max: 10, units: 'kW' }),
   point('rapid_active', 'BINARY_VALUE', 15, 'enum', 'R', 'observed', 'Rapid ventilation active', { min: 0, max: 1 }),
   point('fireplace_active', 'BINARY_VALUE', 400, 'enum', 'R', 'observed', 'Fireplace ventilation active', { min: 0, max: 1 }),
   point('remaining_temp_vent', 'ANALOG_VALUE', 2005, 'real', 'R', 'observed', 'Remaining temporary ventilation time', { min: 0, max: 360, units: 'min' }),
