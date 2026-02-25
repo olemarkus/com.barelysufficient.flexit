@@ -69,11 +69,14 @@ function point(
 
 export const SUPPORTED_POINTS: SupportedPoint[] = [
   point('comfort_button', 'BINARY_VALUE', 50, 'enum', 'RW', 'xlsx', 'Comfort button', { min: 0, max: 1, requiresPriority13: true }),
+  point('heating_coil_enable', 'BINARY_VALUE', 445, 'enum', 'RW', 'observed', 'Enable electric heating coil (OFF/ON)', { min: 0, max: 1, requiresPriority13: true }),
   point('operation_mode', 'MULTI_STATE_VALUE', 361, 'enum', 'R', 'xlsx', 'Heat recovery ventilation state', { min: 1, max: 7 }),
   point('ventilation_mode', 'MULTI_STATE_VALUE', 42, 'enum', 'RW', 'xlsx', 'Room operating mode', { min: 1, max: 4, requiresPriority13: true }),
+  point('heating_delta_setpoint_home', 'ANALOG_VALUE', 1921, 'real', 'RW', 'observed', 'Additional heating neutral-zone delta HOME', { units: 'degC' }),
   point('setpoint_away', 'ANALOG_VALUE', 1985, 'real', 'RW', 'xlsx', 'Setpoint temperature when away', {
     min: 10, max: 30, units: 'degC', requiresPriority13: true,
   }),
+  point('heating_delta_setpoint_away', 'ANALOG_VALUE', 1987, 'real', 'RW', 'observed', 'Additional heating neutral-zone delta AWAY', { units: 'degC' }),
   point('setpoint_home', 'ANALOG_VALUE', 1994, 'real', 'RW', 'xlsx', 'Setpoint temperature when home', {
     min: 10, max: 30, units: 'degC', requiresPriority13: true,
   }),
@@ -250,9 +253,12 @@ function key(typeName: string, instance: number): string {
 
 export const DEFAULT_POINT_VALUES: Record<string, number> = {
   [key('BINARY_VALUE', 50)]: 1,
+  [key('BINARY_VALUE', 445)]: 1,
   [key('MULTI_STATE_VALUE', 361)]: OPERATION_MODE_VALUES.HOME,
   [key('MULTI_STATE_VALUE', 42)]: VENTILATION_MODE_VALUES.HOME,
+  [key('ANALOG_VALUE', 1921)]: 1,
   [key('ANALOG_VALUE', 1985)]: 18,
+  [key('ANALOG_VALUE', 1987)]: 1,
   [key('ANALOG_VALUE', 1994)]: 20,
   [key('ANALOG_VALUE', 2038)]: 0,
   [key('ANALOG_VALUE', 2031)]: 0,
@@ -960,6 +966,16 @@ export const FLEXIT_GO_PROPRIETARY_PROPERTY_OVERLAYS: FlexitGoCompatPropertyOver
 }, {
   objectType: OBJECT_TYPE.BINARY_VALUE,
   instance: 50,
+  properties: [{
+    id: FLEXIT_GO_PRIORITY_HINT_PROPERTY_ID,
+    name: 'priority_hint',
+    tag: APPLICATION_TAG.UNSIGNED_INTEGER,
+    value: FLEXIT_GO_PRIORITY_HINT_VALUE,
+    description: 'Observed proprietary priority hint',
+  }],
+}, {
+  objectType: OBJECT_TYPE.BINARY_VALUE,
+  instance: 445,
   properties: [{
     id: FLEXIT_GO_PRIORITY_HINT_PROPERTY_ID,
     name: 'priority_hint',

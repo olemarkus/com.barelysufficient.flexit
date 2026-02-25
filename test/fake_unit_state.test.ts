@@ -43,11 +43,47 @@ describe('fake-unit state', () => {
   });
 
   it('keeps BV enum points encoded as enumerated', () => {
-    const bvPoint = SUPPORTED_POINTS.find(
+    const comfortBvPoint = SUPPORTED_POINTS.find(
       (point) => point.type === OBJECT_TYPE.BINARY_VALUE && point.instance === 50,
     );
-    expect(bvPoint).to.not.equal(undefined);
-    expect(valueTagForRead(bvPoint!)).to.equal(APPLICATION_TAG.ENUMERATED);
+    const heatingCoilBvPoint = SUPPORTED_POINTS.find(
+      (point) => point.type === OBJECT_TYPE.BINARY_VALUE && point.instance === 445,
+    );
+    expect(comfortBvPoint).to.not.equal(undefined);
+    expect(heatingCoilBvPoint).to.not.equal(undefined);
+    expect(valueTagForRead(comfortBvPoint!)).to.equal(APPLICATION_TAG.ENUMERATED);
+    expect(valueTagForRead(heatingCoilBvPoint!)).to.equal(APPLICATION_TAG.ENUMERATED);
+  });
+
+  it('accepts heating coil writes on BV:445 with priority 13/16 and rejects invalid explicit priorities', () => {
+    const state = createState();
+
+    const priority13Write = state.writePresentValue(
+      OBJECT_TYPE.BINARY_VALUE,
+      445,
+      PROPERTY_ID.PRESENT_VALUE,
+      0,
+      13,
+    );
+    expect(priority13Write.ok).to.equal(true);
+
+    const priority16Write = state.writePresentValue(
+      OBJECT_TYPE.BINARY_VALUE,
+      445,
+      PROPERTY_ID.PRESENT_VALUE,
+      1,
+      16,
+    );
+    expect(priority16Write.ok).to.equal(true);
+
+    const denied = state.writePresentValue(
+      OBJECT_TYPE.BINARY_VALUE,
+      445,
+      PROPERTY_ID.PRESENT_VALUE,
+      0,
+      12,
+    );
+    expect(denied.ok).to.equal(false);
   });
 
   it('accepts missing priority and GO compatibility priority while rejecting invalid explicit priorities', () => {

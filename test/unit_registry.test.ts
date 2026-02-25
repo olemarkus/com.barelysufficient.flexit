@@ -110,6 +110,136 @@ describe('UnitRegistry', () => {
     expect(homeAway[4].priority).to.equal(13);
   });
 
+  it('writes heating coil enable/disable via BV:445 with priority 13', async () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    await registry.setHeatingCoilEnabled('test_unit', false);
+
+    const disableWrite = mockClient.writeProperty.firstCall.args;
+    expect(disableWrite[1]).to.deep.equal({ type: 5, instance: 445 });
+    expect(disableWrite[3][0].type).to.equal(BACNET_ENUMS.ApplicationTags.ENUMERATED);
+    expect(disableWrite[3][0].value).to.equal(0);
+    expect(disableWrite[4].priority).to.equal(13);
+
+    mockClient.writeProperty.resetHistory();
+    await registry.setHeatingCoilEnabled('test_unit', true);
+
+    const enableWrite = mockClient.writeProperty.firstCall.args;
+    expect(enableWrite[1]).to.deep.equal({ type: 5, instance: 445 });
+    expect(enableWrite[3][0].type).to.equal(BACNET_ENUMS.ApplicationTags.ENUMERATED);
+    expect(enableWrite[3][0].value).to.equal(1);
+    expect(enableWrite[4].priority).to.equal(13);
+  });
+
+  it('reads heating coil state from BV:445', async () => {
+    const mockDevice = makeMockDevice();
+    mockClient.readPropertyMultiple.resetBehavior();
+    mockClient.readPropertyMultiple.callsFake((_ip: string, request: any[], cb: any) => {
+      const requestedObjects = request
+        .map((entry) => `${entry?.objectId?.type}:${entry?.objectId?.instance}`)
+        .sort()
+        .join(',');
+      if (requestedObjects === '5:445') {
+        cb(null, { values: [makeReadObject(BACNET_ENUMS.ObjectType.BINARY_VALUE, 445, 1)] });
+        return;
+      }
+      cb(null, { values: [] });
+    });
+
+    registry.register('test_unit', mockDevice);
+    const enabled = await registry.getHeatingCoilEnabled('test_unit');
+
+    expect(enabled).to.equal(true);
+    const readCall = mockClient.readPropertyMultiple.getCalls().find((call: any) => {
+      const request = call.args[1] as any[];
+      const requestedObjects = request
+        .map((entry) => `${entry?.objectId?.type}:${entry?.objectId?.instance}`)
+        .sort()
+        .join(',');
+      return requestedObjects === '5:445';
+    });
+    expect(readCall).to.not.equal(undefined);
+  });
+
+  it('toggles heating coil state via BV:445', async () => {
+    const mockDevice = makeMockDevice();
+    mockClient.readPropertyMultiple.resetBehavior();
+    mockClient.readPropertyMultiple.callsFake((_ip: string, request: any[], cb: any) => {
+      const requestedObjects = request
+        .map((entry) => `${entry?.objectId?.type}:${entry?.objectId?.instance}`)
+        .sort()
+        .join(',');
+      if (requestedObjects === '5:445') {
+        cb(null, { values: [makeReadObject(BACNET_ENUMS.ObjectType.BINARY_VALUE, 445, 1)] });
+        return;
+      }
+      cb(null, { values: [] });
+    });
+
+    registry.register('test_unit', mockDevice);
+    const nextState = await registry.toggleHeatingCoilEnabled('test_unit');
+
+    expect(nextState).to.equal(false);
+    const writeArgs = mockClient.writeProperty.firstCall.args;
+    expect(writeArgs[1]).to.deep.equal({ type: 5, instance: 445 });
+    expect(writeArgs[3][0].type).to.equal(BACNET_ENUMS.ApplicationTags.ENUMERATED);
+    expect(writeArgs[3][0].value).to.equal(0);
+    expect(writeArgs[4].priority).to.equal(13);
+  });
+
+  it('emits heating coil state change callback on transitions', () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    const events: Array<{ enabled: boolean; device: any }> = [];
+    registry.setHeatingCoilStateChangedHandler((event: any) => {
+      events.push({ enabled: event.enabled, device: event.device });
+    });
+
+    const unit = (registry as any).units.get('test_unit');
+    (registry as any).distributeData(unit, { heating_coil_enabled: 1 });
+    (registry as any).distributeData(unit, { heating_coil_enabled: 0 });
+    (registry as any).distributeData(unit, { heating_coil_enabled: 1 });
+
+    expect(events).to.have.length(2);
+    expect(events[0].enabled).to.equal(false);
+    expect(events[1].enabled).to.equal(true);
+    expect(events[0].device).to.equal(mockDevice);
+    expect(events[1].device).to.equal(mockDevice);
+  });
+
+  it('blocks further heating coil writes after unsupported object error (Code:31)', async () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    mockClient.writeProperty.resetBehavior();
+    mockClient.writeProperty.onFirstCall().callsFake(
+      (_ip: string, _objectId: { type: number; instance: number }, _propertyId: number, _value: any, _options: any, cb: any) => {
+        cb(new Error('Code:31 Unsupported object 5:445'));
+      },
+    );
+
+    let firstError: Error | null = null;
+    try {
+      await registry.setHeatingCoilEnabled('test_unit', false);
+    } catch (error) {
+      firstError = error as Error;
+    }
+    expect(firstError).to.not.equal(null);
+    expect(mockClient.writeProperty.callCount).to.equal(1);
+
+    mockClient.writeProperty.resetHistory();
+    let secondError: Error | null = null;
+    try {
+      await registry.setHeatingCoilEnabled('test_unit', false);
+    } catch (error) {
+      secondError = error as Error;
+    }
+    expect(secondError).to.not.equal(null);
+    expect(mockClient.writeProperty.callCount).to.equal(0);
+  });
+
   it('writes setpoint with BACnet priority 13', async () => {
     const mockDevice = makeMockDevice();
     registry.register('test_unit', mockDevice);
@@ -712,6 +842,7 @@ describe('UnitRegistry', () => {
     expect(objectIds).to.include('0:11');
     expect(objectIds).to.include('0:59');
     expect(objectIds).to.include('0:95');
+    expect(objectIds).to.include('5:445');
   });
 
   it('maps exhaust air temperature from AI 11 to capability', () => {
