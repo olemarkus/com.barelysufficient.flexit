@@ -786,6 +786,7 @@
       "title": {
         "en": "Fan Setpoint %"
       },
+      "icon": "/assets/capabilities/measure_fan_setpoint_percent.svg",
       "units": {
         "en": "%"
       },
@@ -799,6 +800,7 @@
       "title": {
         "en": "Fan Speed %"
       },
+      "icon": "/assets/capabilities/measure_fan_speed_percent.svg",
       "units": {
         "en": "%"
       },
@@ -812,6 +814,7 @@
       "title": {
         "en": "Fan RPM"
       },
+      "icon": "/assets/capabilities/measure_motor_rpm.svg",
       "units": {
         "en": "rpm"
       },
