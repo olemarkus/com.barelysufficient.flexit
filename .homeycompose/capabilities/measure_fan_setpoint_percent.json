@@ -3,6 +3,7 @@
     "title": {
         "en": "Fan Setpoint %"
     },
+    "icon": "/assets/capabilities/measure_fan_setpoint_percent.svg",
     "units": {
         "en": "%"
     },
