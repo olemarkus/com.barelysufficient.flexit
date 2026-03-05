@@ -30,6 +30,9 @@ export const MAX_TARGET_TEMPERATURE_C = 30;
 const TARGET_TEMPERATURE_STEP_C = 0.5;
 export const TARGET_TEMPERATURE_HOME_SETTING = 'target_temperature_home';
 export const TARGET_TEMPERATURE_AWAY_SETTING = 'target_temperature_away';
+export const FIREPLACE_DURATION_SETTING = 'fireplace_duration_minutes';
+export const MIN_FIREPLACE_DURATION_MINUTES = 1;
+export const MAX_FIREPLACE_DURATION_MINUTES = 360;
 type TargetTemperatureMode = 'home' | 'away';
 export const FILTER_CHANGE_INTERVAL_MONTHS_SETTING = 'filter_change_interval_months';
 export const FILTER_CHANGE_INTERVAL_HOURS_LEGACY_SETTING = 'filter_change_interval_hours';
@@ -202,6 +205,7 @@ const TARGET_TEMPERATURE_SETTING_KEYS: Record<TargetTemperatureMode, string> = {
   home: TARGET_TEMPERATURE_HOME_SETTING,
   away: TARGET_TEMPERATURE_AWAY_SETTING,
 };
+const FIREPLACE_DURATION_DATA_KEY = 'fireplace_duration_minutes';
 
 const objectKey = (type: number, instance: number) => `${type}:${instance}`;
 const FIREPLACE_RUNTIME_KEY = objectKey(
@@ -575,6 +579,9 @@ const POLL_VALUE_MAPPINGS: Record<string, (value: number, target: PollParseTarge
   [objectKey(OBJECT_TYPE.POSITIVE_INTEGER_VALUE, 318)]: mapPollValue('comfort_delay'),
   [objectKey(OBJECT_TYPE.MULTI_STATE_VALUE, 42)]: mapPollValue('ventilation_mode'),
   [objectKey(OBJECT_TYPE.MULTI_STATE_VALUE, 361)]: mapPollValue('operation_mode'),
+  [objectKey(BACNET_OBJECTS.fireplaceVentilationRuntime.type, BACNET_OBJECTS.fireplaceVentilationRuntime.instance)]: mapPollValue(
+    FIREPLACE_DURATION_DATA_KEY,
+  ),
   [objectKey(OBJECT_TYPE.BINARY_VALUE, 15)]: mapPollValue('rapid_active'),
   [objectKey(OBJECT_TYPE.BINARY_VALUE, 400)]: mapPollValue('fireplace_active'),
   [objectKey(OBJECT_TYPE.BINARY_VALUE, 574)]: mapPollValue('away_delay_active'),
@@ -934,6 +941,59 @@ export class UnitRegistry {
       return unit.writeQueue;
     }
 
+    async setFireplaceVentilationDuration(unitId: string, requestedMinutes: number) {
+      const unit = this.units.get(unitId);
+      if (!unit) throw new Error('Unit not found');
+
+      const durationMinutes = this.normalizeFireplaceDurationMinutes(requestedMinutes);
+      const writeOptions: WriteOptions = {
+        maxSegments: BacnetEnums.MaxSegmentsAccepted.SEGMENTS_0,
+        maxApdu: BacnetEnums.MaxApduLengthAccepted.OCTETS_1476,
+        priority: DEFAULT_WRITE_PRIORITY,
+      };
+
+      this.log(`[UnitRegistry] Setting fireplace duration to ${durationMinutes} minutes for ${unitId}`);
+
+      unit.writeQueue = unit.writeQueue.then(async () => {
+        const context: FanModeWriteContext = {
+          unit,
+          mode: 'fireplace_duration',
+          writeOptions,
+          client: this.dependencies.getBacnetClient(unit.bacnetPort),
+          ventilationModeKey: VENTILATION_MODE_KEY,
+          comfortButtonKey: COMFORT_BUTTON_KEY,
+        };
+
+        const writeOk = await this.writeUpdate(context, {
+          objectId: BACNET_OBJECTS.fireplaceVentilationRuntime,
+          tag: BacnetEnums.ApplicationTags.UNSIGNED_INTEGER,
+          value: durationMinutes,
+          priority: DEFAULT_WRITE_PRIORITY,
+        });
+        if (!writeOk) throw new Error('Failed to write fireplace duration via PIV:270');
+
+        const verifiedValue = await this.readPresentValue(
+          context.client,
+          unit,
+          BACNET_OBJECTS.fireplaceVentilationRuntime,
+        );
+        const verifiedMinutes = this.normalizeFireplaceDurationMinutes(verifiedValue);
+
+        this.log(`[UnitRegistry] Verified fireplace duration ${verifiedMinutes} minutes for ${unitId}`);
+        for (const device of unit.devices) {
+          this.updateDeviceSettings(device, {
+            [FIREPLACE_DURATION_SETTING]: verifiedMinutes,
+          }).catch((err) => {
+            this.warn(`[UnitRegistry] Failed to sync fireplace duration setting for ${unitId}:`, err);
+          });
+        }
+
+        this.pollUnit(unitId);
+      });
+
+      return unit.writeQueue;
+    }
+
     async setFanProfileMode(
       unitId: string,
       mode: FanProfileMode,
@@ -1256,6 +1316,7 @@ export class UnitRegistry {
         this.applyCurrentFanSetpointCapabilities(unit, device, data, setpointMode);
         this.syncTargetTemperatureSettings(device, data);
         this.syncFanProfileSettings(device, data);
+        this.syncFireplaceDurationSetting(device, data[FIREPLACE_DURATION_DATA_KEY]);
         this.syncFilterIntervalSetting(device, data.filter_limit);
         const filterLife = this.computeFilterLife(data);
         if (filterLife !== undefined) this.setCapability(device, 'measure_hepa_filter', filterLife);
@@ -1451,6 +1512,25 @@ export class UnitRegistry {
       return rounded;
     }
 
+    private normalizeFireplaceDurationMinutes(value: unknown): number {
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric)) {
+        throw new Error('Fireplace duration must be numeric');
+      }
+
+      const rounded = Math.round(numeric);
+      if (
+        rounded < MIN_FIREPLACE_DURATION_MINUTES
+        || rounded > MAX_FIREPLACE_DURATION_MINUTES
+      ) {
+        throw new Error(
+          `Fireplace duration must be between ${MIN_FIREPLACE_DURATION_MINUTES}`
+          + ` and ${MAX_FIREPLACE_DURATION_MINUTES} minutes`,
+        );
+      }
+      return rounded;
+    }
+
     private updateDeviceSettings(device: FlexitDevice, settings: Record<string, any>) {
       if (typeof device.applyRegistrySettings === 'function') {
         return device.applyRegistrySettings(settings);
@@ -1513,6 +1593,32 @@ export class UnitRegistry {
 
       this.updateDeviceSettings(device, updates).catch((err) => {
         this.warn(`[UnitRegistry] Failed to sync fan profile settings for ${device.getData().unitId}:`, err);
+      });
+    }
+
+    private syncFireplaceDurationSetting(device: FlexitDevice, runtimeValue: number | undefined) {
+      if (runtimeValue === undefined || !Number.isFinite(runtimeValue)) return;
+
+      let normalizedRuntime: number;
+      try {
+        normalizedRuntime = this.normalizeFireplaceDurationMinutes(runtimeValue);
+      } catch (error) {
+        this.warn(
+          `[UnitRegistry] Ignoring out-of-range fireplace duration ${runtimeValue}`
+          + ` from ${device.getData().unitId}:`,
+          error,
+        );
+        return;
+      }
+      const currentSettingValue = Number(device.getSetting(FIREPLACE_DURATION_SETTING));
+      if (Number.isFinite(currentSettingValue) && Math.abs(currentSettingValue - normalizedRuntime) < 0.5) {
+        return;
+      }
+
+      this.updateDeviceSettings(device, {
+        [FIREPLACE_DURATION_SETTING]: normalizedRuntime,
+      }).catch((err) => {
+        this.warn(`[UnitRegistry] Failed to sync fireplace duration setting for ${device.getData().unitId}:`, err);
       });
     }
 

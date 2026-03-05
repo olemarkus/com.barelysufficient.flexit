@@ -67,6 +67,7 @@ function makeMockDevice(serverIp: string, serverPort: number, filterIntervalHour
     1,
     Math.round(filterIntervalHours / FILTER_CHANGE_INTERVAL_HOURS_PER_MONTH),
   );
+  let currentFireplaceDurationMinutes = 10;
   const currentFanSettings = { ...DEFAULT_FAN_SETTINGS };
   const currentTargetTemperatureSettings = { ...DEFAULT_TARGET_TEMPERATURE_SETTINGS };
   const getSetting = sinon.stub();
@@ -75,6 +76,7 @@ function makeMockDevice(serverIp: string, serverPort: number, filterIntervalHour
   getSetting.withArgs('serial').returns('800131-123456');
   getSetting.withArgs('filter_change_interval_hours').callsFake(() => currentFilterIntervalHours);
   getSetting.withArgs('filter_change_interval_months').callsFake(() => currentFilterIntervalMonths);
+  getSetting.withArgs('fireplace_duration_minutes').callsFake(() => currentFireplaceDurationMinutes);
   getSetting.callsFake((key: string) => {
     if (Object.prototype.hasOwnProperty.call(currentFanSettings, key)) return currentFanSettings[key];
     if (Object.prototype.hasOwnProperty.call(currentTargetTemperatureSettings, key)) return currentTargetTemperatureSettings[key];
@@ -104,6 +106,10 @@ function makeMockDevice(serverIp: string, serverPort: number, filterIntervalHour
         currentTargetTemperatureSettings[key] = value;
       }
     }
+    const nextFireplaceDuration = settings?.fireplace_duration_minutes;
+    if (typeof nextFireplaceDuration === 'number' && Number.isFinite(nextFireplaceDuration)) {
+      currentFireplaceDurationMinutes = Math.round(nextFireplaceDuration);
+    }
   });
   const setSetting = sinon.stub().callsFake(async (settings: Record<string, any>) => {
     const nextHours = settings?.filter_change_interval_hours;
@@ -127,6 +133,10 @@ function makeMockDevice(serverIp: string, serverPort: number, filterIntervalHour
       if (typeof value === 'number' && Number.isFinite(value)) {
         currentTargetTemperatureSettings[key] = value;
       }
+    }
+    const nextFireplaceDuration = settings?.fireplace_duration_minutes;
+    if (typeof nextFireplaceDuration === 'number' && Number.isFinite(nextFireplaceDuration)) {
+      currentFireplaceDurationMinutes = Math.round(nextFireplaceDuration);
     }
   });
 
@@ -494,5 +504,30 @@ describe('UnitRegistry fake-unit e2e', function unitRegistryFakeUdpE2e() {
     expect(writes.length).to.equal(2);
     expect(device.getSetting('fan_profile_home_supply')).to.equal(70);
     expect(device.getSetting('fan_profile_home_exhaust')).to.equal(60);
+  });
+
+  it('writes fireplace duration to PIV:270 with priority 13 and syncs setting', async () => {
+    const device = makeMockDevice(SERVER_BIND_ADDRESS, serverPort, 4380);
+    registry.register('test_unit', device);
+
+    await registry.setFireplaceVentilationDuration('test_unit', 27);
+    await waitFor(() => {
+      const runtime = state.readPresentValue(
+        OBJECT_TYPE.POSITIVE_INTEGER_VALUE,
+        270,
+        PROPERTY_ID.PRESENT_VALUE,
+      );
+      return runtime.ok && runtime.value.value === 27;
+    });
+
+    const runtimeWrite = writePresentValueSpy.getCalls().find((call: any) => (
+      call.args[0] === OBJECT_TYPE.POSITIVE_INTEGER_VALUE
+      && call.args[1] === 270
+      && call.args[2] === PROPERTY_ID.PRESENT_VALUE
+      && call.args[3] === 27
+      && call.args[4] === 13
+    ));
+    expect(runtimeWrite).to.not.equal(undefined);
+    expect(device.getSetting('fireplace_duration_minutes')).to.equal(27);
   });
 });
