@@ -148,6 +148,104 @@ describe('Nordic device', () => {
     expect(registryStub.resetFilterTimer.calledOnceWithExactly('test_unit')).to.equal(true);
   });
 
+  it('logs capability write failures before rethrowing them', async () => {
+    const device = new DeviceClass();
+    const failure = new Error('registry write failed');
+    device.hasCapability.withArgs(EXHAUST_TEMP_CAPABILITY).returns(true);
+    device.hasCapability.withArgs(RESET_FILTER_CAPABILITY).returns(true);
+    registryStub.writeSetpoint.rejects(failure);
+
+    await device.onInit();
+
+    const targetListener = device.registerCapabilityListener.firstCall.args[1];
+    let thrown: Error | null = null;
+    try {
+      await targetListener(21.5);
+    } catch (error) {
+      thrown = error as Error;
+    }
+
+    expect(thrown).to.equal(failure);
+    const failureLog = device.error.getCalls().find((call: any) => (
+      String(call.args[0]).includes("Capability 'target_temperature' writing setpoint 21.5 failed after")
+    ));
+    expect(failureLog).to.not.equal(undefined);
+    expect(failureLog?.args[1]).to.equal(failure);
+  });
+
+  it('logs slow capability writes before callers time out', async () => {
+    const clock = sinon.useFakeTimers();
+    const device = new DeviceClass();
+    device.hasCapability.withArgs(EXHAUST_TEMP_CAPABILITY).returns(true);
+    device.hasCapability.withArgs(RESET_FILTER_CAPABILITY).returns(true);
+
+    let resolveWrite: (() => void) | undefined;
+    registryStub.writeSetpoint.callsFake(() => new Promise<void>((resolve) => {
+      resolveWrite = resolve;
+    }));
+
+    try {
+      await device.onInit();
+
+      const targetListener = device.registerCapabilityListener.firstCall.args[1];
+      const listenerPromise = targetListener(21.5);
+
+      await clock.tickAsync(4999);
+      expect(device.error.called).to.equal(false);
+
+      await clock.tickAsync(1);
+      const pendingLog = device.error.getCalls().find((call: any) => (
+        String(call.args[0]).includes("Capability 'target_temperature' writing setpoint 21.5 is still pending after 5000ms")
+      ));
+      expect(pendingLog).to.not.equal(undefined);
+
+      resolveWrite?.();
+      await clock.tickAsync(0);
+      await listenerPromise;
+
+      const completionLog = device.log.getCalls().find((call: any) => (
+        String(call.args[0]).includes("Capability 'target_temperature' writing setpoint 21.5 completed after 5000ms")
+      ));
+      expect(completionLog).to.not.equal(undefined);
+    } finally {
+      clock.restore();
+    }
+  });
+
+  it('logs slow completion based on elapsed time even when timer callback is delayed', async () => {
+    const device = new DeviceClass();
+    device.hasCapability.withArgs(EXHAUST_TEMP_CAPABILITY).returns(true);
+    device.hasCapability.withArgs(RESET_FILTER_CAPABILITY).returns(true);
+
+    const setTimeoutStub = sinon.stub(global, 'setTimeout').callsFake((_fn: any) => 1 as any);
+    const clearTimeoutStub = sinon.stub(global, 'clearTimeout').callsFake(() => undefined as any);
+    const dateNowStub = sinon.stub(Date, 'now');
+    dateNowStub.onFirstCall().returns(1_000);
+    dateNowStub.onSecondCall().returns(7_000);
+
+    try {
+      await device.onInit();
+      const targetListener = device.registerCapabilityListener.firstCall.args[1];
+      await targetListener(21.5);
+
+      const pendingLog = device.error.getCalls().find((call: any) => (
+        String(call.args[0]).includes("Capability 'target_temperature' writing setpoint 21.5 is still pending after 6000ms")
+      ));
+      expect(pendingLog).to.not.equal(undefined);
+
+      const completionLog = device.log.getCalls().find((call: any) => (
+        String(call.args[0]).includes("Capability 'target_temperature' writing setpoint 21.5 completed after 6000ms")
+      ));
+      expect(completionLog).to.not.equal(undefined);
+      expect(setTimeoutStub.called).to.equal(true);
+      expect(clearTimeoutStub.called).to.equal(true);
+    } finally {
+      setTimeoutStub.restore();
+      clearTimeoutStub.restore();
+      dateNowStub.restore();
+    }
+  });
+
   it('normalizes legacy numeric connection label settings during init', async () => {
     const device = new DeviceClass();
     device.hasCapability.withArgs(EXHAUST_TEMP_CAPABILITY).returns(true);

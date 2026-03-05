@@ -143,6 +143,7 @@ export const MAX_FILTER_CHANGE_INTERVAL_HOURS = (
 );
 
 const POLL_INTERVAL_MS = 10_000;
+const POLL_WATCHDOG_TIMEOUT_MS = 12_000;
 const REDISCOVERY_INTERVAL_MS = 60_000;
 const MAX_CONSECUTIVE_FAILURES = 3;
 const EXTRACT_AIR_TEMPERATURE_PRIMARY_INSTANCE = 59;
@@ -394,6 +395,9 @@ interface UnitState {
   devices: Set<FlexitDevice>;
   pollInterval: ReturnType<typeof setInterval> | null;
   rediscoverInterval: ReturnType<typeof setInterval> | null;
+  pollInFlight: boolean;
+  pollRetryTimer: ReturnType<typeof setTimeout> | null;
+  pollWatchdogTimer: ReturnType<typeof setTimeout> | null;
   ip: string;
   bacnetPort: number;
   writeQueue: Promise<void>;
@@ -667,6 +671,9 @@ export class UnitRegistry {
           devices: new Set(),
           pollInterval: null,
           rediscoverInterval: null,
+          pollInFlight: false,
+          pollRetryTimer: null,
+          pollWatchdogTimer: null,
           ip,
           bacnetPort,
           writeQueue: Promise.resolve(),
@@ -706,6 +713,7 @@ export class UnitRegistry {
         if (unit.devices.size === 0) {
           if (unit.pollInterval) clearInterval(unit.pollInterval);
           if (unit.rediscoverInterval) clearInterval(unit.rediscoverInterval);
+          this.clearUnitPollTimers(unit);
           this.units.delete(unitId);
         }
       }
@@ -719,8 +727,25 @@ export class UnitRegistry {
       for (const unit of this.units.values()) {
         if (unit.pollInterval) clearInterval(unit.pollInterval);
         if (unit.rediscoverInterval) clearInterval(unit.rediscoverInterval);
+        this.clearUnitPollTimers(unit);
       }
       this.units.clear();
+    }
+
+    private clearUnitPollTimers(unit: UnitState) {
+      if (unit.pollRetryTimer) {
+        clearTimeout(unit.pollRetryTimer);
+        unit.pollRetryTimer = null;
+      }
+      if (unit.pollWatchdogTimer) {
+        clearTimeout(unit.pollWatchdogTimer);
+        unit.pollWatchdogTimer = null;
+      }
+      unit.pollInFlight = false;
+    }
+
+    private isTrackedUnit(unit: UnitState) {
+      return this.units.get(unit.unitId) === unit;
     }
 
     async writeSetpoint(unitId: string, setpoint: number) {
@@ -1003,36 +1028,93 @@ export class UnitRegistry {
     }
 
     private pollAttempt(unit: UnitState, attempt: number) {
+      if (!this.isTrackedUnit(unit)) return;
+      if (unit.pollInFlight) return;
+
       const client = this.dependencies.getBacnetClient(unit.bacnetPort);
+      unit.pollInFlight = true;
+      let finalized = false;
+      let handled = false;
+      const finalize = () => {
+        if (finalized) return;
+        finalized = true;
+        unit.pollInFlight = false;
+        if (unit.pollWatchdogTimer) {
+          clearTimeout(unit.pollWatchdogTimer);
+          unit.pollWatchdogTimer = null;
+        }
+      };
+      unit.pollWatchdogTimer = setTimeout(() => {
+        if (handled) return;
+        if (!this.isTrackedUnit(unit)) {
+          handled = true;
+          finalize();
+          return;
+        }
+        handled = true;
+        finalize();
+        this.handlePollError(unit, attempt, {
+          code: 'ERR_TIMEOUT',
+          message: `Poll watchdog timeout after ${POLL_WATCHDOG_TIMEOUT_MS}ms`,
+        });
+      }, POLL_WATCHDOG_TIMEOUT_MS);
       try {
         client.readPropertyMultiple(unit.ip, POLL_REQUEST, (err: any, value: any) => {
+          if (handled) return;
+          if (!this.isTrackedUnit(unit)) {
+            handled = true;
+            finalize();
+            return;
+          }
+          handled = true;
+          finalize();
           if (err) {
             this.handlePollError(unit, attempt, err);
             return;
           }
-          this.handlePollResponse(unit, value);
+          this.handlePollResponse(unit, attempt, value);
         });
       } catch (error) {
+        if (handled) return;
+        if (!this.isTrackedUnit(unit)) {
+          handled = true;
+          finalize();
+          return;
+        }
+        handled = true;
+        finalize();
         this.error(`[UnitRegistry] Synchronous internal error checking ${unit.unitId}:`, error);
         this.handlePollFailure(unit);
       }
     }
 
     private handlePollError(unit: UnitState, attempt: number, err: any) {
+      if (!this.isTrackedUnit(unit)) return;
       const isTimeout = err?.code === 'ERR_TIMEOUT' || String(err?.message || '').includes('ERR_TIMEOUT');
       if (isTimeout && attempt === 0) {
         this.warn(`[UnitRegistry] Poll timeout for ${unit.unitId}, retrying once...`);
-        setTimeout(() => this.pollAttempt(unit, 1), 1000);
+        if (unit.pollRetryTimer) {
+          clearTimeout(unit.pollRetryTimer);
+          unit.pollRetryTimer = null;
+        }
+        unit.pollRetryTimer = setTimeout(() => {
+          unit.pollRetryTimer = null;
+          if (!this.isTrackedUnit(unit)) return;
+          this.pollAttempt(unit, 1);
+        }, 1000);
         return;
       }
       this.error(`[UnitRegistry] Poll error for ${unit.unitId}:`, err);
       this.handlePollFailure(unit);
     }
 
-    private handlePollResponse(unit: UnitState, value: any) {
+    private handlePollResponse(unit: UnitState, attempt: number, value: any) {
       if (!value?.values) return;
       try {
         this.handlePollSuccess(unit);
+        if (attempt > 0) {
+          this.log(`[UnitRegistry] Poll retry succeeded for ${unit.unitId}`);
+        }
         unit.lastPollAt = Date.now();
         const data = this.parsePollValues(unit, value.values, unit.lastPollAt);
         this.distributeData(unit, data);
