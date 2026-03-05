@@ -4,6 +4,9 @@ import {
   FlexitDevice,
   FILTER_CHANGE_INTERVAL_MONTHS_SETTING,
   FILTER_CHANGE_INTERVAL_HOURS_LEGACY_SETTING,
+  FIREPLACE_DURATION_SETTING,
+  MIN_FIREPLACE_DURATION_MINUTES,
+  MAX_FIREPLACE_DURATION_MINUTES,
   FAN_PROFILE_MODES,
   FAN_PROFILE_SETTING_KEYS,
   FanProfileMode,
@@ -43,6 +46,9 @@ interface SuppressedSetting {
 
 export = class FlexitNordicDevice extends Homey.Device {
   private suppressedRegistrySettings = new Map<string, SuppressedSetting>();
+  private settingsUpdateInProgress = false;
+  private deferredRegistrySettings: Record<string, unknown> = {};
+  private deferredFlushScheduled = false;
 
   async onInit() {
     this.log('Nordic device init', this.getName());
@@ -171,26 +177,35 @@ export = class FlexitNordicDevice extends Homey.Device {
     newSettings: Record<string, unknown>;
     changedKeys: string[];
   }): Promise<void> {
-    const effectiveChangedKeys = this.filterSuppressedChangedKeys(changedKeys, newSettings);
-    const monthsChanged = effectiveChangedKeys.includes(FILTER_CHANGE_INTERVAL_MONTHS_SETTING);
-    const legacyHoursChanged = effectiveChangedKeys.includes(FILTER_CHANGE_INTERVAL_HOURS_LEGACY_SETTING);
-    const homeTargetTemperatureChanged = effectiveChangedKeys.includes(TARGET_TEMPERATURE_HOME_SETTING);
-    const awayTargetTemperatureChanged = effectiveChangedKeys.includes(TARGET_TEMPERATURE_AWAY_SETTING);
-    const changedFanModes = this.getChangedFanModes(effectiveChangedKeys);
-    if (
-      !monthsChanged
-      && !legacyHoursChanged
-      && !homeTargetTemperatureChanged
-      && !awayTargetTemperatureChanged
-      && changedFanModes.length === 0
-    ) return;
+    this.settingsUpdateInProgress = true;
+    try {
+      const effectiveChangedKeys = this.filterSuppressedChangedKeys(changedKeys, newSettings);
+      const monthsChanged = effectiveChangedKeys.includes(FILTER_CHANGE_INTERVAL_MONTHS_SETTING);
+      const legacyHoursChanged = effectiveChangedKeys.includes(FILTER_CHANGE_INTERVAL_HOURS_LEGACY_SETTING);
+      const homeTargetTemperatureChanged = effectiveChangedKeys.includes(TARGET_TEMPERATURE_HOME_SETTING);
+      const awayTargetTemperatureChanged = effectiveChangedKeys.includes(TARGET_TEMPERATURE_AWAY_SETTING);
+      const fireplaceDurationChanged = effectiveChangedKeys.includes(FIREPLACE_DURATION_SETTING);
+      const changedFanModes = this.getChangedFanModes(effectiveChangedKeys);
+      if (
+        !monthsChanged
+        && !legacyHoursChanged
+        && !homeTargetTemperatureChanged
+        && !awayTargetTemperatureChanged
+        && !fireplaceDurationChanged
+        && changedFanModes.length === 0
+      ) return;
 
-    const { unitId } = this.getData();
-    await this.maybeHandleFilterIntervalSetting(unitId, newSettings, monthsChanged, legacyHoursChanged);
-    await this.maybeHandleTargetTemperatureSetting(unitId, 'home', newSettings, homeTargetTemperatureChanged);
-    await this.maybeHandleTargetTemperatureSetting(unitId, 'away', newSettings, awayTargetTemperatureChanged);
-    for (const mode of changedFanModes) {
-      await this.maybeHandleFanProfileModeSetting(unitId, mode, newSettings);
+      const { unitId } = this.getData();
+      await this.maybeHandleFilterIntervalSetting(unitId, newSettings, monthsChanged, legacyHoursChanged);
+      await this.maybeHandleTargetTemperatureSetting(unitId, 'home', newSettings, homeTargetTemperatureChanged);
+      await this.maybeHandleTargetTemperatureSetting(unitId, 'away', newSettings, awayTargetTemperatureChanged);
+      await this.maybeHandleFireplaceDurationSetting(unitId, newSettings, fireplaceDurationChanged);
+      for (const mode of changedFanModes) {
+        await this.maybeHandleFanProfileModeSetting(unitId, mode, newSettings);
+      }
+    } finally {
+      this.settingsUpdateInProgress = false;
+      this.scheduleDeferredRegistrySettingsFlush();
     }
   }
 
@@ -329,12 +344,82 @@ export = class FlexitNordicDevice extends Homey.Device {
     }
   }
 
+  private async maybeHandleFireplaceDurationSetting(
+    unitId: string,
+    newSettings: Record<string, unknown>,
+    changed: boolean,
+  ) {
+    if (!changed) return;
+
+    const requestedDurationMinutes = Number(newSettings[FIREPLACE_DURATION_SETTING]);
+    if (!Number.isFinite(requestedDurationMinutes)) {
+      throw new Error('Fireplace duration must be numeric.');
+    }
+    if (
+      requestedDurationMinutes < MIN_FIREPLACE_DURATION_MINUTES
+      || requestedDurationMinutes > MAX_FIREPLACE_DURATION_MINUTES
+    ) {
+      throw new Error(
+        `Fireplace duration must be between ${MIN_FIREPLACE_DURATION_MINUTES}`
+        + ` and ${MAX_FIREPLACE_DURATION_MINUTES} minutes.`,
+      );
+    }
+    const normalizedDurationMinutes = Math.round(requestedDurationMinutes);
+
+    const currentDurationMinutes = Number(this.getSetting(FIREPLACE_DURATION_SETTING));
+    if (
+      Number.isFinite(currentDurationMinutes)
+      && Math.abs(currentDurationMinutes - normalizedDurationMinutes) < SETTING_SYNC_TOLERANCE
+    ) return;
+
+    try {
+      this.log(`Updating fireplace duration to ${normalizedDurationMinutes} minutes for unit ${unitId}`);
+      await Registry.setFireplaceVentilationDuration(unitId, normalizedDurationMinutes);
+    } catch (error) {
+      this.error('Failed to update fireplace duration:', error);
+      throw new Error('Failed to update fireplace duration on the unit.');
+    }
+  }
+
   async applyRegistrySettings(settings: Record<string, unknown>): Promise<void> {
+    if (this.settingsUpdateInProgress) {
+      for (const [key, value] of Object.entries(settings)) {
+        this.deferredRegistrySettings[key] = value;
+      }
+      return;
+    }
+
     const expiresAt = Date.now() + REGISTRY_SETTING_SUPPRESSION_WINDOW_MS;
     for (const [key, value] of Object.entries(settings)) {
       this.suppressedRegistrySettings.set(key, { value, expiresAt });
     }
     await this.setSettings(settings);
+  }
+
+  private async flushDeferredRegistrySettings() {
+    if (this.settingsUpdateInProgress) return;
+
+    const deferredEntries = Object.entries(this.deferredRegistrySettings);
+    if (deferredEntries.length === 0) return;
+
+    this.deferredRegistrySettings = {};
+    const deferredSettings = Object.fromEntries(deferredEntries);
+    try {
+      await this.applyRegistrySettings(deferredSettings);
+    } catch (error) {
+      this.error('Failed to apply deferred registry settings:', error, deferredSettings);
+    }
+  }
+
+  private scheduleDeferredRegistrySettingsFlush() {
+    if (this.deferredFlushScheduled) return;
+    this.deferredFlushScheduled = true;
+    setTimeout(() => {
+      this.deferredFlushScheduled = false;
+      this.flushDeferredRegistrySettings().catch((error) => {
+        this.error('Unexpected deferred registry settings flush failure:', error);
+      });
+    }, 0);
   }
 
   private filterSuppressedChangedKeys(
