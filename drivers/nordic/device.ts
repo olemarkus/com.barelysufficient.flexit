@@ -27,6 +27,7 @@ const SUPPLY_SETPOINT_CAPABILITY = 'measure_fan_setpoint_percent';
 const EXTRACT_SETPOINT_CAPABILITY = 'measure_fan_setpoint_percent.extract';
 const CONNECTION_LABEL_SETTING_KEYS = ['ip', 'bacnetPort', 'serial', 'mac'] as const;
 const REGISTRY_SETTING_SUPPRESSION_WINDOW_MS = 30_000;
+const CAPABILITY_OPERATION_WARNING_MS = 5_000;
 const SETTING_SYNC_TOLERANCE = 0.1;
 const REQUIRED_CAPABILITIES = [
   EXHAUST_TEMP_CAPABILITY,
@@ -65,19 +66,84 @@ export = class FlexitNordicDevice extends Homey.Device {
     }
 
     this.registerCapabilityListener('target_temperature', async (value: number) => {
-      this.log(`Writing setpoint ${value} for unit ${unitId}`);
-      await Registry.writeSetpoint(unitId, value);
+      await this.runLoggedCapabilityOperation(
+        'target_temperature',
+        unitId,
+        `writing setpoint ${value}`,
+        async () => {
+          this.log(`Writing setpoint ${value} for unit ${unitId}`);
+          await Registry.writeSetpoint(unitId, value);
+        },
+      );
     });
 
     this.registerCapabilityListener('fan_mode', async (value) => {
-      this.log('Setting fan mode:', value);
-      await Registry.setFanMode(unitId, value);
+      await this.runLoggedCapabilityOperation(
+        'fan_mode',
+        unitId,
+        `setting fan mode '${value}'`,
+        async () => {
+          this.log('Setting fan mode:', value);
+          await Registry.setFanMode(unitId, value);
+        },
+      );
     });
 
     this.registerCapabilityListener(RESET_FILTER_CAPABILITY, async () => {
-      this.log(`Resetting filter timer for unit ${unitId}`);
-      await Registry.resetFilterTimer(unitId);
+      await this.runLoggedCapabilityOperation(
+        RESET_FILTER_CAPABILITY,
+        unitId,
+        'resetting filter timer',
+        async () => {
+          this.log(`Resetting filter timer for unit ${unitId}`);
+          await Registry.resetFilterTimer(unitId);
+        },
+      );
     });
+  }
+
+  private async runLoggedCapabilityOperation<T>(
+    capability: string,
+    unitId: string,
+    actionDescription: string,
+    action: () => Promise<T>,
+  ): Promise<T> {
+    const startedAt = Date.now();
+    let warningLogged = false;
+    const warningTimer = setTimeout(() => {
+      warningLogged = true;
+      this.error(
+        `Capability '${capability}' ${actionDescription} is still pending after ${Date.now() - startedAt}ms`
+        + ` for unit ${unitId}; external callers may time out before the BACnet write completes.`,
+      );
+    }, CAPABILITY_OPERATION_WARNING_MS);
+
+    try {
+      const result = await action();
+      const elapsedMs = Date.now() - startedAt;
+      if (!warningLogged && elapsedMs >= CAPABILITY_OPERATION_WARNING_MS) {
+        warningLogged = true;
+        this.error(
+          `Capability '${capability}' ${actionDescription} is still pending after ${elapsedMs}ms`
+          + ` for unit ${unitId}; external callers may time out before the BACnet write completes.`,
+        );
+      }
+      if (warningLogged) {
+        this.log(
+          `Capability '${capability}' ${actionDescription} completed after ${elapsedMs}ms for unit ${unitId}`,
+        );
+      }
+      return result;
+    } catch (error) {
+      const elapsedMs = Date.now() - startedAt;
+      this.error(
+        `Capability '${capability}' ${actionDescription} failed after ${elapsedMs}ms for unit ${unitId}:`,
+        error,
+      );
+      throw error;
+    } finally {
+      clearTimeout(warningTimer);
+    }
   }
 
   private async normalizeConnectionLabelSettings() {

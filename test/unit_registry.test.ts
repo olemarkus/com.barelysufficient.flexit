@@ -798,6 +798,147 @@ describe('UnitRegistry', () => {
     expect(unit.consecutiveFailures).to.equal(0);
   });
 
+  it('does not start overlapping polls while a poll is already in flight', () => {
+    const mockDevice = makeMockDevice();
+    let pendingCallback: ((err: any, value: any) => void) | undefined;
+    mockClient.readPropertyMultiple.resetBehavior();
+    mockClient.readPropertyMultiple.callsFake((_ip: string, _requestArray: any[], cb: any) => {
+      pendingCallback = cb;
+    });
+
+    registry.register('test_unit', mockDevice);
+    expect(mockClient.readPropertyMultiple.callCount).to.equal(1);
+
+    (registry as any).pollUnit('test_unit');
+    (registry as any).pollUnit('test_unit');
+    expect(mockClient.readPropertyMultiple.callCount).to.equal(1);
+
+    pendingCallback?.(null, { values: [] });
+    (registry as any).pollUnit('test_unit');
+    expect(mockClient.readPropertyMultiple.callCount).to.equal(2);
+  });
+
+  it('logs when a timeout retry poll succeeds', async () => {
+    const clock = sinon.useFakeTimers();
+    const mockDevice = makeMockDevice();
+
+    try {
+      registry.register('test_unit', mockDevice);
+      mockClient.readPropertyMultiple.resetHistory();
+      mockClient.readPropertyMultiple.resetBehavior();
+      let callCount = 0;
+      mockClient.readPropertyMultiple.callsFake((_ip: string, _requestArray: any[], cb: any) => {
+        callCount += 1;
+        if (callCount === 1) {
+          cb({ code: 'ERR_TIMEOUT', message: 'ERR_TIMEOUT' });
+          return;
+        }
+        cb(null, { values: [] });
+      });
+      mockDevice.log.resetHistory();
+
+      (registry as any).pollUnit('test_unit');
+      await clock.tickAsync(1000);
+      await clock.tickAsync(0);
+
+      expect(mockClient.readPropertyMultiple.callCount).to.equal(2);
+      expect(
+        mockDevice.log.getCalls().some((call: any) => (
+          String(call.args[0]).includes('Poll timeout for test_unit, retrying once...')
+        )),
+      ).to.equal(true);
+      expect(
+        mockDevice.log.getCalls().some((call: any) => (
+          String(call.args[0]).includes('Poll retry succeeded for test_unit')
+        )),
+      ).to.equal(true);
+    } finally {
+      clock.restore();
+    }
+  });
+
+  it('recovers polling when a poll callback never returns', async () => {
+    const clock = sinon.useFakeTimers();
+    const mockDevice = makeMockDevice();
+
+    try {
+      registry.register('test_unit', mockDevice);
+      const unit = (registry as any).units.get('test_unit');
+      clearInterval(unit.pollInterval);
+      unit.pollInterval = null;
+
+      mockClient.readPropertyMultiple.resetHistory();
+      mockClient.readPropertyMultiple.resetBehavior();
+      let callCount = 0;
+      mockClient.readPropertyMultiple.callsFake((_ip: string, _requestArray: any[], cb: any) => {
+        callCount += 1;
+        if (callCount === 1) return; // Simulate a hung BACnet client callback.
+        cb(null, { values: [] });
+      });
+      mockDevice.log.resetHistory();
+
+      (registry as any).pollUnit('test_unit');
+      expect(unit.pollInFlight).to.equal(true);
+      expect(mockClient.readPropertyMultiple.callCount).to.equal(1);
+
+      await clock.tickAsync(11_999);
+      (registry as any).pollUnit('test_unit');
+      expect(mockClient.readPropertyMultiple.callCount).to.equal(1);
+
+      await clock.tickAsync(1_001);
+      await clock.tickAsync(0);
+
+      expect(mockClient.readPropertyMultiple.callCount).to.equal(2);
+      expect(unit.pollInFlight).to.equal(false);
+      expect(
+        mockDevice.log.getCalls().some((call: any) => (
+          String(call.args[0]).includes('Poll timeout for test_unit, retrying once...')
+        )),
+      ).to.equal(true);
+      expect(
+        mockDevice.log.getCalls().some((call: any) => (
+          String(call.args[0]).includes('Poll retry succeeded for test_unit')
+        )),
+      ).to.equal(true);
+    } finally {
+      clock.restore();
+    }
+  });
+
+  it('does not retry polling after unit teardown while a poll is in flight', async () => {
+    const clock = sinon.useFakeTimers();
+    const mockDevice = makeMockDevice();
+
+    try {
+      registry.register('test_unit', mockDevice);
+      const unit = (registry as any).units.get('test_unit');
+      clearInterval(unit.pollInterval);
+      unit.pollInterval = null;
+
+      mockClient.readPropertyMultiple.resetHistory();
+      mockClient.readPropertyMultiple.resetBehavior();
+      mockClient.readPropertyMultiple.callsFake(() => { });
+      mockDevice.log.resetHistory();
+
+      (registry as any).pollUnit('test_unit');
+      expect(mockClient.readPropertyMultiple.callCount).to.equal(1);
+
+      registry.unregister('test_unit', mockDevice);
+      expect((registry as any).units.has('test_unit')).to.equal(false);
+
+      await clock.tickAsync(15_000);
+
+      expect(mockClient.readPropertyMultiple.callCount).to.equal(1);
+      expect(
+        mockDevice.log.getCalls().some((call: any) => (
+          String(call.args[0]).includes('Poll timeout for test_unit, retrying once...')
+        )),
+      ).to.equal(false);
+    } finally {
+      clock.restore();
+    }
+  });
+
   it('clamps and rounds setpoint writes to valid 0.5C range', async () => {
     const mockDevice = makeMockDevice();
     registry.register('test_unit', mockDevice);
@@ -847,16 +988,13 @@ describe('UnitRegistry', () => {
 
   it('maps exhaust air temperature from AI 11 to capability', () => {
     const mockDevice = makeMockDevice();
-    mockClient.readPropertyMultiple.callsFake((_ip: string, _requestArray: any[], cb: any) => {
-      cb(null, {
-        values: [
-          makeReadObject(BACNET_ENUMS.ObjectType.ANALOG_INPUT, 11, 2.1),
-        ],
-      });
-    });
-
     registry.register('test_unit', mockDevice);
-    (registry as any).pollUnit('test_unit');
+    const unit = (registry as any).units.get('test_unit');
+    (registry as any).handlePollResponse(unit, 0, {
+      values: [
+        makeReadObject(BACNET_ENUMS.ObjectType.ANALOG_INPUT, 11, 2.1),
+      ],
+    });
 
     const exhaustTempCalls = mockDevice.setCapabilityValue
       .getCalls()
@@ -869,17 +1007,14 @@ describe('UnitRegistry', () => {
 
   it('prefers extract air temperature from AI 59 when present', () => {
     const mockDevice = makeMockDevice();
-    mockClient.readPropertyMultiple.callsFake((_ip: string, _requestArray: any[], cb: any) => {
-      cb(null, {
-        values: [
-          makeReadObject(BACNET_ENUMS.ObjectType.ANALOG_INPUT, 59, 21.4),
-          makeReadObject(BACNET_ENUMS.ObjectType.ANALOG_INPUT, 95, 0),
-        ],
-      });
-    });
-
     registry.register('test_unit', mockDevice);
-    (registry as any).pollUnit('test_unit');
+    const unit = (registry as any).units.get('test_unit');
+    (registry as any).handlePollResponse(unit, 0, {
+      values: [
+        makeReadObject(BACNET_ENUMS.ObjectType.ANALOG_INPUT, 59, 21.4),
+        makeReadObject(BACNET_ENUMS.ObjectType.ANALOG_INPUT, 95, 0),
+      ],
+    });
 
     const extractTempCalls = mockDevice.setCapabilityValue
       .getCalls()
@@ -892,17 +1027,14 @@ describe('UnitRegistry', () => {
 
   it('falls back to extract air temperature from AI 95 when AI 59 is zero', () => {
     const mockDevice = makeMockDevice();
-    mockClient.readPropertyMultiple.callsFake((_ip: string, _requestArray: any[], cb: any) => {
-      cb(null, {
-        values: [
-          makeReadObject(BACNET_ENUMS.ObjectType.ANALOG_INPUT, 59, 0),
-          makeReadObject(BACNET_ENUMS.ObjectType.ANALOG_INPUT, 95, 20.8),
-        ],
-      });
-    });
-
     registry.register('test_unit', mockDevice);
-    (registry as any).pollUnit('test_unit');
+    const unit = (registry as any).units.get('test_unit');
+    (registry as any).handlePollResponse(unit, 0, {
+      values: [
+        makeReadObject(BACNET_ENUMS.ObjectType.ANALOG_INPUT, 59, 0),
+        makeReadObject(BACNET_ENUMS.ObjectType.ANALOG_INPUT, 95, 20.8),
+      ],
+    });
 
     const extractTempCalls = mockDevice.setCapabilityValue
       .getCalls()
