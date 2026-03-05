@@ -32,6 +32,7 @@ function createRegistryStub(overrides: Record<string, any> = {}) {
     setFanSetpointChangedHandler: sinon.stub(),
     setHeatingCoilStateChangedHandler: sinon.stub(),
     setFanProfileMode: sinon.stub().resolves(),
+    setFireplaceVentilationDuration: sinon.stub().resolves(),
     setHeatingCoilEnabled: sinon.stub().resolves(),
     toggleHeatingCoilEnabled: sinon.stub().resolves(true),
     getHeatingCoilEnabled: sinon.stub().resolves(true),
@@ -46,6 +47,8 @@ function createAppClass(registryStub: Record<string, any>, normalizeFanProfilePe
       Registry: registryStub,
       isFanProfileMode: (mode: unknown) => ['home', 'away', 'high', 'fireplace', 'cooker'].includes(String(mode)),
       normalizeFanProfilePercent: normalizeFanProfilePercent ?? ((value: number) => Math.round(value)),
+      MIN_FIREPLACE_DURATION_MINUTES: 1,
+      MAX_FIREPLACE_DURATION_MINUTES: 360,
     },
     'source-map-support': {
       install: sinon.stub(),
@@ -58,6 +61,7 @@ function createCards() {
   return {
     action: {
       setFanProfileMode: { registerRunListener: sinon.stub() },
+      setFireplaceDuration: { registerRunListener: sinon.stub() },
       turnHeatingCoilOn: { registerRunListener: sinon.stub() },
       turnHeatingCoilOff: { registerRunListener: sinon.stub() },
       toggleHeatingCoilOnOff: { registerRunListener: sinon.stub() },
@@ -76,6 +80,7 @@ function createCards() {
 
 function wireCards(app: any, cards: ReturnType<typeof createCards>) {
   app.homey.flow.getActionCard.withArgs('set_fan_profile_mode').returns(cards.action.setFanProfileMode);
+  app.homey.flow.getActionCard.withArgs('set_fireplace_duration').returns(cards.action.setFireplaceDuration);
   app.homey.flow.getActionCard.withArgs('turn_heating_coil_on').returns(cards.action.turnHeatingCoilOn);
   app.homey.flow.getActionCard.withArgs('turn_heating_coil_off').returns(cards.action.turnHeatingCoilOff);
   app.homey.flow.getActionCard.withArgs('toggle_heating_coil_onoff').returns(cards.action.toggleHeatingCoilOnOff);
@@ -107,6 +112,7 @@ describe('App flow registration', () => {
     await app.onInit();
 
     expect(app.homey.flow.getActionCard.calledWithExactly('set_fan_profile_mode')).to.equal(true);
+    expect(app.homey.flow.getActionCard.calledWithExactly('set_fireplace_duration')).to.equal(true);
     expect(app.homey.flow.getActionCard.calledWithExactly('turn_heating_coil_on')).to.equal(true);
     expect(app.homey.flow.getActionCard.calledWithExactly('turn_heating_coil_off')).to.equal(true);
     expect(app.homey.flow.getActionCard.calledWithExactly('toggle_heating_coil_onoff')).to.equal(true);
@@ -119,6 +125,7 @@ describe('App flow registration', () => {
     expect(app.homey.flow.getDeviceTriggerCard.calledWithExactly('heating_coil_turned_off')).to.equal(true);
 
     expect(cards.action.setFanProfileMode.registerRunListener.calledOnce).to.equal(true);
+    expect(cards.action.setFireplaceDuration.registerRunListener.calledOnce).to.equal(true);
     expect(cards.action.turnHeatingCoilOn.registerRunListener.calledOnce).to.equal(true);
     expect(cards.action.turnHeatingCoilOff.registerRunListener.calledOnce).to.equal(true);
     expect(cards.action.toggleHeatingCoilOnOff.registerRunListener.calledOnce).to.equal(true);
@@ -136,6 +143,14 @@ describe('App flow registration', () => {
     });
     expect(fanProfileResult).to.equal(true);
     expect(registryStub.setFanProfileMode.calledOnceWithExactly('unit-1', 'home', 70, 60)).to.equal(true);
+
+    const fireplaceDurationListener = cards.action.setFireplaceDuration.registerRunListener.firstCall.args[0];
+    const fireplaceDurationResult = await fireplaceDurationListener({
+      device: { getData: () => ({ unitId: 'unit-1' }) },
+      minutes: 45,
+    });
+    expect(fireplaceDurationResult).to.equal(true);
+    expect(registryStub.setFireplaceVentilationDuration.calledOnceWithExactly('unit-1', 45)).to.equal(true);
 
     const turnOnHeatingCoilListener = cards.action.turnHeatingCoilOn.registerRunListener.firstCall.args[0];
     const turnOnResult = await turnOnHeatingCoilListener({
@@ -256,5 +271,30 @@ describe('App flow registration', () => {
     expect(thrown).to.not.equal(null);
     expect(thrown?.message).to.contain('between 80 and 100');
     expect(registryStub.setFanProfileMode.called).to.equal(false);
+  });
+
+  it('rejects non-numeric fireplace duration values', async () => {
+    const registryStub = createRegistryStub();
+    const cards = createCards();
+    const AppClass = createAppClass(registryStub);
+    const app = new AppClass();
+    wireCards(app, cards);
+    await app.onInit();
+
+    const listener = cards.action.setFireplaceDuration.registerRunListener.firstCall.args[0];
+
+    let thrown: Error | null = null;
+    try {
+      await listener({
+        device: { getData: () => ({ unitId: 'unit-1' }) },
+        minutes: 'invalid',
+      });
+    } catch (error) {
+      thrown = error as Error;
+    }
+
+    expect(thrown).to.not.equal(null);
+    expect(thrown?.message).to.contain('numeric');
+    expect(registryStub.setFireplaceVentilationDuration.called).to.equal(false);
   });
 });

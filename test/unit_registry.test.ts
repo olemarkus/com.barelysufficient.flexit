@@ -25,6 +25,7 @@ function makeMockDevice() {
   device.getSetting.withArgs('filter_change_interval_hours').returns(4380);
   device.getSetting.withArgs('target_temperature_home').returns(20);
   device.getSetting.withArgs('target_temperature_away').returns(18);
+  device.getSetting.withArgs('fireplace_duration_minutes').returns(10);
   return device;
 }
 
@@ -604,6 +605,57 @@ describe('UnitRegistry', () => {
     expect(highError).to.not.equal(null);
     expect(lowError?.message).to.equal(`Filter change interval must be between ${MIN_FILTER_CHANGE_INTERVAL_HOURS} and ${MAX_FILTER_CHANGE_INTERVAL_HOURS} hours`);
     expect(highError?.message).to.equal(`Filter change interval must be between ${MIN_FILTER_CHANGE_INTERVAL_HOURS} and ${MAX_FILTER_CHANGE_INTERVAL_HOURS} hours`);
+    expect(mockClient.writeProperty.called).to.equal(false);
+  });
+
+  it('writes fireplace duration to PIV:270 with priority 13 and verifies the value', async () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    mockClient.readPropertyMultiple.resetBehavior();
+    mockClient.readPropertyMultiple.callsFake((_ip: string, request: any[], cb: any) => {
+      const requestedObjects = request
+        .map((entry) => `${entry?.objectId?.type}:${entry?.objectId?.instance}`)
+        .sort()
+        .join(',');
+      if (requestedObjects === '48:270') {
+        cb(null, { values: [makeReadObject(BACNET_ENUMS.ObjectType.POSITIVE_INTEGER_VALUE, 270, 22)] });
+        return;
+      }
+      cb(null, { values: [] });
+    });
+
+    await registry.setFireplaceVentilationDuration('test_unit', 22);
+
+    const writeArgs = mockClient.writeProperty.firstCall.args;
+    expect(writeArgs[1]).to.deep.equal({ type: 48, instance: 270 });
+    expect(writeArgs[3][0].type).to.equal(BACNET_ENUMS.ApplicationTags.UNSIGNED_INTEGER);
+    expect(writeArgs[3][0].value).to.equal(22);
+    expect(writeArgs[4].priority).to.equal(13);
+    expect(mockDevice.setSettings.calledWithMatch({ fireplace_duration_minutes: 22 })).to.equal(true);
+  });
+
+  it('rejects fireplace duration values outside 1..360 minutes', async () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    let lowError: Error | null = null;
+    try {
+      await registry.setFireplaceVentilationDuration('test_unit', 0);
+    } catch (error) {
+      lowError = error as Error;
+    }
+    let highError: Error | null = null;
+    try {
+      await registry.setFireplaceVentilationDuration('test_unit', 361);
+    } catch (error) {
+      highError = error as Error;
+    }
+
+    expect(lowError).to.not.equal(null);
+    expect(highError).to.not.equal(null);
+    expect(lowError?.message).to.equal('Fireplace duration must be between 1 and 360 minutes');
+    expect(highError?.message).to.equal('Fireplace duration must be between 1 and 360 minutes');
     expect(mockClient.writeProperty.called).to.equal(false);
   });
 
