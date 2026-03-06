@@ -47,8 +47,17 @@ function createAppClass(registryStub: Record<string, any>, normalizeFanProfilePe
       Registry: registryStub,
       isFanProfileMode: (mode: unknown) => ['home', 'away', 'high', 'fireplace', 'cooker'].includes(String(mode)),
       normalizeFanProfilePercent: normalizeFanProfilePercent ?? ((value: number) => Math.round(value)),
-      MIN_FIREPLACE_DURATION_MINUTES: 1,
-      MAX_FIREPLACE_DURATION_MINUTES: 360,
+      normalizeFireplaceDurationMinutes: (value: unknown) => {
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric)) {
+          throw new Error('Fireplace duration must be numeric');
+        }
+        const rounded = Math.round(numeric);
+        if (rounded < 1 || rounded > 360) {
+          throw new Error('Fireplace duration must be between 1 and 360 minutes');
+        }
+        return rounded;
+      },
     },
     'source-map-support': {
       install: sinon.stub(),

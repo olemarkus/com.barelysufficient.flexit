@@ -44,8 +44,6 @@ describe('Nordic device', () => {
       TARGET_TEMPERATURE_HOME_SETTING: 'target_temperature_home',
       TARGET_TEMPERATURE_AWAY_SETTING: 'target_temperature_away',
       FIREPLACE_DURATION_SETTING: 'fireplace_duration_minutes',
-      MIN_FIREPLACE_DURATION_MINUTES: 1,
-      MAX_FIREPLACE_DURATION_MINUTES: 360,
       MIN_TARGET_TEMPERATURE_C: 10,
       MAX_TARGET_TEMPERATURE_C: 30,
       FAN_PROFILE_MODES: ['home', 'away', 'high', 'fireplace', 'cooker'],
@@ -63,6 +61,17 @@ describe('Nordic device', () => {
       normalizeTargetTemperature: (value: number) => {
         const clamped = Math.max(10, Math.min(30, value));
         return Number((Math.round(clamped * 2) / 2).toFixed(1));
+      },
+      normalizeFireplaceDurationMinutes: (value: unknown) => {
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric)) {
+          throw new Error('Fireplace duration must be numeric');
+        }
+        const rounded = Math.round(numeric);
+        if (rounded < 1 || rounded > 360) {
+          throw new Error('Fireplace duration must be between 1 and 360 minutes');
+        }
+        return rounded;
       },
       normalizeFanProfilePercent: (value: number, mode: string, fan: string) => {
         const rounded = Math.round(value);
@@ -480,38 +489,64 @@ describe('Nordic device', () => {
   });
 
   it('defers registry setting updates until onSettings is complete', async () => {
+    const clock = sinon.useFakeTimers();
+    const device = new DeviceClass();
+    try {
+      device.hasCapability.withArgs(EXHAUST_TEMP_CAPABILITY).returns(true);
+      device.hasCapability.withArgs(RESET_FILTER_CAPABILITY).returns(true);
+      device.getSetting.withArgs('fireplace_duration_minutes').returns(10);
+      device.setSettings.callsFake(async () => {
+        if ((device as any).settingsUpdateInProgress) {
+          throw new Error('Cannot set Settings while this.onSettings is still pending');
+        }
+      });
+      registryStub.setFireplaceVentilationDuration.callsFake(async (_unitId: string, duration: number) => {
+        await device.applyRegistrySettings({ fireplace_duration_minutes: duration });
+      });
+      await device.onInit();
+
+      await device.onSettings({
+        newSettings: {
+          fireplace_duration_minutes: 30,
+        },
+        changedKeys: ['fireplace_duration_minutes'],
+      });
+
+      await clock.tickAsync(0);
+
+      expect(registryStub.setFireplaceVentilationDuration.calledOnceWithExactly('test_unit', 30)).to.equal(true);
+      expect(device.setSettings.calledOnceWithExactly({ fireplace_duration_minutes: 30 })).to.equal(true);
+      expect(
+        device.error.calledWithMatch(
+          'Failed to apply deferred registry settings:',
+        ),
+      ).to.equal(false);
+    } finally {
+      clock.restore();
+    }
+  });
+
+  it('re-queues deferred registry settings when apply fails', async () => {
     const device = new DeviceClass();
     device.hasCapability.withArgs(EXHAUST_TEMP_CAPABILITY).returns(true);
     device.hasCapability.withArgs(RESET_FILTER_CAPABILITY).returns(true);
-    device.getSetting.withArgs('fireplace_duration_minutes').returns(10);
-    let onSettingsPending = false;
-    device.setSettings.callsFake(async () => {
-      if (onSettingsPending) {
-        throw new Error('Cannot set Settings while this.onSettings is still pending');
-      }
-    });
-    registryStub.setFireplaceVentilationDuration.callsFake(async (_unitId: string, duration: number) => {
-      await device.applyRegistrySettings({ fireplace_duration_minutes: duration });
-    });
     await device.onInit();
 
-    onSettingsPending = true;
-    await device.onSettings({
-      newSettings: {
-        fireplace_duration_minutes: 30,
-      },
-      changedKeys: ['fireplace_duration_minutes'],
-    });
-    onSettingsPending = false;
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    const transientFailure = new Error('setSettings failed');
+    device.setSettings.onFirstCall().rejects(transientFailure);
+    device.setSettings.onSecondCall().resolves();
 
-    expect(registryStub.setFireplaceVentilationDuration.calledOnceWithExactly('test_unit', 30)).to.equal(true);
-    expect(device.setSettings.calledOnceWithExactly({ fireplace_duration_minutes: 30 })).to.equal(true);
-    expect(
-      device.error.calledWithMatch(
-        'Failed to apply deferred registry settings:',
-      ),
-    ).to.equal(false);
+    (device as any).settingsUpdateInProgress = true;
+    await device.applyRegistrySettings({ fireplace_duration_minutes: 40 });
+    (device as any).settingsUpdateInProgress = false;
+
+    await (device as any).flushDeferredRegistrySettings();
+    expect(device.setSettings.calledOnceWithExactly({ fireplace_duration_minutes: 40 })).to.equal(true);
+    expect((device as any).deferredRegistrySettings).to.deep.equal({ fireplace_duration_minutes: 40 });
+
+    await (device as any).flushDeferredRegistrySettings();
+    expect(device.setSettings.calledTwice).to.equal(true);
+    expect((device as any).deferredRegistrySettings).to.deep.equal({});
   });
 
   it('suppresses onSettings fan profile writes for registry-originated sync', async () => {

@@ -330,6 +330,25 @@ export function normalizeTargetTemperature(value: number): number {
   return Number(stepped.toFixed(1));
 }
 
+export function normalizeFireplaceDurationMinutes(value: unknown): number {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    throw new Error('Fireplace duration must be numeric');
+  }
+
+  const rounded = Math.round(numeric);
+  if (
+    rounded < MIN_FIREPLACE_DURATION_MINUTES
+    || rounded > MAX_FIREPLACE_DURATION_MINUTES
+  ) {
+    throw new Error(
+      `Fireplace duration must be between ${MIN_FIREPLACE_DURATION_MINUTES}`
+      + ` and ${MAX_FIREPLACE_DURATION_MINUTES} minutes`,
+    );
+  }
+  return rounded;
+}
+
 export function isFanProfileMode(value: unknown): value is FanProfileMode {
   return typeof value === 'string' && (FAN_PROFILE_MODES as readonly string[]).includes(value);
 }
@@ -945,7 +964,7 @@ export class UnitRegistry {
       const unit = this.units.get(unitId);
       if (!unit) throw new Error('Unit not found');
 
-      const durationMinutes = this.normalizeFireplaceDurationMinutes(requestedMinutes);
+      const durationMinutes = normalizeFireplaceDurationMinutes(requestedMinutes);
       const writeOptions: WriteOptions = {
         maxSegments: BacnetEnums.MaxSegmentsAccepted.SEGMENTS_0,
         maxApdu: BacnetEnums.MaxApduLengthAccepted.OCTETS_1476,
@@ -977,7 +996,7 @@ export class UnitRegistry {
           unit,
           BACNET_OBJECTS.fireplaceVentilationRuntime,
         );
-        const verifiedMinutes = this.normalizeFireplaceDurationMinutes(verifiedValue);
+        const verifiedMinutes = normalizeFireplaceDurationMinutes(verifiedValue);
 
         this.log(`[UnitRegistry] Verified fireplace duration ${verifiedMinutes} minutes for ${unitId}`);
         for (const device of unit.devices) {
@@ -1512,25 +1531,6 @@ export class UnitRegistry {
       return rounded;
     }
 
-    private normalizeFireplaceDurationMinutes(value: unknown): number {
-      const numeric = Number(value);
-      if (!Number.isFinite(numeric)) {
-        throw new Error('Fireplace duration must be numeric');
-      }
-
-      const rounded = Math.round(numeric);
-      if (
-        rounded < MIN_FIREPLACE_DURATION_MINUTES
-        || rounded > MAX_FIREPLACE_DURATION_MINUTES
-      ) {
-        throw new Error(
-          `Fireplace duration must be between ${MIN_FIREPLACE_DURATION_MINUTES}`
-          + ` and ${MAX_FIREPLACE_DURATION_MINUTES} minutes`,
-        );
-      }
-      return rounded;
-    }
-
     private updateDeviceSettings(device: FlexitDevice, settings: Record<string, any>) {
       if (typeof device.applyRegistrySettings === 'function') {
         return device.applyRegistrySettings(settings);
@@ -1601,7 +1601,7 @@ export class UnitRegistry {
 
       let normalizedRuntime: number;
       try {
-        normalizedRuntime = this.normalizeFireplaceDurationMinutes(runtimeValue);
+        normalizedRuntime = normalizeFireplaceDurationMinutes(runtimeValue);
       } catch (error) {
         this.warn(
           `[UnitRegistry] Ignoring out-of-range fireplace duration ${runtimeValue}`
