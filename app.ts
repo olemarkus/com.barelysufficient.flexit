@@ -5,8 +5,7 @@ import {
   Registry,
   isFanProfileMode,
   normalizeFanProfilePercent,
-  MIN_FIREPLACE_DURATION_MINUTES,
-  MAX_FIREPLACE_DURATION_MINUTES,
+  normalizeFireplaceDurationMinutes,
 } from './lib/UnitRegistry';
 
 sourceMapSupport.install();
@@ -112,22 +111,9 @@ export = class App extends Homey.App {
     const setFireplaceDurationCard = this.homey.flow.getActionCard('set_fireplace_duration');
     setFireplaceDurationCard.registerRunListener(async (args: any) => {
       const device = args?.device as Homey.Device | undefined;
-      const requestedMinutes = Number(args?.minutes);
-      if (!Number.isFinite(requestedMinutes)) {
-        throw new Error('Duration must be numeric.');
-      }
-      if (
-        requestedMinutes < MIN_FIREPLACE_DURATION_MINUTES
-        || requestedMinutes > MAX_FIREPLACE_DURATION_MINUTES
-      ) {
-        throw new Error(
-          `Duration must be between ${MIN_FIREPLACE_DURATION_MINUTES}`
-          + ` and ${MAX_FIREPLACE_DURATION_MINUTES} minutes.`,
-        );
-      }
-
+      const requestedMinutes = normalizeFireplaceDurationMinutes(args?.minutes);
       const unitId = this.resolveUnitId(device);
-      await Registry.setFireplaceVentilationDuration(unitId, Math.round(requestedMinutes));
+      await Registry.setFireplaceVentilationDuration(unitId, requestedMinutes);
       return true;
     });
   }

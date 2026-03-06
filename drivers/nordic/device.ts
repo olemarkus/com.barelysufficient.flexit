@@ -5,8 +5,6 @@ import {
   FILTER_CHANGE_INTERVAL_MONTHS_SETTING,
   FILTER_CHANGE_INTERVAL_HOURS_LEGACY_SETTING,
   FIREPLACE_DURATION_SETTING,
-  MIN_FIREPLACE_DURATION_MINUTES,
-  MAX_FIREPLACE_DURATION_MINUTES,
   FAN_PROFILE_MODES,
   FAN_PROFILE_SETTING_KEYS,
   FanProfileMode,
@@ -21,6 +19,7 @@ import {
   TARGET_TEMPERATURE_AWAY_SETTING,
   MIN_TARGET_TEMPERATURE_C,
   MAX_TARGET_TEMPERATURE_C,
+  normalizeFireplaceDurationMinutes,
   normalizeTargetTemperature,
 } from '../../lib/UnitRegistry';
 
@@ -351,20 +350,9 @@ export = class FlexitNordicDevice extends Homey.Device {
   ) {
     if (!changed) return;
 
-    const requestedDurationMinutes = Number(newSettings[FIREPLACE_DURATION_SETTING]);
-    if (!Number.isFinite(requestedDurationMinutes)) {
-      throw new Error('Fireplace duration must be numeric.');
-    }
-    if (
-      requestedDurationMinutes < MIN_FIREPLACE_DURATION_MINUTES
-      || requestedDurationMinutes > MAX_FIREPLACE_DURATION_MINUTES
-    ) {
-      throw new Error(
-        `Fireplace duration must be between ${MIN_FIREPLACE_DURATION_MINUTES}`
-        + ` and ${MAX_FIREPLACE_DURATION_MINUTES} minutes.`,
-      );
-    }
-    const normalizedDurationMinutes = Math.round(requestedDurationMinutes);
+    const normalizedDurationMinutes = normalizeFireplaceDurationMinutes(
+      newSettings[FIREPLACE_DURATION_SETTING],
+    );
 
     const currentDurationMinutes = Number(this.getSetting(FIREPLACE_DURATION_SETTING));
     if (
@@ -407,6 +395,10 @@ export = class FlexitNordicDevice extends Homey.Device {
     try {
       await this.applyRegistrySettings(deferredSettings);
     } catch (error) {
+      this.deferredRegistrySettings = {
+        ...deferredSettings,
+        ...this.deferredRegistrySettings,
+      };
       this.error('Failed to apply deferred registry settings:', error, deferredSettings);
     }
   }
