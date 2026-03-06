@@ -111,6 +111,10 @@ function wireCards(app: any, cards: ReturnType<typeof createCards>) {
 }
 
 describe('App flow registration', () => {
+  afterEach(() => {
+    sinon.restore();
+  });
+
   it('registers heating-coil flow cards and forwards callbacks', async () => {
     const registryStub = createRegistryStub();
     const cards = createCards();
@@ -247,6 +251,51 @@ describe('App flow registration', () => {
     expect(registryStub.setFanProfileMode.called).to.equal(false);
   });
 
+  it('rejects missing device unit ids for action cards', async () => {
+    const registryStub = createRegistryStub();
+    const cards = createCards();
+    const AppClass = createAppClass(registryStub);
+    const app = new AppClass();
+    wireCards(app, cards);
+    await app.onInit();
+
+    const listener = cards.action.turnHeatingCoilOn.registerRunListener.firstCall.args[0];
+
+    let thrown: Error | null = null;
+    try {
+      await listener({
+        device: { getData: () => ({ unitId: '   ' }) },
+      });
+    } catch (error) {
+      thrown = error as Error;
+    }
+
+    expect(thrown).to.not.equal(null);
+    expect(thrown?.message).to.equal('Device unitId is missing.');
+    expect(registryStub.setHeatingCoilEnabled.called).to.equal(false);
+  });
+
+  it('rejects completely missing device objects for action cards', async () => {
+    const registryStub = createRegistryStub();
+    const cards = createCards();
+    const AppClass = createAppClass(registryStub);
+    const app = new AppClass();
+    wireCards(app, cards);
+    await app.onInit();
+
+    const listener = cards.action.turnHeatingCoilOn.registerRunListener.firstCall.args[0];
+
+    let thrown: Error | null = null;
+    try {
+      await listener({});
+    } catch (error) {
+      thrown = error as Error;
+    }
+
+    expect(thrown?.message).to.equal('Device unitId is missing.');
+    expect(registryStub.setHeatingCoilEnabled.called).to.equal(false);
+  });
+
   it('rejects out-of-range values for selected mode', async () => {
     const registryStub = createRegistryStub();
     const cards = createCards();
@@ -282,6 +331,44 @@ describe('App flow registration', () => {
     expect(registryStub.setFanProfileMode.called).to.equal(false);
   });
 
+  it('rejects missing mode and non-numeric fan percentages', async () => {
+    const registryStub = createRegistryStub();
+    const cards = createCards();
+    const AppClass = createAppClass(registryStub);
+    const app = new AppClass();
+    wireCards(app, cards);
+    await app.onInit();
+
+    const listener = cards.action.setFanProfileMode.registerRunListener.firstCall.args[0];
+
+    let missingModeError: Error | null = null;
+    try {
+      await listener({
+        device: { getData: () => ({ unitId: 'unit-1' }) },
+        supply_percent: 70,
+        exhaust_percent: 60,
+      });
+    } catch (error) {
+      missingModeError = error as Error;
+    }
+
+    let numericError: Error | null = null;
+    try {
+      await listener({
+        device: { getData: () => ({ unitId: 'unit-1' }) },
+        mode: 'home',
+        supply_percent: 'oops',
+        exhaust_percent: 60,
+      });
+    } catch (error) {
+      numericError = error as Error;
+    }
+
+    expect(missingModeError?.message).to.equal("Unsupported mode ''.");
+    expect(numericError?.message).to.equal('Supply and exhaust values must be numeric.');
+    expect(registryStub.setFanProfileMode.called).to.equal(false);
+  });
+
   it('rejects non-numeric fireplace duration values', async () => {
     const registryStub = createRegistryStub();
     const cards = createCards();
@@ -305,5 +392,54 @@ describe('App flow registration', () => {
     expect(thrown).to.not.equal(null);
     expect(thrown?.message).to.contain('numeric');
     expect(registryStub.setFireplaceVentilationDuration.called).to.equal(false);
+  });
+
+  it('logs trigger-card failures without throwing back into the registry callbacks', async () => {
+    const registryStub = createRegistryStub();
+    const cards = createCards();
+    cards.trigger.supplyFanSetpointChanged.trigger.rejects(new Error('fan trigger failed'));
+    cards.trigger.heatingCoilTurnedOn.trigger.rejects(new Error('coil trigger failed'));
+
+    const AppClass = createAppClass(registryStub);
+    const app = new AppClass();
+    wireCards(app, cards);
+    await app.onInit();
+
+    const fanSetpointChangedHandler = registryStub.setFanSetpointChangedHandler.firstCall.args[0];
+    const heatingCoilStateChangedHandler = registryStub.setHeatingCoilStateChangedHandler.firstCall.args[0];
+
+    await fanSetpointChangedHandler({
+      device: { getData: () => ({ unitId: 'unit-1' }) },
+      fan: 'supply',
+      setpointPercent: 81,
+    });
+    await heatingCoilStateChangedHandler({
+      device: { getData: () => ({ unitId: 'unit-1' }) },
+      enabled: true,
+    });
+    await Promise.resolve();
+
+    expect(app.error.calledWith('Failed to trigger fan setpoint changed flow:', sinon.match.any)).to.equal(true);
+    expect(app.error.calledWith('Failed to trigger heating coil state flow:', sinon.match.any)).to.equal(true);
+  });
+
+  it('logs uncaughtException and unhandledRejection through global handlers', async () => {
+    const registryStub = createRegistryStub();
+    const AppClass = createAppClass(registryStub);
+    const processOnStub = sinon.stub(process, 'on');
+    const app = new AppClass();
+
+    await app.onInit();
+
+    const uncaughtHandler = processOnStub.withArgs('uncaughtException').firstCall.args[1];
+    const rejectionHandler = processOnStub.withArgs('unhandledRejection').firstCall.args[1];
+    const uncaught = new Error('uncaught');
+    const rejection = new Error('rejection');
+
+    uncaughtHandler(uncaught);
+    rejectionHandler(rejection, Promise.resolve());
+
+    expect(app.error.calledWith('Uncaught Exception:', uncaught)).to.equal(true);
+    expect(app.error.calledWith('Unhandled Rejection:', rejection)).to.equal(true);
   });
 });

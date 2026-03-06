@@ -197,9 +197,17 @@ export class FakeNordicUnitState {
     return POINTS_BY_OBJECT.get(pointKey(type, instance));
   }
 
-  readPresentValue(type: number, instance: number, propertyId: number): BacnetResult<{ point: SupportedPoint; value: number }> {
+  readPresentValue(
+    type: number,
+    instance: number,
+    propertyId: number,
+  ): BacnetResult<{ point: SupportedPoint; value: number }> {
     if (propertyId !== PROPERTY_ID.PRESENT_VALUE) {
-      return this.failure(ERROR_CLASS.PROPERTY, ERROR_CODE.UNKNOWN_PROPERTY, `Unsupported property ${propertyId}`);
+      return this.failure(
+        ERROR_CLASS.PROPERTY,
+        ERROR_CODE.UNKNOWN_PROPERTY,
+        `Unsupported property ${propertyId}`,
+      );
     }
 
     const point = this.getPoint(type, instance);
@@ -257,8 +265,15 @@ export class FakeNordicUnitState {
       return this.failure(ERROR_CLASS.PROPERTY, ERROR_CODE.INVALID_DATA_TYPE, `Invalid value for ${point.name}`);
     }
 
-    if ((typeof point.min === 'number' && normalized < point.min) || (typeof point.max === 'number' && normalized > point.max)) {
-      return this.failure(ERROR_CLASS.PROPERTY, ERROR_CODE.VALUE_OUT_OF_RANGE, `Out of range for ${point.name}`);
+    if (
+      (typeof point.min === 'number' && normalized < point.min)
+      || (typeof point.max === 'number' && normalized > point.max)
+    ) {
+      return this.failure(
+        ERROR_CLASS.PROPERTY,
+        ERROR_CODE.VALUE_OUT_OF_RANGE,
+        `Out of range for ${point.name}`,
+      );
     }
 
     this.setValue(point, normalized);
@@ -283,13 +298,25 @@ export class FakeNordicUnitState {
     switch (mode) {
       case 'away': {
         const comfort = this.getPointByName('comfort_button');
-        if (!comfort) return this.failure(ERROR_CLASS.OBJECT, ERROR_CODE.UNKNOWN_OBJECT, 'Missing comfort button object');
+        if (!comfort) {
+          return this.failure(
+            ERROR_CLASS.OBJECT,
+            ERROR_CODE.UNKNOWN_OBJECT,
+            'Missing comfort button object',
+          );
+        }
         return this.writePresentValue(comfort.type, comfort.instance, PROPERTY_ID.PRESENT_VALUE, 0, 13);
       }
       case 'home': {
         const comfort = this.getPointByName('comfort_button');
         const ventMode = this.getPointByName('ventilation_mode');
-        if (!comfort || !ventMode) return this.failure(ERROR_CLASS.OBJECT, ERROR_CODE.UNKNOWN_OBJECT, 'Missing mode objects');
+        if (!comfort || !ventMode) {
+          return this.failure(
+            ERROR_CLASS.OBJECT,
+            ERROR_CODE.UNKNOWN_OBJECT,
+            'Missing mode objects',
+          );
+        }
         const first = this.writePresentValue(comfort.type, comfort.instance, PROPERTY_ID.PRESENT_VALUE, 1, 13);
         if (!first.ok) return first;
         return this.writePresentValue(
@@ -303,7 +330,13 @@ export class FakeNordicUnitState {
       case 'high': {
         const comfort = this.getPointByName('comfort_button');
         const ventMode = this.getPointByName('ventilation_mode');
-        if (!comfort || !ventMode) return this.failure(ERROR_CLASS.OBJECT, ERROR_CODE.UNKNOWN_OBJECT, 'Missing mode objects');
+        if (!comfort || !ventMode) {
+          return this.failure(
+            ERROR_CLASS.OBJECT,
+            ERROR_CODE.UNKNOWN_OBJECT,
+            'Missing mode objects',
+          );
+        }
         const first = this.writePresentValue(comfort.type, comfort.instance, PROPERTY_ID.PRESENT_VALUE, 1, 13);
         if (!first.ok) return first;
         return this.writePresentValue(
@@ -316,7 +349,13 @@ export class FakeNordicUnitState {
       }
       case 'fireplace': {
         const trigger = this.getPointByName('trigger_fireplace');
-        if (!trigger) return this.failure(ERROR_CLASS.OBJECT, ERROR_CODE.UNKNOWN_OBJECT, 'Missing fireplace trigger object');
+        if (!trigger) {
+          return this.failure(
+            ERROR_CLASS.OBJECT,
+            ERROR_CODE.UNKNOWN_OBJECT,
+            'Missing fireplace trigger object',
+          );
+        }
         return this.writePresentValue(trigger.type, trigger.instance, PROPERTY_ID.PRESENT_VALUE, 2, 13);
       }
       default:
@@ -502,7 +541,10 @@ export class FakeNordicUnitState {
     this.setByName('humidity_room_1', roundTo(extractHumidity + 1.2, 3));
     this.setByName('humidity_room_2', roundTo(extractHumidity + 0.6, 3));
     this.setByName('humidity_room_3', roundTo(extractHumidity - 0.6, 3));
-    this.setByName('air_quality_input', clamp(650 + ((this.mode === 'away' ? -80 : 120) + (humidityWave * 15)), 450, 1200));
+    this.setByName(
+      'air_quality_input',
+      clamp(650 + ((this.mode === 'away' ? -80 : 120) + (humidityWave * 15)), 450, 1200),
+    );
 
     const delta = Math.max(0, setpoint - nextSupply);
     const heaterPowerKw = clamp(roundTo(delta * 0.18, 3), 0, 0.8);
@@ -626,11 +668,22 @@ export class FakeNordicUnitState {
       return this.failure(ERROR_CLASS.OBJECT, ERROR_CODE.UNKNOWN_OBJECT, `Missing point ${pointName}`);
     }
     if (!Number.isFinite(value)) {
-      return this.failure(ERROR_CLASS.PROPERTY, ERROR_CODE.INVALID_DATA_TYPE, `Invalid value for ${pointName}`);
+      return this.failure(
+        ERROR_CLASS.PROPERTY,
+        ERROR_CODE.INVALID_DATA_TYPE,
+        `Invalid value for ${pointName}`,
+      );
     }
     const normalized = typeof opts?.round === 'number' ? roundTo(value, opts.round) : value;
-    if ((typeof point.min === 'number' && normalized < point.min) || (typeof point.max === 'number' && normalized > point.max)) {
-      return this.failure(ERROR_CLASS.PROPERTY, ERROR_CODE.VALUE_OUT_OF_RANGE, `Out of range for ${pointName}`);
+    if (
+      (typeof point.min === 'number' && normalized < point.min)
+      || (typeof point.max === 'number' && normalized > point.max)
+    ) {
+      return this.failure(
+        ERROR_CLASS.PROPERTY,
+        ERROR_CODE.VALUE_OUT_OF_RANGE,
+        `Out of range for ${pointName}`,
+      );
     }
     this.setByName(pointName, normalized);
     return { ok: true, value: null };

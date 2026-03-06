@@ -73,6 +73,43 @@ describe('Nordic driver', () => {
     ]);
   });
 
+  it('falls back to driver manifest version when homey manifest is unavailable', async () => {
+    const driver = new DriverClass();
+    driver.homey = {};
+    driver.manifest = { version: '2.4.6' };
+
+    await driver.onInit();
+
+    expect(driver.log.calledWith('Flexit Nordic driver init (app v2.4.6)')).to.equal(true);
+  });
+
+  it('omits unit summary logging when discovery returns no units', async () => {
+    discoverStub.resolves([]);
+    const driver = new DriverClass();
+
+    const devices = await driver.onPairListDevices();
+
+    expect(devices).to.deep.equal([]);
+    expect(driver.log.calledWithMatch('[Pair] Discovery complete: 0 unit(s) found in')).to.equal(true);
+    expect(driver.log.calledWithMatch('[Pair] Units:')).to.equal(false);
+  });
+
+  it('truncates pairing summary when more than five units are discovered', async () => {
+    discoverStub.resolves(Array.from({ length: 6 }, (_value, index) => ({
+      name: `Unit ${index + 1}`,
+      serialNormalized: `80013100000${index + 1}`,
+      ip: `192.0.2.${index + 10}`,
+      bacnetPort: 47808 + index,
+      serial: `800131-00000${index + 1}`,
+      mac: '',
+    })));
+    const driver = new DriverClass();
+
+    await driver.onPairListDevices();
+
+    expect(driver.log.calledWithMatch(/\[Pair\] Units: .*?, \.\.\.$/)).to.equal(true);
+  });
+
   it('logs discovery failure and rethrows', async () => {
     const err = new Error('multicast failed');
     discoverStub.rejects(err);

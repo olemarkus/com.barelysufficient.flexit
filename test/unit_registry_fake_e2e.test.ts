@@ -79,7 +79,9 @@ function makeMockDevice(serverIp: string, serverPort: number, filterIntervalHour
   getSetting.withArgs('fireplace_duration_minutes').callsFake(() => currentFireplaceDurationMinutes);
   getSetting.callsFake((key: string) => {
     if (Object.prototype.hasOwnProperty.call(currentFanSettings, key)) return currentFanSettings[key];
-    if (Object.prototype.hasOwnProperty.call(currentTargetTemperatureSettings, key)) return currentTargetTemperatureSettings[key];
+    if (Object.prototype.hasOwnProperty.call(currentTargetTemperatureSettings, key)) {
+      return currentTargetTemperatureSettings[key];
+    }
     return undefined;
   });
 
@@ -88,9 +90,16 @@ function makeMockDevice(serverIp: string, serverPort: number, filterIntervalHour
     const nextMonths = settings?.filter_change_interval_months;
     if (typeof nextHours === 'number' && Number.isFinite(nextHours)) {
       currentFilterIntervalHours = nextHours;
-      currentFilterIntervalMonths = Math.max(1, Math.round(nextHours / FILTER_CHANGE_INTERVAL_HOURS_PER_MONTH));
+      currentFilterIntervalMonths = Math.max(
+        1,
+        Math.round(nextHours / FILTER_CHANGE_INTERVAL_HOURS_PER_MONTH),
+      );
     }
-    if (typeof nextMonths === 'number' && Number.isFinite(nextMonths) && !(typeof nextHours === 'number' && Number.isFinite(nextHours))) {
+    if (
+      typeof nextMonths === 'number'
+      && Number.isFinite(nextMonths)
+      && !(typeof nextHours === 'number' && Number.isFinite(nextHours))
+    ) {
       currentFilterIntervalMonths = nextMonths;
       currentFilterIntervalHours = Math.round(nextMonths * FILTER_CHANGE_INTERVAL_HOURS_PER_MONTH);
     }
@@ -118,7 +127,11 @@ function makeMockDevice(serverIp: string, serverPort: number, filterIntervalHour
       currentFilterIntervalHours = nextHours;
       currentFilterIntervalMonths = Math.max(1, Math.round(nextHours / FILTER_CHANGE_INTERVAL_HOURS_PER_MONTH));
     }
-    if (typeof nextMonths === 'number' && Number.isFinite(nextMonths) && !(typeof nextHours === 'number' && Number.isFinite(nextHours))) {
+    if (
+      typeof nextMonths === 'number'
+      && Number.isFinite(nextMonths)
+      && !(typeof nextHours === 'number' && Number.isFinite(nextHours))
+    ) {
       currentFilterIntervalMonths = nextMonths;
       currentFilterIntervalHours = Math.round(nextMonths * FILTER_CHANGE_INTERVAL_HOURS_PER_MONTH);
     }
@@ -492,7 +505,10 @@ describe('UnitRegistry fake-unit e2e', function unitRegistryFakeUdpE2e() {
     await waitFor(() => {
       const supply = state.readPresentValue(OBJECT_TYPE.ANALOG_VALUE, 1836, PROPERTY_ID.PRESENT_VALUE);
       const exhaust = state.readPresentValue(OBJECT_TYPE.ANALOG_VALUE, 1841, PROPERTY_ID.PRESENT_VALUE);
-      return supply.ok && exhaust.ok && Math.abs(supply.value.value - 70) < 0.1 && Math.abs(exhaust.value.value - 60) < 0.1;
+      return supply.ok
+        && exhaust.ok
+        && Math.abs(supply.value.value - 70) < 0.1
+        && Math.abs(exhaust.value.value - 60) < 0.1;
     });
 
     const writes = writePresentValueSpy.getCalls().filter((call: any) => (

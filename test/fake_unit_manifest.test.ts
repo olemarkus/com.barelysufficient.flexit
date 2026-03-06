@@ -158,9 +158,15 @@ describe('fake-unit manifest', () => {
 
   it('contains proprietary 5093 overlays for msv42, bv50, and bv445', () => {
     const overlays = FLEXIT_GO_PROPRIETARY_COMPAT.propertyOverlays;
-    const msv42 = overlays.find((overlay) => overlay.objectType === OBJECT_TYPE.MULTI_STATE_VALUE && overlay.instance === 42);
-    const bv50 = overlays.find((overlay) => overlay.objectType === OBJECT_TYPE.BINARY_VALUE && overlay.instance === 50);
-    const bv445 = overlays.find((overlay) => overlay.objectType === OBJECT_TYPE.BINARY_VALUE && overlay.instance === 445);
+    const msv42 = overlays.find(
+      (overlay) => overlay.objectType === OBJECT_TYPE.MULTI_STATE_VALUE && overlay.instance === 42,
+    );
+    const bv50 = overlays.find(
+      (overlay) => overlay.objectType === OBJECT_TYPE.BINARY_VALUE && overlay.instance === 50,
+    );
+    const bv445 = overlays.find(
+      (overlay) => overlay.objectType === OBJECT_TYPE.BINARY_VALUE && overlay.instance === 445,
+    );
 
     expect(msv42?.properties[0]).to.include({
       id: FLEXIT_GO_PRIORITY_HINT_PROPERTY_ID,

@@ -208,7 +208,9 @@ describe('Nordic device', () => {
 
       await clock.tickAsync(1);
       const pendingLog = device.error.getCalls().find((call: any) => (
-        String(call.args[0]).includes("Capability 'target_temperature' writing setpoint 21.5 is still pending after 5000ms")
+        String(call.args[0]).includes(
+          "Capability 'target_temperature' writing setpoint 21.5 is still pending after 5000ms",
+        )
       ));
       expect(pendingLog).to.not.equal(undefined);
 
@@ -242,7 +244,9 @@ describe('Nordic device', () => {
       await targetListener(21.5);
 
       const pendingLog = device.error.getCalls().find((call: any) => (
-        String(call.args[0]).includes("Capability 'target_temperature' writing setpoint 21.5 is still pending after 6000ms")
+        String(call.args[0]).includes(
+          "Capability 'target_temperature' writing setpoint 21.5 is still pending after 6000ms",
+        )
       ));
       expect(pendingLog).to.not.equal(undefined);
 
