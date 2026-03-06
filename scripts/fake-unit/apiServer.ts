@@ -214,7 +214,13 @@ export class FakeApiServer {
         sendJson(res, 400, { ok: false, error: 'type, instance and value must be numeric' });
         return;
       }
-      const result = this.state.writePresentValue(type, instance, propertyId, value, priority === null ? undefined : priority);
+      const result = this.state.writePresentValue(
+        type,
+        instance,
+        propertyId,
+        value,
+        priority === null ? undefined : priority,
+      );
       sendResultState(res, this.state, result);
       return;
     }

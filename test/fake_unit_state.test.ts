@@ -14,9 +14,14 @@ const {
   OBJECT_TYPE,
   PROPERTY_ID,
   SUPPORTED_POINTS,
+  pointKey,
 } = require('../scripts/fake-unit/manifest.ts');
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const { FakeNordicUnitState, valueTagForRead } = require('../scripts/fake-unit/state.ts');
+const {
+  FakeNordicUnitState,
+  valueTagForRead,
+  valueToWriteNumber,
+} = require('../scripts/fake-unit/state.ts');
 
 function createState() {
   return new FakeNordicUnitState({
@@ -31,6 +36,12 @@ function createState() {
     },
     timeScale: 60,
   });
+}
+
+function pointByName(name: string) {
+  const point = SUPPORTED_POINTS.find((candidate) => candidate.name === name);
+  expect(point).to.not.equal(undefined);
+  return point!;
 }
 
 describe('fake-unit state', () => {
@@ -221,5 +232,241 @@ describe('fake-unit state', () => {
     const summary = state.summary();
     expect(summary.fan.supplyPercent).to.equal(70);
     expect(summary.fan.extractPercent).to.equal(60);
+  });
+
+  it('reports read errors for unsupported properties, objects, and missing values', () => {
+    const state = createState();
+
+    const unsupportedProperty = state.readPresentValue(
+      OBJECT_TYPE.ANALOG_VALUE,
+      1994,
+      PROPERTY_ID.MIN_PRESENT_VALUE,
+    );
+    expect(unsupportedProperty.ok).to.equal(false);
+
+    const unknownObject = state.readPresentValue(
+      OBJECT_TYPE.ANALOG_VALUE,
+      999999,
+      PROPERTY_ID.PRESENT_VALUE,
+    );
+    expect(unknownObject.ok).to.equal(false);
+
+    const setpointHome = pointByName('setpoint_home');
+    (state as any).values.delete(pointKey(setpointHome.type, setpointHome.instance));
+    const missingValue = state.readPresentValue(
+      setpointHome.type,
+      setpointHome.instance,
+      PROPERTY_ID.PRESENT_VALUE,
+    );
+    expect(missingValue.ok).to.equal(false);
+  });
+
+  it('rejects invalid writes for type, property, object, access, and range', () => {
+    const state = createState();
+
+    expect(
+      state.writePresentValue(OBJECT_TYPE.ANALOG_VALUE, 1994, PROPERTY_ID.PRESENT_VALUE, Number.NaN).ok,
+    ).to.equal(false);
+    expect(
+      state.writePresentValue(OBJECT_TYPE.ANALOG_VALUE, 1994, PROPERTY_ID.MIN_PRESENT_VALUE, 20).ok,
+    ).to.equal(false);
+    expect(
+      state.writePresentValue(OBJECT_TYPE.ANALOG_VALUE, 999999, PROPERTY_ID.PRESENT_VALUE, 20).ok,
+    ).to.equal(false);
+    expect(
+      state.writePresentValue(OBJECT_TYPE.ANALOG_INPUT, 4, PROPERTY_ID.PRESENT_VALUE, 20, 13).ok,
+    ).to.equal(false);
+    expect(
+      state.writePresentValue(OBJECT_TYPE.ANALOG_VALUE, 1994, PROPERTY_ID.PRESENT_VALUE, 200, 13).ok,
+    ).to.equal(false);
+  });
+
+  it('covers missing-object and first-write failure paths for fan mode changes', () => {
+    const missingAwayState = createState();
+    (missingAwayState as any).pointsByName.delete('comfort_button');
+    expect(missingAwayState.setFanMode('away').ok).to.equal(false);
+
+    const missingHomeState = createState();
+    (missingHomeState as any).pointsByName.delete('ventilation_mode');
+    expect(missingHomeState.setFanMode('home').ok).to.equal(false);
+    expect(missingHomeState.setFanMode('high').ok).to.equal(false);
+
+    const missingFireplaceState = createState();
+    (missingFireplaceState as any).pointsByName.delete('trigger_fireplace');
+    expect(missingFireplaceState.setFanMode('fireplace').ok).to.equal(false);
+
+    const failingWriteState = createState();
+    const comfortButton = pointByName('comfort_button');
+    const originalWrite = failingWriteState.writePresentValue.bind(failingWriteState);
+    (failingWriteState as any).writePresentValue = (
+      type: number,
+      instance: number,
+      propertyId: number,
+      value: number,
+      priority?: number,
+    ) => {
+      if (type === comfortButton.type && instance === comfortButton.instance && value === 1) {
+        return {
+          ok: false,
+          errorClass: 1,
+          errorCode: 31,
+          message: 'forced failure',
+        };
+      }
+      return originalWrite(type, instance, propertyId, value, priority);
+    };
+
+    expect(failingWriteState.setFanMode('home').ok).to.equal(false);
+    expect(failingWriteState.setFanMode('high').ok).to.equal(false);
+    expect(failingWriteState.setFanMode('invalid' as any).ok).to.equal(false);
+  });
+
+  it('fails setpoint writes when the underlying points are missing', () => {
+    const state = createState();
+    (state as any).pointsByName.delete('setpoint_home');
+    (state as any).pointsByName.delete('setpoint_away');
+    expect(state.setHomeSetpoint(20).ok).to.equal(false);
+    expect(state.setAwaySetpoint(18).ok).to.equal(false);
+  });
+
+  it('starts rapid and fireplace timers with default and explicit runtime handling', () => {
+    const state = createState();
+
+    expect(state.startRapid().ok).to.equal(true);
+    expect(state.summary().timers.rapidMinutes).to.be.greaterThan(0);
+
+    expect(state.startFireplace().ok).to.equal(true);
+    expect(state.summary().timers.fireplaceMinutes).to.be.greaterThan(0);
+
+    expect(state.startRapid(9999).ok).to.equal(false);
+    expect(state.startFireplace(9999).ok).to.equal(false);
+    expect(state.advanceSimulatedSeconds(0)).to.equal(undefined);
+  });
+
+  it('tracks away delay, trigger writes, and direct runtime writes', () => {
+    const state = createState();
+    const rapidRuntime = pointByName('runtime_rapid');
+    const rapidTrigger = pointByName('trigger_rapid');
+    const fireplaceRuntime = pointByName('runtime_fireplace');
+    const fireplaceTrigger = pointByName('trigger_fireplace');
+
+    expect(
+      state.writePresentValue(OBJECT_TYPE.BINARY_VALUE, 50, PROPERTY_ID.PRESENT_VALUE, 0, 13).ok,
+    ).to.equal(true);
+    expect(state.summary().timers.awayDelayMinutes).to.be.greaterThan(0);
+
+    expect(
+      state.writePresentValue(OBJECT_TYPE.BINARY_VALUE, 50, PROPERTY_ID.PRESENT_VALUE, 1, 13).ok,
+    ).to.equal(true);
+    expect(state.summary().timers.awayDelayMinutes).to.equal(0);
+
+    expect(
+      state.writePresentValue(
+        rapidRuntime.type,
+        rapidRuntime.instance,
+        PROPERTY_ID.PRESENT_VALUE,
+        12,
+        13,
+      ).ok,
+    ).to.equal(true);
+    expect(
+      state.writePresentValue(
+        rapidTrigger.type,
+        rapidTrigger.instance,
+        PROPERTY_ID.PRESENT_VALUE,
+        2,
+        13,
+      ).ok,
+    ).to.equal(true);
+    expect(state.summary().timers.rapidMinutes).to.be.greaterThan(0);
+
+    expect(
+      state.writePresentValue(
+        fireplaceRuntime.type,
+        fireplaceRuntime.instance,
+        PROPERTY_ID.PRESENT_VALUE,
+        18,
+        13,
+      ).ok,
+    ).to.equal(true);
+    expect(
+      state.writePresentValue(
+        fireplaceTrigger.type,
+        fireplaceTrigger.instance,
+        PROPERTY_ID.PRESENT_VALUE,
+        2,
+        13,
+      ).ok,
+    ).to.equal(true);
+    expect(state.summary().timers.fireplaceMinutes).to.be.greaterThan(0);
+  });
+
+  it('handles zero filter limit and alternate fan target modes', () => {
+    const state = createState();
+    (state as any).setByName('filter_exchange_limit', 0);
+    expect(state.getFilterStatus().remainingPercent).to.equal(0);
+
+    expect(state.setFanMode('away').ok).to.equal(true);
+    (state as any).awayDelayRemainingMinutes = 0;
+    state.tick((state as any).lastTickMs);
+    const awaySummary = state.summary();
+    expect(awaySummary.mode).to.equal('away');
+
+    const cookerHood = pointByName('cooker_hood');
+    expect(
+      state.writePresentValue(cookerHood.type, cookerHood.instance, PROPERTY_ID.PRESENT_VALUE, 1, 13).ok,
+    ).to.equal(true);
+    expect(state.summary().fan.supplyPercent).to.be.greaterThan(0);
+  });
+
+  it('normalizes writable payloads and read tags across value types', () => {
+    expect(valueToWriteNumber(12.5)).to.equal(12.5);
+    expect(valueToWriteNumber(true)).to.equal(1);
+    expect(valueToWriteNumber(false)).to.equal(0);
+    expect(valueToWriteNumber({ value: 9 })).to.equal(9);
+    expect(valueToWriteNumber({ value: 'bad' })).to.equal(null);
+    expect(valueToWriteNumber(null)).to.equal(null);
+
+    const boolPoint = pointByName('comfort_button');
+    const realPoint = pointByName('temp_supply');
+
+    expect(valueTagForRead(boolPoint)).to.equal(APPLICATION_TAG.ENUMERATED);
+    expect(valueTagForRead(realPoint)).to.equal(APPLICATION_TAG.REAL);
+    expect(valueTagForRead({
+      ...realPoint,
+      kind: 'unsigned',
+    })).to.equal(APPLICATION_TAG.UNSIGNED_INTEGER);
+    expect(valueTagForRead({
+      ...realPoint,
+      kind: 'mystery',
+    })).to.equal(APPLICATION_TAG.REAL);
+  });
+
+  it('falls back to away mode when ventilation mode is neither high nor home', () => {
+    const state = createState();
+    (state as any).setByName('comfort_button', 1);
+    (state as any).setByName('ventilation_mode', 0);
+    (state as any).rapidRemainingMinutes = 0;
+    (state as any).fireplaceRemainingMinutes = 0;
+    state.tick((state as any).lastTickMs);
+    expect(state.summary().mode).to.equal('away');
+  });
+
+  it('counts down away-delay time only while away mode remains active', () => {
+    const state = createState();
+    expect(
+      state.writePresentValue(OBJECT_TYPE.BINARY_VALUE, 50, PROPERTY_ID.PRESENT_VALUE, 0, 13).ok,
+    ).to.equal(true);
+    const before = state.summary().timers.awayDelayMinutes;
+
+    state.advanceSimulatedSeconds(60);
+    const during = state.summary().timers.awayDelayMinutes;
+    expect(during).to.be.lessThan(before);
+
+    expect(
+      state.writePresentValue(OBJECT_TYPE.BINARY_VALUE, 50, PROPERTY_ID.PRESENT_VALUE, 1, 13).ok,
+    ).to.equal(true);
+    state.advanceSimulatedSeconds(60);
+    expect(state.summary().timers.awayDelayMinutes).to.equal(0);
   });
 });

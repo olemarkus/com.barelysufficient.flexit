@@ -505,61 +505,80 @@ interface HeatingCoilStateChangedEvent {
   enabled: boolean;
 }
 
+function presentValueRequest(objectId: { type: number; instance: number }) {
+  return {
+    objectId,
+    properties: [{ id: PRESENT_VALUE_ID }],
+  };
+}
+
 // The core poll request — only objects that drive device capabilities.
 function buildPollRequest() {
   return [
     // Thermostat capabilities
-    { objectId: TARGET_TEMPERATURE_OBJECTS.home, properties: [{ id: PRESENT_VALUE_ID }] }, // Setpoint HOME
-    { objectId: TARGET_TEMPERATURE_OBJECTS.away, properties: [{ id: PRESENT_VALUE_ID }] }, // Setpoint AWAY
-    { objectId: { type: OBJECT_TYPE.ANALOG_INPUT, instance: 4 }, properties: [{ id: PRESENT_VALUE_ID }] }, // Supply Temp
-    { objectId: { type: OBJECT_TYPE.ANALOG_INPUT, instance: 1 }, properties: [{ id: PRESENT_VALUE_ID }] }, // Outdoor Temp
-    { objectId: { type: OBJECT_TYPE.ANALOG_INPUT, instance: 11 }, properties: [{ id: PRESENT_VALUE_ID }] }, // Exhaust Temp
-    { objectId: { type: OBJECT_TYPE.ANALOG_INPUT, instance: EXTRACT_AIR_TEMPERATURE_PRIMARY_INSTANCE }, properties: [{ id: PRESENT_VALUE_ID }] }, // Extract Temp (primary mapping)
-    { objectId: { type: OBJECT_TYPE.ANALOG_INPUT, instance: EXTRACT_AIR_TEMPERATURE_ALT_INSTANCE }, properties: [{ id: PRESENT_VALUE_ID }] }, // Extract Temp (alternate mapping)
-    { objectId: { type: OBJECT_TYPE.ANALOG_INPUT, instance: 96 }, properties: [{ id: PRESENT_VALUE_ID }] }, // Humidity
-    { objectId: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 194 }, properties: [{ id: PRESENT_VALUE_ID }] }, // Heater Power
-    { objectId: BACNET_OBJECTS.heatingCoilEnable, properties: [{ id: PRESENT_VALUE_ID }] }, // Heating coil enable
+    presentValueRequest(TARGET_TEMPERATURE_OBJECTS.home), // Setpoint HOME
+    presentValueRequest(TARGET_TEMPERATURE_OBJECTS.away), // Setpoint AWAY
+    presentValueRequest({ type: OBJECT_TYPE.ANALOG_INPUT, instance: 4 }), // Supply Temp
+    presentValueRequest({ type: OBJECT_TYPE.ANALOG_INPUT, instance: 1 }), // Outdoor Temp
+    presentValueRequest({ type: OBJECT_TYPE.ANALOG_INPUT, instance: 11 }), // Exhaust Temp
+    presentValueRequest({
+      type: OBJECT_TYPE.ANALOG_INPUT,
+      instance: EXTRACT_AIR_TEMPERATURE_PRIMARY_INSTANCE,
+    }), // Extract Temp (primary mapping)
+    presentValueRequest({
+      type: OBJECT_TYPE.ANALOG_INPUT,
+      instance: EXTRACT_AIR_TEMPERATURE_ALT_INSTANCE,
+    }), // Extract Temp (alternate mapping)
+    presentValueRequest({ type: OBJECT_TYPE.ANALOG_INPUT, instance: 96 }), // Humidity
+    presentValueRequest({ type: OBJECT_TYPE.ANALOG_VALUE, instance: 194 }), // Heater Power
+    presentValueRequest(BACNET_OBJECTS.heatingCoilEnable), // Heating coil enable
 
     // Fan capabilities
-    { objectId: { type: OBJECT_TYPE.ANALOG_INPUT, instance: 5 }, properties: [{ id: PRESENT_VALUE_ID }] }, // Fan RPM Supply
-    { objectId: { type: OBJECT_TYPE.ANALOG_INPUT, instance: 12 }, properties: [{ id: PRESENT_VALUE_ID }] }, // Fan RPM Extract
-    { objectId: { type: OBJECT_TYPE.ANALOG_OUTPUT, instance: 3 }, properties: [{ id: PRESENT_VALUE_ID }] }, // Fan Speed % Supply
-    { objectId: { type: OBJECT_TYPE.ANALOG_OUTPUT, instance: 4 }, properties: [{ id: PRESENT_VALUE_ID }] }, // Fan Speed % Extract
-    { objectId: FAN_PROFILE_OBJECTS.home.supply, properties: [{ id: PRESENT_VALUE_ID }] }, // Setpoint supply HOME
-    { objectId: FAN_PROFILE_OBJECTS.home.exhaust, properties: [{ id: PRESENT_VALUE_ID }] }, // Setpoint exhaust HOME
-    { objectId: FAN_PROFILE_OBJECTS.away.supply, properties: [{ id: PRESENT_VALUE_ID }] }, // Setpoint supply AWAY
-    { objectId: FAN_PROFILE_OBJECTS.away.exhaust, properties: [{ id: PRESENT_VALUE_ID }] }, // Setpoint exhaust AWAY
-    { objectId: FAN_PROFILE_OBJECTS.high.supply, properties: [{ id: PRESENT_VALUE_ID }] }, // Setpoint supply HIGH
-    { objectId: FAN_PROFILE_OBJECTS.high.exhaust, properties: [{ id: PRESENT_VALUE_ID }] }, // Setpoint exhaust HIGH
-    { objectId: FAN_PROFILE_OBJECTS.fireplace.supply, properties: [{ id: PRESENT_VALUE_ID }] }, // Setpoint supply FIREPLACE
-    { objectId: FAN_PROFILE_OBJECTS.fireplace.exhaust, properties: [{ id: PRESENT_VALUE_ID }] }, // Setpoint exhaust FIREPLACE
-    { objectId: FAN_PROFILE_OBJECTS.cooker.supply, properties: [{ id: PRESENT_VALUE_ID }] }, // Setpoint supply COOKER
-    { objectId: FAN_PROFILE_OBJECTS.cooker.exhaust, properties: [{ id: PRESENT_VALUE_ID }] }, // Setpoint exhaust COOKER
-    { objectId: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 285 }, properties: [{ id: PRESENT_VALUE_ID }] }, // Filter Time
-    { objectId: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 286 }, properties: [{ id: PRESENT_VALUE_ID }] }, // Filter Limit
+    presentValueRequest({ type: OBJECT_TYPE.ANALOG_INPUT, instance: 5 }), // Fan RPM Supply
+    presentValueRequest({ type: OBJECT_TYPE.ANALOG_INPUT, instance: 12 }), // Fan RPM Extract
+    presentValueRequest({ type: OBJECT_TYPE.ANALOG_OUTPUT, instance: 3 }), // Fan Speed % Supply
+    presentValueRequest({ type: OBJECT_TYPE.ANALOG_OUTPUT, instance: 4 }), // Fan Speed % Extract
+    presentValueRequest(FAN_PROFILE_OBJECTS.home.supply), // Setpoint supply HOME
+    presentValueRequest(FAN_PROFILE_OBJECTS.home.exhaust), // Setpoint exhaust HOME
+    presentValueRequest(FAN_PROFILE_OBJECTS.away.supply), // Setpoint supply AWAY
+    presentValueRequest(FAN_PROFILE_OBJECTS.away.exhaust), // Setpoint exhaust AWAY
+    presentValueRequest(FAN_PROFILE_OBJECTS.high.supply), // Setpoint supply HIGH
+    presentValueRequest(FAN_PROFILE_OBJECTS.high.exhaust), // Setpoint exhaust HIGH
+    presentValueRequest(FAN_PROFILE_OBJECTS.fireplace.supply), // Setpoint supply FIREPLACE
+    presentValueRequest(FAN_PROFILE_OBJECTS.fireplace.exhaust), // Setpoint exhaust FIREPLACE
+    presentValueRequest(FAN_PROFILE_OBJECTS.cooker.supply), // Setpoint supply COOKER
+    presentValueRequest(FAN_PROFILE_OBJECTS.cooker.exhaust), // Setpoint exhaust COOKER
+    presentValueRequest({ type: OBJECT_TYPE.ANALOG_VALUE, instance: 285 }), // Filter Time
+    presentValueRequest({ type: OBJECT_TYPE.ANALOG_VALUE, instance: 286 }), // Filter Limit
 
     // Mode / comfort
-    { objectId: BACNET_OBJECTS.comfortButton, properties: [{ id: PRESENT_VALUE_ID }] },
-    { objectId: BACNET_OBJECTS.comfortButtonDelay, properties: [{ id: PRESENT_VALUE_ID }] },
-    { objectId: BACNET_OBJECTS.ventilationMode, properties: [{ id: PRESENT_VALUE_ID }] },
-    { objectId: BACNET_OBJECTS.operationMode, properties: [{ id: PRESENT_VALUE_ID }] },
-    { objectId: BACNET_OBJECTS.rapidVentilationTrigger, properties: [{ id: PRESENT_VALUE_ID }] },
-    { objectId: BACNET_OBJECTS.rapidVentilationRuntime, properties: [{ id: PRESENT_VALUE_ID }] },
-    { objectId: BACNET_OBJECTS.fireplaceVentilationTrigger, properties: [{ id: PRESENT_VALUE_ID }] },
-    { objectId: BACNET_OBJECTS.fireplaceVentilationRuntime, properties: [{ id: PRESENT_VALUE_ID }] },
-    { objectId: { type: OBJECT_TYPE.BINARY_VALUE, instance: 15 }, properties: [{ id: PRESENT_VALUE_ID }] }, // Rapid ventilation active
-    { objectId: BACNET_OBJECTS.fireplaceState, properties: [{ id: PRESENT_VALUE_ID }] },
-    { objectId: BACNET_OBJECTS.rapidVentilationRemaining, properties: [{ id: PRESENT_VALUE_ID }] },
-    { objectId: BACNET_OBJECTS.fireplaceVentilationRemaining, properties: [{ id: PRESENT_VALUE_ID }] },
-    { objectId: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 2005 }, properties: [{ id: PRESENT_VALUE_ID }] }, // Remaining temp vent op
-    { objectId: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 2125 }, properties: [{ id: PRESENT_VALUE_ID }] }, // Operating mode input from RF
-    { objectId: { type: OBJECT_TYPE.BINARY_VALUE, instance: 574 }, properties: [{ id: PRESENT_VALUE_ID }] }, // Delay for away active
+    presentValueRequest(BACNET_OBJECTS.comfortButton),
+    presentValueRequest(BACNET_OBJECTS.comfortButtonDelay),
+    presentValueRequest(BACNET_OBJECTS.ventilationMode),
+    presentValueRequest(BACNET_OBJECTS.operationMode),
+    presentValueRequest(BACNET_OBJECTS.rapidVentilationTrigger),
+    presentValueRequest(BACNET_OBJECTS.rapidVentilationRuntime),
+    presentValueRequest(BACNET_OBJECTS.fireplaceVentilationTrigger),
+    presentValueRequest(BACNET_OBJECTS.fireplaceVentilationRuntime),
+    presentValueRequest({ type: OBJECT_TYPE.BINARY_VALUE, instance: 15 }), // Rapid ventilation active
+    presentValueRequest(BACNET_OBJECTS.fireplaceState),
+    presentValueRequest(BACNET_OBJECTS.rapidVentilationRemaining),
+    presentValueRequest(BACNET_OBJECTS.fireplaceVentilationRemaining),
+    presentValueRequest({ type: OBJECT_TYPE.ANALOG_VALUE, instance: 2005 }), // Remaining temp vent op
+    presentValueRequest({ type: OBJECT_TYPE.ANALOG_VALUE, instance: 2125 }), // Operating mode input from RF
+    presentValueRequest({ type: OBJECT_TYPE.BINARY_VALUE, instance: 574 }), // Delay for away active
   ];
 }
 
 const POLL_VALUE_MAPPINGS: Record<string, (value: number, target: PollParseTarget) => void> = {
-  [objectKey(TARGET_TEMPERATURE_OBJECTS.home.type, TARGET_TEMPERATURE_OBJECTS.home.instance)]: mapPollValue(TARGET_TEMPERATURE_DATA_KEYS.home),
-  [objectKey(TARGET_TEMPERATURE_OBJECTS.away.type, TARGET_TEMPERATURE_OBJECTS.away.instance)]: mapPollValue(TARGET_TEMPERATURE_DATA_KEYS.away),
+  [objectKey(
+    TARGET_TEMPERATURE_OBJECTS.home.type,
+    TARGET_TEMPERATURE_OBJECTS.home.instance,
+  )]: mapPollValue(TARGET_TEMPERATURE_DATA_KEYS.home),
+  [objectKey(
+    TARGET_TEMPERATURE_OBJECTS.away.type,
+    TARGET_TEMPERATURE_OBJECTS.away.instance,
+  )]: mapPollValue(TARGET_TEMPERATURE_DATA_KEYS.away),
   [objectKey(OBJECT_TYPE.ANALOG_INPUT, 4)]: mapPollValue('measure_temperature'),
   [objectKey(OBJECT_TYPE.ANALOG_INPUT, 1)]: mapPollValue('measure_temperature.outdoor'),
   [objectKey(OBJECT_TYPE.ANALOG_INPUT, 11)]: mapPollValue('measure_temperature.exhaust'),
@@ -576,31 +595,65 @@ const POLL_VALUE_MAPPINGS: Record<string, (value: number, target: PollParseTarge
     target.extractTempAlt = value;
   },
   [objectKey(OBJECT_TYPE.ANALOG_INPUT, 96)]: mapPollValue('measure_humidity'),
-  [objectKey(OBJECT_TYPE.ANALOG_VALUE, 194)]: mapPollValue('measure_power', (value) => value * 1000),
+  [objectKey(OBJECT_TYPE.ANALOG_VALUE, 194)]: mapPollValue(
+    'measure_power',
+    (value) => value * 1000,
+  ),
   [HEATING_COIL_ENABLE_KEY]: mapPollValue('heating_coil_enabled'),
   [objectKey(OBJECT_TYPE.ANALOG_INPUT, 5)]: mapPollValue('measure_motor_rpm'),
   [objectKey(OBJECT_TYPE.ANALOG_INPUT, 12)]: mapPollValue('measure_motor_rpm.extract'),
   [objectKey(OBJECT_TYPE.ANALOG_OUTPUT, 3)]: mapPollValue('measure_fan_speed_percent'),
   [objectKey(OBJECT_TYPE.ANALOG_OUTPUT, 4)]: mapPollValue('measure_fan_speed_percent.extract'),
-  [objectKey(FAN_PROFILE_OBJECTS.home.supply.type, FAN_PROFILE_OBJECTS.home.supply.instance)]: mapPollValue('fan_profile.home.supply'),
-  [objectKey(FAN_PROFILE_OBJECTS.home.exhaust.type, FAN_PROFILE_OBJECTS.home.exhaust.instance)]: mapPollValue('fan_profile.home.exhaust'),
-  [objectKey(FAN_PROFILE_OBJECTS.away.supply.type, FAN_PROFILE_OBJECTS.away.supply.instance)]: mapPollValue('fan_profile.away.supply'),
-  [objectKey(FAN_PROFILE_OBJECTS.away.exhaust.type, FAN_PROFILE_OBJECTS.away.exhaust.instance)]: mapPollValue('fan_profile.away.exhaust'),
-  [objectKey(FAN_PROFILE_OBJECTS.high.supply.type, FAN_PROFILE_OBJECTS.high.supply.instance)]: mapPollValue('fan_profile.high.supply'),
-  [objectKey(FAN_PROFILE_OBJECTS.high.exhaust.type, FAN_PROFILE_OBJECTS.high.exhaust.instance)]: mapPollValue('fan_profile.high.exhaust'),
-  [objectKey(FAN_PROFILE_OBJECTS.fireplace.supply.type, FAN_PROFILE_OBJECTS.fireplace.supply.instance)]: mapPollValue('fan_profile.fireplace.supply'),
-  [objectKey(FAN_PROFILE_OBJECTS.fireplace.exhaust.type, FAN_PROFILE_OBJECTS.fireplace.exhaust.instance)]: mapPollValue('fan_profile.fireplace.exhaust'),
-  [objectKey(FAN_PROFILE_OBJECTS.cooker.supply.type, FAN_PROFILE_OBJECTS.cooker.supply.instance)]: mapPollValue('fan_profile.cooker.supply'),
-  [objectKey(FAN_PROFILE_OBJECTS.cooker.exhaust.type, FAN_PROFILE_OBJECTS.cooker.exhaust.instance)]: mapPollValue('fan_profile.cooker.exhaust'),
+  [objectKey(
+    FAN_PROFILE_OBJECTS.home.supply.type,
+    FAN_PROFILE_OBJECTS.home.supply.instance,
+  )]: mapPollValue('fan_profile.home.supply'),
+  [objectKey(
+    FAN_PROFILE_OBJECTS.home.exhaust.type,
+    FAN_PROFILE_OBJECTS.home.exhaust.instance,
+  )]: mapPollValue('fan_profile.home.exhaust'),
+  [objectKey(
+    FAN_PROFILE_OBJECTS.away.supply.type,
+    FAN_PROFILE_OBJECTS.away.supply.instance,
+  )]: mapPollValue('fan_profile.away.supply'),
+  [objectKey(
+    FAN_PROFILE_OBJECTS.away.exhaust.type,
+    FAN_PROFILE_OBJECTS.away.exhaust.instance,
+  )]: mapPollValue('fan_profile.away.exhaust'),
+  [objectKey(
+    FAN_PROFILE_OBJECTS.high.supply.type,
+    FAN_PROFILE_OBJECTS.high.supply.instance,
+  )]: mapPollValue('fan_profile.high.supply'),
+  [objectKey(
+    FAN_PROFILE_OBJECTS.high.exhaust.type,
+    FAN_PROFILE_OBJECTS.high.exhaust.instance,
+  )]: mapPollValue('fan_profile.high.exhaust'),
+  [objectKey(
+    FAN_PROFILE_OBJECTS.fireplace.supply.type,
+    FAN_PROFILE_OBJECTS.fireplace.supply.instance,
+  )]: mapPollValue('fan_profile.fireplace.supply'),
+  [objectKey(
+    FAN_PROFILE_OBJECTS.fireplace.exhaust.type,
+    FAN_PROFILE_OBJECTS.fireplace.exhaust.instance,
+  )]: mapPollValue('fan_profile.fireplace.exhaust'),
+  [objectKey(
+    FAN_PROFILE_OBJECTS.cooker.supply.type,
+    FAN_PROFILE_OBJECTS.cooker.supply.instance,
+  )]: mapPollValue('fan_profile.cooker.supply'),
+  [objectKey(
+    FAN_PROFILE_OBJECTS.cooker.exhaust.type,
+    FAN_PROFILE_OBJECTS.cooker.exhaust.instance,
+  )]: mapPollValue('fan_profile.cooker.exhaust'),
   [objectKey(OBJECT_TYPE.ANALOG_VALUE, 285)]: mapPollValue('filter_time'),
   [objectKey(OBJECT_TYPE.ANALOG_VALUE, 286)]: mapPollValue('filter_limit'),
   [objectKey(OBJECT_TYPE.BINARY_VALUE, 50)]: mapPollValue('comfort_button'),
   [objectKey(OBJECT_TYPE.POSITIVE_INTEGER_VALUE, 318)]: mapPollValue('comfort_delay'),
   [objectKey(OBJECT_TYPE.MULTI_STATE_VALUE, 42)]: mapPollValue('ventilation_mode'),
   [objectKey(OBJECT_TYPE.MULTI_STATE_VALUE, 361)]: mapPollValue('operation_mode'),
-  [objectKey(BACNET_OBJECTS.fireplaceVentilationRuntime.type, BACNET_OBJECTS.fireplaceVentilationRuntime.instance)]: mapPollValue(
-    FIREPLACE_DURATION_DATA_KEY,
-  ),
+  [objectKey(
+    BACNET_OBJECTS.fireplaceVentilationRuntime.type,
+    BACNET_OBJECTS.fireplaceVentilationRuntime.instance,
+  )]: mapPollValue(FIREPLACE_DURATION_DATA_KEY),
   [objectKey(OBJECT_TYPE.BINARY_VALUE, 15)]: mapPollValue('rapid_active'),
   [objectKey(OBJECT_TYPE.BINARY_VALUE, 400)]: mapPollValue('fireplace_active'),
   [objectKey(OBJECT_TYPE.BINARY_VALUE, 574)]: mapPollValue('away_delay_active'),
@@ -1241,7 +1294,8 @@ export class UnitRegistry {
 
       if (context.value !== value && pollTime - context.at < 60000) {
         this.warn(
-          `[UnitRegistry] Ventilation mode mismatch after write: expected ${context.value} for '${context.mode}', got ${value}`,
+          `[UnitRegistry] Ventilation mode mismatch after write: expected ${context.value}`
+          + ` for '${context.mode}', got ${value}`,
         );
         unit.writeContext.delete(key);
         return;
@@ -1255,9 +1309,14 @@ export class UnitRegistry {
       unit.consecutiveFailures++;
       if (unit.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES && unit.available) {
         unit.available = false;
-        this.warn(`[UnitRegistry] Unit ${unit.unitId} marked unavailable after ${unit.consecutiveFailures} consecutive failures`);
+        this.warn(
+          `[UnitRegistry] Unit ${unit.unitId} marked unavailable after`
+          + ` ${unit.consecutiveFailures} consecutive failures`,
+        );
         for (const device of unit.devices) {
-          device.setUnavailable('Device unreachable — will auto-reconnect when found').catch(() => { });
+          device
+            .setUnavailable('Device unreachable — will auto-reconnect when found')
+            .catch(() => { });
         }
         this.startRediscovery(unit);
       }
@@ -1267,7 +1326,9 @@ export class UnitRegistry {
       unit.consecutiveFailures = 0;
       if (!unit.available) {
         unit.available = true;
-        this.log(`[UnitRegistry] Unit ${unit.unitId} is available again at ${unit.ip}`);
+        this.log(
+          `[UnitRegistry] Unit ${unit.unitId} is available again at ${unit.ip}`,
+        );
         for (const device of unit.devices) {
           device.setAvailable().catch(() => { });
         }
@@ -1277,11 +1338,17 @@ export class UnitRegistry {
 
     private startRediscovery(unit: UnitState) {
       if (unit.rediscoverInterval) return; // already running
-      this.log(`[UnitRegistry] Starting rediscovery for ${unit.unitId} (serial ${unit.serial})`);
+      this.log(
+        `[UnitRegistry] Starting rediscovery for ${unit.unitId} (serial ${unit.serial})`,
+      );
 
       const doRediscovery = async () => {
         try {
-          const found = await this.dependencies.discoverFlexitUnits({ timeoutMs: 5000, burstCount: 3, burstIntervalMs: 300 });
+          const found = await this.dependencies.discoverFlexitUnits({
+            timeoutMs: 5000,
+            burstCount: 3,
+            burstIntervalMs: 300,
+          });
           const match = found.find((u) => u.serialNormalized === unit.unitId);
           if (!match) return;
 
@@ -1443,7 +1510,9 @@ export class UnitRegistry {
         this.setCapability(device, capability, normalized);
 
         const previous = unit.currentFanSetpoints[fan];
-        const changed = previous === undefined || !valuesMatch(previous, normalized) || unit.currentFanSetpointMode !== mode;
+        const changed = previous === undefined
+          || !valuesMatch(previous, normalized)
+          || unit.currentFanSetpointMode !== mode;
         if (unit.currentFanSetpointsInitialized && changed) {
           this.triggerFanSetpointChanged({
             device,
@@ -1674,7 +1743,10 @@ export class UnitRegistry {
       return mode;
     }
 
-    private resolveBaseMode(data: Record<string, number>, tempOpActive: boolean): 'home' | 'away' | 'high' | 'fireplace' {
+    private resolveBaseMode(
+      data: Record<string, number>,
+      tempOpActive: boolean,
+    ): 'home' | 'away' | 'high' | 'fireplace' {
       const rfMode = MODE_RF_INPUT_MAP[Math.round(data.mode_rf_input ?? NaN)];
       if (data.operation_mode !== undefined) {
         return mapOperationMode(Math.round(data.operation_mode));
@@ -1851,7 +1923,8 @@ export class UnitRegistry {
       }
       if (mode === 'fireplace' && temporaryRapidActive) {
         this.warn(
-          `[UnitRegistry] Fireplace requested while temporary ventilation is active (rapid=${rapidActive} temp=${tempVentActive}); proceeding anyway.`,
+          '[UnitRegistry] Fireplace requested while temporary ventilation is active'
+          + ` (rapid=${rapidActive} temp=${tempVentActive}); proceeding anyway.`,
         );
       }
 
@@ -1891,6 +1964,94 @@ export class UnitRegistry {
       return false;
     }
 
+    private buildWriteOptions(
+      context: FanModeWriteContext,
+      update: WriteUpdate,
+    ): { maxSegments: number; maxApdu: number; priority?: number } {
+      const options: { maxSegments: number; maxApdu: number; priority?: number } = {
+        maxSegments: context.writeOptions.maxSegments,
+        maxApdu: context.writeOptions.maxApdu,
+      };
+      if (update.priority !== null) {
+        options.priority = update.priority ?? DEFAULT_WRITE_PRIORITY;
+      }
+      return options;
+    }
+
+    private handleWriteUpdateResult(
+      unit: UnitState,
+      writeKey: string,
+      update: WriteUpdate,
+      err: any,
+    ): boolean {
+      const now = Date.now();
+      if (!err) {
+        unit.lastWriteValues.set(writeKey, { value: update.value, at: now });
+        this.log(
+          '[UnitRegistry] Successfully wrote'
+          + ` ${update.objectId.type}:${update.objectId.instance}`
+          + ` to ${update.value}`,
+        );
+        return true;
+      }
+
+      const message = String(err?.message || err);
+      const errMatch = message.match(/Code:(\d+)/);
+      const code = errMatch ? Number(errMatch[1]) : undefined;
+      if (code === 37) {
+        unit.lastWriteValues.set(writeKey, { value: update.value, at: now });
+        unit.pendingWriteErrors.set(writeKey, { value: update.value, code });
+        this.warn(
+          `[UnitRegistry] Write returned Code:37 for ${writeKey};`
+          + ' will verify on next poll.',
+        );
+        return true;
+      }
+
+      const unsupportedObject = code === 31
+        || /(?:\bCode:31\b|\b1:31\b)/.test(message);
+      if (unsupportedObject) {
+        unit.lastWriteValues.set(writeKey, { value: update.value, at: now });
+        if (NEVER_BLOCK_KEYS.has(writeKey)) {
+          this.warn(
+            `[UnitRegistry] Write unsupported for ${writeKey},`
+            + ' but will keep retrying.',
+          );
+        } else {
+          unit.blockedWrites.add(writeKey);
+          this.warn(
+            `[UnitRegistry] Disabling writes for ${writeKey}`
+            + ' (unsupported object on unit).',
+          );
+        }
+        return false;
+      }
+
+      if (message.includes('Code:40') || message.includes('Code:9')) {
+        unit.lastWriteValues.set(writeKey, { value: update.value, at: now });
+        if (NEVER_BLOCK_KEYS.has(writeKey)) {
+          this.warn(
+            `[UnitRegistry] Write denied for ${writeKey},`
+            + ' but will keep retrying.',
+          );
+        } else {
+          unit.blockedWrites.add(writeKey);
+          this.warn(
+            `[UnitRegistry] Disabling writes for ${writeKey}`
+            + ' due to device error.',
+          );
+        }
+      } else {
+        this.error(
+          '[UnitRegistry] Failed to write'
+          + ` ${update.objectId.type}:${update.objectId.instance}`
+          + ` to ${update.value}`,
+          err,
+        );
+      }
+      return false;
+    }
+
     private async writeUpdate(context: FanModeWriteContext, update: WriteUpdate) {
       const { unit } = context;
       const writeKey = objectKey(update.objectId.type, update.objectId.instance);
@@ -1911,13 +2072,7 @@ export class UnitRegistry {
 
         try {
           this.log(`[UnitRegistry] Writing ${update.objectId.type}:${update.objectId.instance} = ${update.value}`);
-          const options: { maxSegments: number; maxApdu: number; priority?: number } = {
-            maxSegments: context.writeOptions.maxSegments,
-            maxApdu: context.writeOptions.maxApdu,
-          };
-          if (update.priority !== null) {
-            options.priority = update.priority ?? DEFAULT_WRITE_PRIORITY;
-          }
+          const options = this.buildWriteOptions(context, update);
 
           context.client.writeProperty(
             unit.ip,
@@ -1929,63 +2084,17 @@ export class UnitRegistry {
               if (handled) return;
               handled = true;
               clearTimeout(tm);
-              const now = Date.now();
-
-              if (!err) {
-                unit.lastWriteValues.set(writeKey, { value: update.value, at: now });
-                this.log(
-                  `[UnitRegistry] Successfully wrote ${update.objectId.type}:${update.objectId.instance} to ${update.value}`,
-                );
-                resolve(true);
-                return;
-              }
-
-              const message = String(err?.message || err);
-              const errMatch = message.match(/Code:(\d+)/);
-              const code = errMatch ? Number(errMatch[1]) : undefined;
-              if (code === 37) {
-                unit.lastWriteValues.set(writeKey, { value: update.value, at: now });
-                unit.pendingWriteErrors.set(writeKey, { value: update.value, code });
-                this.warn(`[UnitRegistry] Write returned Code:37 for ${writeKey}; will verify on next poll.`);
-                resolve(true);
-                return;
-              }
-
-              const unsupportedObject = code === 31 || /(?:\bCode:31\b|\b1:31\b)/.test(message);
-              if (unsupportedObject) {
-                unit.lastWriteValues.set(writeKey, { value: update.value, at: now });
-                if (NEVER_BLOCK_KEYS.has(writeKey)) {
-                  this.warn(`[UnitRegistry] Write unsupported for ${writeKey}, but will keep retrying.`);
-                } else {
-                  unit.blockedWrites.add(writeKey);
-                  this.warn(`[UnitRegistry] Disabling writes for ${writeKey} (unsupported object on unit).`);
-                }
-                resolve(false);
-                return;
-              }
-
-              if (message.includes('Code:40') || message.includes('Code:9')) {
-                unit.lastWriteValues.set(writeKey, { value: update.value, at: now });
-                if (NEVER_BLOCK_KEYS.has(writeKey)) {
-                  this.warn(`[UnitRegistry] Write denied for ${writeKey}, but will keep retrying.`);
-                } else {
-                  unit.blockedWrites.add(writeKey);
-                  this.warn(`[UnitRegistry] Disabling writes for ${writeKey} due to device error.`);
-                }
-              } else {
-                this.error(
-                  `[UnitRegistry] Failed to write ${update.objectId.type}:${update.objectId.instance} to ${update.value}`,
-                  err,
-                );
-              }
-              resolve(false);
+              resolve(this.handleWriteUpdateResult(unit, writeKey, update, err));
             },
           );
         } catch (e) {
           if (!handled) {
             handled = true;
             clearTimeout(tm);
-            this.error(`[UnitRegistry] Sync error writing ${update.objectId.type}:${update.objectId.instance}:`, e);
+            this.error(
+              `[UnitRegistry] Sync error writing ${update.objectId.type}:${update.objectId.instance}:`,
+              e,
+            );
             resolve(false);
           }
         }

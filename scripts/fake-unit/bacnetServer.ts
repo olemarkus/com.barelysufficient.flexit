@@ -844,7 +844,8 @@ export class FakeBacnetServer {
       );
       this.log(
         `[FakeBacnet] TX errorResponse writeProperty to ${remote}`
-        + ` invokeId=${request.invokeId} err=${BacnetEnums.ErrorClass.PROPERTY}:${BacnetEnums.ErrorCode.INVALID_DATA_TYPE}`,
+        + ` invokeId=${request.invokeId}`
+        + ` err=${BacnetEnums.ErrorClass.PROPERTY}:${BacnetEnums.ErrorCode.INVALID_DATA_TYPE}`,
       );
       return;
     }
@@ -942,7 +943,8 @@ export class FakeBacnetServer {
         );
         this.log(
           `[FakeBacnet] TX errorResponse writePropertyMultiple to ${remote}`
-          + ` invokeId=${request.invokeId} err=${BacnetEnums.ErrorClass.PROPERTY}:${BacnetEnums.ErrorCode.UNKNOWN_PROPERTY}`,
+          + ` invokeId=${request.invokeId}`
+          + ` err=${BacnetEnums.ErrorClass.PROPERTY}:${BacnetEnums.ErrorCode.UNKNOWN_PROPERTY}`,
         );
         return;
       }
@@ -959,7 +961,8 @@ export class FakeBacnetServer {
         );
         this.log(
           `[FakeBacnet] TX errorResponse writePropertyMultiple to ${remote}`
-          + ` invokeId=${request.invokeId} err=${BacnetEnums.ErrorClass.PROPERTY}:${BacnetEnums.ErrorCode.INVALID_DATA_TYPE}`,
+          + ` invokeId=${request.invokeId}`
+          + ` err=${BacnetEnums.ErrorClass.PROPERTY}:${BacnetEnums.ErrorCode.INVALID_DATA_TYPE}`,
         );
         return;
       }
@@ -1051,7 +1054,11 @@ export class FakeBacnetServer {
       const propertyId = typeof property?.id === 'number' ? property.id : -1;
       const index = typeof property?.index === 'number' ? property.index : BacnetEnums.ASN1_ARRAY_ALL;
 
-      if (propertyId === PROPERTY_ID.ALL || propertyId === PROPERTY_ID.REQUIRED || propertyId === PROPERTY_ID.OPTIONAL) {
+      if (
+        propertyId === PROPERTY_ID.ALL
+        || propertyId === PROPERTY_ID.REQUIRED
+        || propertyId === PROPERTY_ID.OPTIONAL
+      ) {
         expandSpecial();
         continue;
       }
@@ -1496,11 +1503,23 @@ export class FakeBacnetServer {
       case PROPERTY_ID.MAX_APDU_LENGTH_ACCEPTED:
         return { ok: true as const, values: [{ type: APPLICATION_TAG.UNSIGNED_INTEGER, value: 1476 }] };
       case PROPERTY_ID.SEGMENTATION_SUPPORTED:
-        return { ok: true as const, values: [{ type: APPLICATION_TAG.ENUMERATED, value: BacnetEnums.Segmentation.NO_SEGMENTATION }] };
+        return {
+          ok: true as const,
+          values: [{
+            type: APPLICATION_TAG.ENUMERATED,
+            value: BacnetEnums.Segmentation.NO_SEGMENTATION,
+          }],
+        };
       case PROPERTY_ID.VENDOR_IDENTIFIER:
         return { ok: true as const, values: [{ type: APPLICATION_TAG.UNSIGNED_INTEGER, value: identity.vendorId }] };
       case PROPERTY_ID.SYSTEM_STATUS:
-        return { ok: true as const, values: [{ type: APPLICATION_TAG.ENUMERATED, value: BacnetEnums.DeviceStatus.OPERATIONAL }] };
+        return {
+          ok: true as const,
+          values: [{
+            type: APPLICATION_TAG.ENUMERATED,
+            value: BacnetEnums.DeviceStatus.OPERATIONAL,
+          }],
+        };
       case PROPERTY_ID.APDU_TIMEOUT:
         return { ok: true as const, values: [{ type: APPLICATION_TAG.UNSIGNED_INTEGER, value: 3000 }] };
       case PROPERTY_ID.NUMBER_OF_APDU_RETRIES:

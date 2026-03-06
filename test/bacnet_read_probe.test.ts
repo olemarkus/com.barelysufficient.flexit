@@ -1,10 +1,16 @@
 import { expect } from 'chai';
+import sinon from 'sinon';
 
+// eslint-disable-next-line @typescript-eslint/no-var-requires
 const Bacnet = require('bacstack');
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const probe = require('../scripts/bacnet-read-probe');
 
 describe('bacnet-read-probe', () => {
+  afterEach(() => {
+    sinon.restore();
+  });
+
   it('parses numeric proprietary query specs', () => {
     const query = probe.parseQuerySpec('264:2:4743');
     expect(query).to.deep.equal({
@@ -21,6 +27,14 @@ describe('bacnet-read-probe', () => {
     expect(query.instance).to.equal(2);
     expect(query.propertyId).to.equal(Bacnet.enum.PropertyIdentifier.MODEL_NAME);
     expect(query.index).to.equal(probe.ASN1_ARRAY_ALL);
+  });
+
+  it('parses explicit numeric array indexes and rejects malformed queries', () => {
+    const indexed = probe.parseQuerySpec('DEVICE:2:MODEL_NAME:3');
+    expect(indexed.index).to.equal(3);
+
+    expect(() => probe.parseQuerySpec('DEVICE:2')).to.throw('Invalid query');
+    expect(() => probe.parseQuerySpec('DEVICE:2:UNKNOWN_PROPERTY')).to.throw('Unknown property id');
   });
 
   it('parses positional ip and queries', () => {
@@ -64,6 +78,26 @@ describe('bacnet-read-probe', () => {
       .to.throw('Invalid mode');
   });
 
+  it('rejects invalid numeric arguments and unknown flags', () => {
+    expect(() => probe.parseNumber('1.5', 'target port')).to.throw('target port must be an integer');
+    expect(() => probe.parseNumber('0', 'timeout', 1)).to.throw('timeout must be >= 1');
+    expect(() => probe.parseArgs(['--ip', '127.0.0.1', '--query', '264:2:4743', '--bogus']))
+      .to.throw('Unknown argument "--bogus"');
+    expect(() => probe.parseArgs(['--query', '264:2:4743'])).to.throw('Missing --ip');
+    expect(() => probe.parseArgs(['--ip', '127.0.0.1'])).to.throw('At least one --query is required');
+  });
+
+  it('supports help mode parsing by exiting cleanly', () => {
+    const exitStub = sinon.stub(process, 'exit').callsFake(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+    const logStub = sinon.stub(console, 'log');
+
+    expect(() => probe.parseArgs(['--help'])).to.throw('exit:0');
+    expect(exitStub.calledOnceWithExactly(0)).to.equal(true);
+    expect(logStub.called).to.equal(true);
+  });
+
   it('rejects missing values for required flags', () => {
     expect(() => probe.parseArgs(['--ip', '--query', '264:2:4743']))
       .to.throw('Missing value after --ip');
@@ -83,6 +117,17 @@ describe('bacnet-read-probe', () => {
     });
   });
 
+  it('renders normalized values and helper names across fallback paths', () => {
+    expect(probe.objectTypeName(99999)).to.equal('99999');
+    expect(probe.propertyName(88888)).to.equal('88888');
+    expect(probe.appTagName(77777)).to.equal('77777');
+    expect(probe.formatIndex(5)).to.equal('5');
+    expect(probe.normalizedValueText(null)).to.equal('<no-value>');
+    expect(probe.normalizedValueText({ type: 'ERROR', errorClass: 1, errorCode: 31 }))
+      .to.equal('ERROR(1:31)');
+    expect(probe.renderNormalizedValues([])).to.equal('<empty>');
+  });
+
   it('extracts readProperty nodes from packed values', () => {
     const nodes = probe.extractReadPropertyNodes({
       values: [{
@@ -90,6 +135,15 @@ describe('bacnet-read-probe', () => {
       }],
     });
     expect(nodes).to.deep.equal([{ type: Bacnet.enum.ApplicationTags.REAL, value: 1.5 }]);
+  });
+
+  it('covers direct and empty readProperty node extraction branches', () => {
+    const direct = probe.extractReadPropertyNodes({
+      values: [{ type: Bacnet.enum.ApplicationTags.REAL, value: 9.5 }],
+    });
+    expect(direct).to.deep.equal([{ type: Bacnet.enum.ApplicationTags.REAL, value: 9.5 }]);
+    expect(probe.extractReadPropertyNodes({ values: [] })).to.deep.equal([]);
+    expect(probe.extractReadPropertyNodes(null)).to.deep.equal([]);
   });
 
   it('groups readPropertyMultiple requests by object id', async () => {
@@ -117,7 +171,12 @@ describe('bacnet-read-probe', () => {
     let capturedIp = '';
     let capturedRequest: any[] = [];
     const client = {
-      readPropertyMultiple: (ip: string, requestArray: any[], _opts: Record<string, unknown>, callback: (err: unknown, value: unknown) => void) => {
+      readPropertyMultiple: (
+        ip: string,
+        requestArray: any[],
+        _opts: Record<string, unknown>,
+        callback: (err: unknown, value: unknown) => void,
+      ) => {
         capturedIp = ip;
         capturedRequest = requestArray;
         callback(null, { values: [] });
@@ -134,6 +193,47 @@ describe('bacnet-read-probe', () => {
     });
     expect(capturedRequest[0].properties).to.have.length(2);
     expect(result.requestArray).to.have.length(2);
+  });
+
+  it('rejects readProperty and readPropertyMultiple failures', async () => {
+    const query = {
+      objectType: Bacnet.enum.ObjectType.ANALOG_VALUE,
+      instance: 60,
+      propertyId: Bacnet.enum.PropertyIdentifier.PRESENT_VALUE,
+      index: probe.ASN1_ARRAY_ALL,
+    };
+
+    let rpError: Error | null = null;
+    try {
+      await probe.readProperty({
+        readProperty: (
+          _ip: string,
+          _objectId: Record<string, number>,
+          _propertyId: number,
+          _options: Record<string, unknown>,
+          callback: (err: unknown) => void,
+        ) => callback(new Error('rp failed')),
+      }, '192.0.2.10', query);
+    } catch (error) {
+      rpError = error as Error;
+    }
+
+    let rpmError: Error | null = null;
+    try {
+      await probe.readPropertyMultiple({
+        readPropertyMultiple: (
+          _ip: string,
+          _requestArray: any[],
+          _options: Record<string, unknown>,
+          callback: (err: unknown) => void,
+        ) => callback(new Error('rpm failed')),
+      }, '192.0.2.10', [query]);
+    } catch (error) {
+      rpmError = error as Error;
+    }
+
+    expect(rpError?.message).to.equal('rp failed');
+    expect(rpmError?.message).to.equal('rpm failed');
   });
 
   it('forwards explicit array index in readProperty mode', async () => {
@@ -170,6 +270,15 @@ describe('bacnet-read-probe', () => {
     expect(probe.formatIndex(probe.ASN1_ARRAY_ALL)).to.equal('all');
     expect(probe.renderBacnetValue({ type: Bacnet.enum.ApplicationTags.REAL, value: 1.25 }))
       .to.include('REAL=');
+  });
+
+  it('renders BACnet values across no-value and error branches', () => {
+    expect(probe.renderBacnetValue(null)).to.equal('<no-value>');
+    expect(probe.renderBacnetValue({
+      type: Bacnet.enum.ApplicationTags.ERROR,
+      value: { errorClass: 1, errorCode: 31 },
+    })).to.equal('ERROR(1:31)');
+    expect(probe.normalizeBacnetValue(null)).to.equal(null);
   });
 
   it('normalizes rpm property/object results and composes snapshot keys', () => {
@@ -293,5 +402,14 @@ describe('bacnet-read-probe', () => {
       [{ type: 'REAL', value: 10.0001 }],
       [{ type: 'REAL', value: 10.0002 }],
     )).to.equal(false);
+  });
+
+  it('covers strict comparison branches for valuesEqual', () => {
+    expect(probe.valuesEqual(NaN, NaN)).to.equal(true);
+    expect(probe.valuesEqual(null, undefined)).to.equal(false);
+    expect(probe.valuesEqual([1, 2], [1])).to.equal(false);
+    expect(probe.valuesEqual([1], { 0: 1 })).to.equal(false);
+    expect(probe.valuesEqual({ a: 1 }, { a: 1, b: 2 })).to.equal(false);
+    expect(probe.valuesEqual({ a: 1 }, { b: 1 })).to.equal(false);
   });
 });

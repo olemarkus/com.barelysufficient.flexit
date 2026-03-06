@@ -19,7 +19,14 @@ const { FakeBacnetServer } = require('../scripts/fake-unit/bacnetServer.ts');
 const {
   DEFAULT_DEVICE_NAME,
   DEFAULT_FIRMWARE,
+  FLEXIT_GO_COMPAT_DEVICE_INSTANCE,
+  FLEXIT_GO_LOGIN_OBJECT_INSTANCE,
+  FLEXIT_GO_LOGIN_OBJECT_TYPE,
+  FLEXIT_GO_LOGIN_PROPERTY_ID,
+  FLEXIT_GO_PRIORITY_HINT_PROPERTY_ID,
   DEFAULT_MODEL_NAME,
+  OBJECT_TYPE,
+  PROPERTY_ID,
   DEFAULT_VENDOR_ID,
   DEFAULT_VENDOR_NAME,
 } = require('../scripts/fake-unit/manifest.ts');
@@ -33,6 +40,7 @@ type CapturedResponse = {
   readProperty: Array<{ address: string; invokeId: number; objectId: any; property: any; values: any[] }>;
   errors: Array<{ address: string; serviceChoice: number; invokeId: number; errorClass: number; errorCode: number }>;
   acks: Array<{ address: string; serviceChoice: number; invokeId: number }>;
+  iams: Array<{ deviceId: number; segmentation: number; vendorId: number }>;
 };
 
 type UdpSend = {
@@ -83,6 +91,7 @@ function createHarness() {
     readProperty: [],
     errors: [],
     acks: [],
+    iams: [],
   };
   const udpSends: UdpSend[] = [];
 
@@ -131,6 +140,9 @@ function createHarness() {
     },
     simpleAckResponse: (address: string, serviceChoice: number, invokeId: number) => {
       captured.acks.push({ address, serviceChoice, invokeId });
+    },
+    iAmResponse: (deviceId: number, segmentation: number, vendorId: number) => {
+      captured.iams.push({ deviceId, segmentation, vendorId });
     },
     _transport: {
       _server: fakeSocket,
@@ -195,7 +207,10 @@ describe('fake-unit bacnet server', () => {
           },
           {
             objectId: { type: BacnetEnums.ObjectType.DEVICE, instance: 2 },
-            properties: [{ id: BacnetEnums.PropertyIdentifier.APPLICATION_SOFTWARE_VERSION, index: BacnetEnums.ASN1_ARRAY_ALL }],
+            properties: [{
+              id: BacnetEnums.PropertyIdentifier.APPLICATION_SOFTWARE_VERSION,
+              index: BacnetEnums.ASN1_ARRAY_ALL,
+            }],
           },
         ],
       },
@@ -203,26 +218,69 @@ describe('fake-unit bacnet server', () => {
 
     expect(captured.readPropertyMultiple).to.have.length(1);
     const rpmResult = captured.readPropertyMultiple[0].values;
-    expect(findNode(rpmResult, 264, 2, 4743)?.type).to.equal(BacnetEnums.ApplicationTags.CHARACTER_STRING);
-    expect(findNode(rpmResult, BacnetEnums.ObjectType.ANALOG_VALUE, 2275, BacnetEnums.PropertyIdentifier.PRESENT_VALUE)?.type)
+    expect(findNode(rpmResult, 264, 2, 4743)?.type)
+      .to.equal(BacnetEnums.ApplicationTags.CHARACTER_STRING);
+    expect(
+      findNode(
+        rpmResult,
+        BacnetEnums.ObjectType.ANALOG_VALUE,
+        2275,
+        BacnetEnums.PropertyIdentifier.PRESENT_VALUE,
+      )?.type,
+    )
       .to.equal(BacnetEnums.ApplicationTags.REAL);
     expect(findNode(rpmResult, BacnetEnums.ObjectType.MULTI_STATE_VALUE, 42, 5093)?.type)
       .to.equal(BacnetEnums.ApplicationTags.UNSIGNED_INTEGER);
-    expect(findNode(rpmResult, BacnetEnums.ObjectType.BINARY_VALUE, 445, BacnetEnums.PropertyIdentifier.PRESENT_VALUE)?.type)
+    expect(
+      findNode(
+        rpmResult,
+        BacnetEnums.ObjectType.BINARY_VALUE,
+        445,
+        BacnetEnums.PropertyIdentifier.PRESENT_VALUE,
+      )?.type,
+    )
       .to.equal(BacnetEnums.ApplicationTags.ENUMERATED);
     expect(findNode(rpmResult, BacnetEnums.ObjectType.BINARY_VALUE, 445, 5093)?.type)
       .to.equal(BacnetEnums.ApplicationTags.UNSIGNED_INTEGER);
-    expect(findNode(rpmResult, BacnetEnums.ObjectType.ANALOG_VALUE, 1921, BacnetEnums.PropertyIdentifier.PRESENT_VALUE)?.type)
+    expect(
+      findNode(
+        rpmResult,
+        BacnetEnums.ObjectType.ANALOG_VALUE,
+        1921,
+        BacnetEnums.PropertyIdentifier.PRESENT_VALUE,
+      )?.type,
+    )
       .to.equal(BacnetEnums.ApplicationTags.REAL);
-    expect(findNode(rpmResult, BacnetEnums.ObjectType.ANALOG_VALUE, 1987, BacnetEnums.PropertyIdentifier.PRESENT_VALUE)?.type)
+    expect(
+      findNode(
+        rpmResult,
+        BacnetEnums.ObjectType.ANALOG_VALUE,
+        1987,
+        BacnetEnums.PropertyIdentifier.PRESENT_VALUE,
+      )?.type,
+    )
       .to.equal(BacnetEnums.ApplicationTags.REAL);
-    expect(findNode(rpmResult, BacnetEnums.ObjectType.ANALOG_VALUE, 1837, BacnetEnums.PropertyIdentifier.PRESENT_VALUE)?.type)
+    expect(
+      findNode(
+        rpmResult,
+        BacnetEnums.ObjectType.ANALOG_VALUE,
+        1837,
+        BacnetEnums.PropertyIdentifier.PRESENT_VALUE,
+      )?.type,
+    )
       .to.equal(BacnetEnums.ApplicationTags.REAL);
     expect(findNode(rpmResult, BacnetEnums.ObjectType.ANALOG_VALUE, 1837, 5037)?.type)
       .to.equal(BacnetEnums.ApplicationTags.REAL);
     expect(findNode(rpmResult, BacnetEnums.ObjectType.ANALOG_VALUE, 1837, 5036)?.type)
       .to.equal(BacnetEnums.ApplicationTags.REAL);
-    expect(findNode(rpmResult, BacnetEnums.ObjectType.DEVICE, 2, BacnetEnums.PropertyIdentifier.APPLICATION_SOFTWARE_VERSION)?.type)
+    expect(
+      findNode(
+        rpmResult,
+        BacnetEnums.ObjectType.DEVICE,
+        2,
+        BacnetEnums.PropertyIdentifier.APPLICATION_SOFTWARE_VERSION,
+      )?.type,
+    )
       .to.equal(BacnetEnums.ApplicationTags.CHARACTER_STRING);
 
     (server as any).handleReadPropertyMultiple({
@@ -238,7 +296,14 @@ describe('fake-unit bacnet server', () => {
 
     expect(captured.readPropertyMultiple).to.have.length(2);
     const unknownResult = captured.readPropertyMultiple[1].values;
-    expect(findNode(unknownResult, BacnetEnums.ObjectType.ANALOG_VALUE, 999999, BacnetEnums.PropertyIdentifier.PRESENT_VALUE)?.type)
+    expect(
+      findNode(
+        unknownResult,
+        BacnetEnums.ObjectType.ANALOG_VALUE,
+        999999,
+        BacnetEnums.PropertyIdentifier.PRESENT_VALUE,
+      )?.type,
+    )
       .to.equal(BacnetEnums.ApplicationTags.ERROR);
 
     (server as any).handleWriteProperty({
@@ -271,7 +336,14 @@ describe('fake-unit bacnet server', () => {
       },
     });
     const afterWriteResult = captured.readPropertyMultiple[2].values;
-    expect(findNode(afterWriteResult, BacnetEnums.ObjectType.ANALOG_VALUE, 1994, BacnetEnums.PropertyIdentifier.PRESENT_VALUE)?.value)
+    expect(
+      findNode(
+        afterWriteResult,
+        BacnetEnums.ObjectType.ANALOG_VALUE,
+        1994,
+        BacnetEnums.PropertyIdentifier.PRESENT_VALUE,
+      )?.value,
+    )
       .to.equal(22.5);
 
     (server as any).handleWriteProperty({
@@ -390,5 +462,326 @@ describe('fake-unit bacnet server', () => {
       .toString('latin1')
       .replace(/[^\x20-\x7E]+/g, '.');
     expect(firstPayloadAscii.includes('identification') || firstPayloadAscii.includes('ABTMobile')).to.equal(true);
+  });
+
+  it('responds to whoIs only when the device id is within the requested range', () => {
+    const { server, captured } = createHarness();
+    const identity = (server as any).state.getIdentity();
+
+    (server as any).handleWhoIs({
+      address: '127.0.0.1',
+      lowLimit: identity.deviceId + 1,
+    });
+    (server as any).handleWhoIs({
+      address: '127.0.0.1',
+      highLimit: identity.deviceId - 1,
+    });
+    expect(captured.iams).to.have.length(0);
+
+    (server as any).handleWhoIs({
+      address: '127.0.0.1',
+      lowLimit: identity.deviceId,
+      highLimit: identity.deviceId,
+    });
+    expect(captured.iams).to.deep.equal([{
+      deviceId: identity.deviceId,
+      segmentation: BacnetEnums.Segmentation.NO_SEGMENTATION,
+      vendorId: identity.vendorId,
+    }]);
+  });
+
+  it('covers direct property reads for documented, alias, overlay, and login objects', () => {
+    const { server } = createHarness();
+    const identity = (server as any).state.getIdentity();
+
+    const objectName = (server as any).readPropertyValue(
+      { type: OBJECT_TYPE.ANALOG_VALUE, instance: 1994 },
+      PROPERTY_ID.OBJECT_NAME,
+    );
+    expect(objectName.ok).to.equal(true);
+
+    const units = (server as any).readPropertyValue(
+      { type: OBJECT_TYPE.ANALOG_VALUE, instance: 1994 },
+      PROPERTY_ID.UNITS,
+    );
+    expect(units.ok).to.equal(true);
+
+    const minValue = (server as any).readPropertyValue(
+      { type: OBJECT_TYPE.ANALOG_VALUE, instance: 1994 },
+      PROPERTY_ID.MIN_PRES_VALUE,
+    );
+    expect(minValue.ok).to.equal(true);
+
+    const minUnsupported = (server as any).readPropertyValue(
+      { type: OBJECT_TYPE.BINARY_VALUE, instance: 445 },
+      PROPERTY_ID.MIN_PRES_VALUE,
+    );
+    expect(minUnsupported.ok).to.equal(false);
+
+    const nonArrayPresentValue = (server as any).readPropertyValue(
+      { type: OBJECT_TYPE.ANALOG_VALUE, instance: 1994 },
+      PROPERTY_ID.PRESENT_VALUE,
+      1,
+    );
+    expect(nonArrayPresentValue.ok).to.equal(false);
+    expect(nonArrayPresentValue.errorCode).to.equal(BacnetEnums.ErrorCode.PROPERTY_IS_NOT_AN_ARRAY);
+
+    const aliasDescription = (server as any).readPropertyValue(
+      { type: OBJECT_TYPE.DEVICE, instance: FLEXIT_GO_COMPAT_DEVICE_INSTANCE },
+      PROPERTY_ID.DESCRIPTION,
+    );
+    expect(aliasDescription.ok).to.equal(true);
+    expect(aliasDescription.values[0].value).to.equal(identity.serial);
+
+    const objectList = (server as any).readPropertyValue(
+      { type: OBJECT_TYPE.DEVICE, instance: identity.deviceId },
+      PROPERTY_ID.OBJECT_LIST,
+      BacnetEnums.ASN1_ARRAY_ALL,
+    );
+    expect(objectList.ok).to.equal(true);
+    expect(objectList.values.length).to.be.greaterThan(1);
+
+    const objectListCount = (server as any).readPropertyValue(
+      { type: OBJECT_TYPE.DEVICE, instance: identity.deviceId },
+      PROPERTY_ID.OBJECT_LIST,
+      0,
+    );
+    expect(objectListCount.ok).to.equal(true);
+    expect(objectListCount.values[0].value).to.equal(objectList.values.length);
+
+    const objectListEntry = (server as any).readPropertyValue(
+      { type: OBJECT_TYPE.DEVICE, instance: identity.deviceId },
+      PROPERTY_ID.OBJECT_LIST,
+      1,
+    );
+    expect(objectListEntry.ok).to.equal(true);
+
+    const objectListInvalid = (server as any).readPropertyValue(
+      { type: OBJECT_TYPE.DEVICE, instance: identity.deviceId },
+      PROPERTY_ID.OBJECT_LIST,
+      99999,
+    );
+    expect(objectListInvalid.ok).to.equal(false);
+    expect(objectListInvalid.errorCode).to.equal(BacnetEnums.ErrorCode.INVALID_ARRAY_INDEX);
+
+    const loginProperty = (server as any).readPropertyValue(
+      { type: FLEXIT_GO_LOGIN_OBJECT_TYPE, instance: FLEXIT_GO_LOGIN_OBJECT_INSTANCE },
+      FLEXIT_GO_LOGIN_PROPERTY_ID,
+    );
+    expect(loginProperty.ok).to.equal(true);
+
+    const loginArrayError = (server as any).readPropertyValue(
+      { type: FLEXIT_GO_LOGIN_OBJECT_TYPE, instance: FLEXIT_GO_LOGIN_OBJECT_INSTANCE },
+      FLEXIT_GO_LOGIN_PROPERTY_ID,
+      1,
+    );
+    expect(loginArrayError.ok).to.equal(false);
+
+    const overlayValue = (server as any).readPropertyValue(
+      { type: OBJECT_TYPE.BINARY_VALUE, instance: 445 },
+      FLEXIT_GO_PRIORITY_HINT_PROPERTY_ID,
+    );
+    expect(overlayValue.ok).to.equal(true);
+
+    const overlayArrayError = (server as any).readPropertyValue(
+      { type: OBJECT_TYPE.BINARY_VALUE, instance: 445 },
+      FLEXIT_GO_PRIORITY_HINT_PROPERTY_ID,
+      1,
+    );
+    expect(overlayArrayError.ok).to.equal(false);
+  });
+
+  it('returns readProperty errors for malformed and unsupported requests', () => {
+    const { server, captured } = createHarness();
+
+    (server as any).handleReadProperty({
+      address: '127.0.0.1',
+      invokeId: 1,
+      request: {},
+    });
+    expect(captured.errors.pop()).to.deep.include({
+      serviceChoice: BacnetEnums.ConfirmedServiceChoice.READ_PROPERTY,
+      errorClass: BacnetEnums.ErrorClass.SERVICES,
+      errorCode: BacnetEnums.ErrorCode.INVALID_TAG,
+    });
+
+    (server as any).handleReadProperty({
+      address: '127.0.0.1',
+      invokeId: 2,
+      request: {
+        objectId: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 999999 },
+        property: { id: PROPERTY_ID.PRESENT_VALUE, index: BacnetEnums.ASN1_ARRAY_ALL },
+      },
+    });
+    expect(captured.errors.pop()).to.deep.include({
+      serviceChoice: BacnetEnums.ConfirmedServiceChoice.READ_PROPERTY,
+      errorClass: BacnetEnums.ErrorClass.OBJECT,
+      errorCode: BacnetEnums.ErrorCode.UNKNOWN_OBJECT,
+    });
+
+    (server as any).handleReadProperty({
+      address: '127.0.0.1',
+      invokeId: 3,
+      request: {
+        objectId: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 1994 },
+        property: { id: PROPERTY_ID.PRESENT_VALUE, index: 1 },
+      },
+    });
+    expect(captured.errors.pop()).to.deep.include({
+      serviceChoice: BacnetEnums.ConfirmedServiceChoice.READ_PROPERTY,
+      errorClass: BacnetEnums.ErrorClass.PROPERTY,
+      errorCode: BacnetEnums.ErrorCode.PROPERTY_IS_NOT_AN_ARRAY,
+    });
+
+    (server as any).handleReadProperty({
+      address: '127.0.0.1',
+      invokeId: 4,
+      request: {
+        objectId: { type: OBJECT_TYPE.DEVICE, instance: 2222 },
+        property: { id: PROPERTY_ID.OBJECT_NAME, index: BacnetEnums.ASN1_ARRAY_ALL },
+      },
+    });
+    expect(captured.readProperty).to.have.length(1);
+    expect(captured.readProperty[0].values[0].value).to.equal(DEFAULT_DEVICE_NAME);
+  });
+
+  it('returns writeProperty errors for malformed, invalid, and denied writes', () => {
+    const { server, captured } = createHarness();
+
+    (server as any).handleWriteProperty({
+      address: '127.0.0.1',
+      invokeId: 1,
+      request: {
+        value: {
+          property: { id: PROPERTY_ID.PRESENT_VALUE },
+          value: [{ type: BacnetEnums.ApplicationTags.REAL, value: 22 }],
+        },
+      },
+    });
+    expect(captured.errors.pop()).to.deep.include({
+      serviceChoice: BacnetEnums.ConfirmedServiceChoice.WRITE_PROPERTY,
+      errorClass: BacnetEnums.ErrorClass.SERVICES,
+      errorCode: BacnetEnums.ErrorCode.INVALID_TAG,
+    });
+
+    (server as any).handleWriteProperty({
+      address: '127.0.0.1',
+      invokeId: 2,
+      request: {
+        objectId: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 1994 },
+        value: {
+          property: { id: PROPERTY_ID.PRESENT_VALUE },
+          value: [{ type: BacnetEnums.ApplicationTags.CHARACTER_STRING, value: 'bad' }],
+        },
+      },
+    });
+    expect(captured.errors.pop()).to.deep.include({
+      serviceChoice: BacnetEnums.ConfirmedServiceChoice.WRITE_PROPERTY,
+      errorClass: BacnetEnums.ErrorClass.PROPERTY,
+      errorCode: BacnetEnums.ErrorCode.INVALID_DATA_TYPE,
+    });
+
+    (server as any).handleWriteProperty({
+      address: '127.0.0.1',
+      invokeId: 3,
+      request: {
+        objectId: { type: OBJECT_TYPE.ANALOG_INPUT, instance: 4 },
+        value: {
+          property: { id: PROPERTY_ID.PRESENT_VALUE },
+          value: [{ type: BacnetEnums.ApplicationTags.REAL, value: 22 }],
+          priority: 13,
+        },
+      },
+    });
+    expect(captured.errors.pop()).to.deep.include({
+      serviceChoice: BacnetEnums.ConfirmedServiceChoice.WRITE_PROPERTY,
+      errorClass: BacnetEnums.ErrorClass.PROPERTY,
+      errorCode: BacnetEnums.ErrorCode.WRITE_ACCESS_DENIED,
+    });
+  });
+
+  it('returns writePropertyMultiple errors and acknowledges valid multi-writes', () => {
+    const { server, captured } = createHarness();
+
+    (server as any).handleWritePropertyMultiple({
+      address: '127.0.0.1',
+      invokeId: 1,
+      request: {
+        objectId: null,
+        values: [],
+      },
+    });
+    expect(captured.errors.pop()).to.deep.include({
+      serviceChoice: BacnetEnums.ConfirmedServiceChoice.WRITE_PROPERTY_MULTIPLE,
+      errorClass: BacnetEnums.ErrorClass.SERVICES,
+      errorCode: BacnetEnums.ErrorCode.INVALID_TAG,
+    });
+
+    (server as any).handleWritePropertyMultiple({
+      address: '127.0.0.1',
+      invokeId: 2,
+      request: {
+        objectId: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 1994 },
+        values: [{ value: [{ type: BacnetEnums.ApplicationTags.REAL, value: 22 }] }],
+      },
+    });
+    expect(captured.errors.pop()).to.deep.include({
+      serviceChoice: BacnetEnums.ConfirmedServiceChoice.WRITE_PROPERTY_MULTIPLE,
+      errorClass: BacnetEnums.ErrorClass.PROPERTY,
+      errorCode: BacnetEnums.ErrorCode.UNKNOWN_PROPERTY,
+    });
+
+    (server as any).handleWritePropertyMultiple({
+      address: '127.0.0.1',
+      invokeId: 3,
+      request: {
+        objectId: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 1994 },
+        values: [{
+          property: { id: PROPERTY_ID.PRESENT_VALUE },
+          value: [{ type: BacnetEnums.ApplicationTags.CHARACTER_STRING, value: 'bad' }],
+        }],
+      },
+    });
+    expect(captured.errors.pop()).to.deep.include({
+      serviceChoice: BacnetEnums.ConfirmedServiceChoice.WRITE_PROPERTY_MULTIPLE,
+      errorClass: BacnetEnums.ErrorClass.PROPERTY,
+      errorCode: BacnetEnums.ErrorCode.INVALID_DATA_TYPE,
+    });
+
+    (server as any).handleWritePropertyMultiple({
+      address: '127.0.0.1',
+      invokeId: 4,
+      request: {
+        objectId: { type: OBJECT_TYPE.ANALOG_INPUT, instance: 4 },
+        values: [{
+          property: { id: PROPERTY_ID.PRESENT_VALUE },
+          value: [{ type: BacnetEnums.ApplicationTags.REAL, value: 22 }],
+          priority: 13,
+        }],
+      },
+    });
+    expect(captured.errors.pop()).to.deep.include({
+      serviceChoice: BacnetEnums.ConfirmedServiceChoice.WRITE_PROPERTY_MULTIPLE,
+      errorClass: BacnetEnums.ErrorClass.PROPERTY,
+      errorCode: BacnetEnums.ErrorCode.WRITE_ACCESS_DENIED,
+    });
+
+    (server as any).handleWritePropertyMultiple({
+      address: '127.0.0.1',
+      invokeId: 5,
+      request: {
+        objectId: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 1994 },
+        values: [{
+          property: { id: PROPERTY_ID.PRESENT_VALUE },
+          value: [{ type: BacnetEnums.ApplicationTags.REAL, value: 21.5 }],
+          priority: 13,
+        }],
+      },
+    });
+    expect(captured.acks.pop()).to.deep.equal({
+      address: '127.0.0.1',
+      serviceChoice: BacnetEnums.ConfirmedServiceChoice.WRITE_PROPERTY_MULTIPLE,
+      invokeId: 5,
+    });
   });
 });

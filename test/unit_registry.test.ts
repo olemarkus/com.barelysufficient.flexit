@@ -216,7 +216,14 @@ describe('UnitRegistry', () => {
 
     mockClient.writeProperty.resetBehavior();
     mockClient.writeProperty.onFirstCall().callsFake(
-      (_ip: string, _objectId: { type: number; instance: number }, _propertyId: number, _value: any, _options: any, cb: any) => {
+      (
+        _ip: string,
+        _objectId: { type: number; instance: number },
+        _propertyId: number,
+        _value: any,
+        _options: any,
+        cb: any,
+      ) => {
         cb(new Error('Code:31 Unsupported object 5:445'));
       },
     );
@@ -307,7 +314,14 @@ describe('UnitRegistry', () => {
 
     mockClient.writeProperty.resetBehavior();
     mockClient.writeProperty.onFirstCall().callsFake(
-      (_ip: string, _objectId: { type: number; instance: number }, _propertyId: number, _value: any, _options: any, cb: any) => {
+      (
+        _ip: string,
+        _objectId: { type: number; instance: number },
+        _propertyId: number,
+        _value: any,
+        _options: any,
+        cb: any,
+      ) => {
         cb(new Error('Write failed'));
       },
     );
@@ -565,7 +579,14 @@ describe('UnitRegistry', () => {
 
     mockClient.writeProperty.resetBehavior();
     mockClient.writeProperty.onFirstCall().callsFake(
-      (_ip: string, _objectId: { type: number; instance: number }, _propertyId: number, _value: any, _options: any, cb: any) => {
+      (
+        _ip: string,
+        _objectId: { type: number; instance: number },
+        _propertyId: number,
+        _value: any,
+        _options: any,
+        cb: any,
+      ) => {
         cb(new Error('Write failed'));
       },
     );
@@ -603,8 +624,14 @@ describe('UnitRegistry', () => {
 
     expect(lowError).to.not.equal(null);
     expect(highError).to.not.equal(null);
-    expect(lowError?.message).to.equal(`Filter change interval must be between ${MIN_FILTER_CHANGE_INTERVAL_HOURS} and ${MAX_FILTER_CHANGE_INTERVAL_HOURS} hours`);
-    expect(highError?.message).to.equal(`Filter change interval must be between ${MIN_FILTER_CHANGE_INTERVAL_HOURS} and ${MAX_FILTER_CHANGE_INTERVAL_HOURS} hours`);
+    expect(lowError?.message).to.equal(
+      `Filter change interval must be between ${MIN_FILTER_CHANGE_INTERVAL_HOURS}`
+      + ` and ${MAX_FILTER_CHANGE_INTERVAL_HOURS} hours`,
+    );
+    expect(highError?.message).to.equal(
+      `Filter change interval must be between ${MIN_FILTER_CHANGE_INTERVAL_HOURS}`
+      + ` and ${MAX_FILTER_CHANGE_INTERVAL_HOURS} hours`,
+    );
     expect(mockClient.writeProperty.called).to.equal(false);
   });
 
