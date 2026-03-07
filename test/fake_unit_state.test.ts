@@ -9,9 +9,11 @@ const {
   DEFAULT_DEVICE_NAME,
   DEFAULT_FIRMWARE,
   DEFAULT_MODEL_NAME,
+  DEFAULT_POINT_VALUES,
   DEFAULT_VENDOR_ID,
   DEFAULT_VENDOR_NAME,
   OBJECT_TYPE,
+  OPERATION_MODE_VALUES,
   PROPERTY_ID,
   SUPPORTED_POINTS,
   pointKey,
@@ -468,6 +470,49 @@ describe('fake-unit state', () => {
       ).ok,
     ).to.equal(true);
     expect(state.summary().mode).to.equal('fireplace');
+  });
+
+  it('does not infer fireplace mode from stale remaining runtime on startup', () => {
+    const remainingFireplaceKey = pointKey(OBJECT_TYPE.ANALOG_VALUE, 2038);
+    const fireplaceActiveKey = pointKey(OBJECT_TYPE.BINARY_VALUE, 400);
+    const operationModeKey = pointKey(OBJECT_TYPE.MULTI_STATE_VALUE, 361);
+    const originalRemainingFireplace = DEFAULT_POINT_VALUES[remainingFireplaceKey];
+    const originalFireplaceActive = DEFAULT_POINT_VALUES[fireplaceActiveKey];
+    const originalOperationMode = DEFAULT_POINT_VALUES[operationModeKey];
+
+    DEFAULT_POINT_VALUES[remainingFireplaceKey] = 18;
+    DEFAULT_POINT_VALUES[fireplaceActiveKey] = 0;
+    DEFAULT_POINT_VALUES[operationModeKey] = OPERATION_MODE_VALUES.HOME;
+
+    try {
+      const state = createState();
+      const summary = state.summary();
+
+      expect(summary.mode).to.equal('home');
+      expect(summary.timers.fireplaceMinutes).to.be.closeTo(18, 0.1);
+
+      const fireplaceActive = state.readPresentValue(
+        OBJECT_TYPE.BINARY_VALUE,
+        400,
+        PROPERTY_ID.PRESENT_VALUE,
+      );
+      const operationMode = state.readPresentValue(
+        OBJECT_TYPE.MULTI_STATE_VALUE,
+        361,
+        PROPERTY_ID.PRESENT_VALUE,
+      );
+
+      if (!fireplaceActive.ok || !operationMode.ok) {
+        throw new Error('Expected fireplace active and operation mode points to be readable');
+      }
+
+      expect(fireplaceActive.value.value).to.equal(0);
+      expect(operationMode.value.value).to.equal(OPERATION_MODE_VALUES.HOME);
+    } finally {
+      DEFAULT_POINT_VALUES[remainingFireplaceKey] = originalRemainingFireplace;
+      DEFAULT_POINT_VALUES[fireplaceActiveKey] = originalFireplaceActive;
+      DEFAULT_POINT_VALUES[operationModeKey] = originalOperationMode;
+    }
   });
 
   it('handles zero filter limit and alternate fan target modes', () => {

@@ -1924,7 +1924,7 @@ export class UnitRegistry {
         unit.deferredMode = undefined;
         unit.deferredSince = undefined;
       }
-      if (mode === 'fireplace' && temporaryRapidActive && !(fireplaceActive || fireplaceModeReported)) {
+      if (mode === 'fireplace' && temporaryRapidActive && !fireplaceAlreadyActive) {
         this.warn(
           '[UnitRegistry] Fireplace requested while temporary ventilation is active'
           + ` (rapid=${rapidActive} temp=${tempVentActive}); proceeding anyway.`,
