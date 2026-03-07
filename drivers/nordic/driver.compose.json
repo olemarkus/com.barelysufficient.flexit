@@ -15,6 +15,7 @@
     "measure_temperature.extract",
     "target_temperature",
     "measure_humidity",
+    "dehumidification_active",
     "measure_power",
     "fan_mode",
     "measure_motor_rpm",
@@ -30,6 +31,11 @@
     "measure_humidity": {
       "title": {
         "en": "Extract air humidity"
+      }
+    },
+    "dehumidification_active": {
+      "title": {
+        "en": "Dehumidification active"
       }
     },
     "measure_power": {

@@ -1,0 +1,10 @@
+{
+  "type": "boolean",
+  "title": {
+    "en": "Dehumidification active"
+  },
+  "icon": "/assets/capabilities/dehumidification_active.svg",
+  "getable": true,
+  "setable": false,
+  "uiComponent": "sensor"
+}

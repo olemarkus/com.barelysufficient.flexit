@@ -24,11 +24,13 @@ export = class App extends Homey.App {
 
     this.registerFanSetpointChangedFlowTrigger();
     this.registerHeatingCoilStateFlowTrigger();
+    this.registerDehumidificationStateFlowTrigger();
     this.registerGlobalErrorHandlers();
     this.registerFanProfileActionCard();
     this.registerFireplaceDurationActionCard();
     this.registerHeatingCoilActionCards();
     this.registerHeatingCoilConditionCard();
+    this.registerDehumidificationConditionCard();
   }
 
   private registerGlobalErrorHandlers() {
@@ -74,6 +76,22 @@ export = class App extends Homey.App {
         {},
       ).catch((error: unknown) => {
         this.error('Failed to trigger heating coil state flow:', error);
+      });
+    });
+  }
+
+  private registerDehumidificationStateFlowTrigger() {
+    const dehumidificationActivatedCard = this.homey.flow.getDeviceTriggerCard('dehumidification_activated');
+    const dehumidificationDeactivatedCard = this.homey.flow.getDeviceTriggerCard('dehumidification_deactivated');
+    Registry.setDehumidificationStateChangedHandler((event) => {
+      const card = event.active
+        ? dehumidificationActivatedCard
+        : dehumidificationDeactivatedCard;
+      card.trigger(
+        event.device as unknown as Homey.Device,
+        {},
+      ).catch((error: unknown) => {
+        this.error('Failed to trigger dehumidification state flow:', error);
       });
     });
   }
@@ -150,6 +168,15 @@ export = class App extends Homey.App {
       const device = args?.device as Homey.Device | undefined;
       const unitId = this.resolveUnitId(device);
       return Registry.getHeatingCoilEnabled(unitId);
+    });
+  }
+
+  private registerDehumidificationConditionCard() {
+    const dehumidificationIsActiveCard = this.homey.flow.getConditionCard('dehumidification_is_active');
+    dehumidificationIsActiveCard.registerRunListener(async (args: any) => {
+      const device = args?.device as Homey.Device | undefined;
+      const unitId = this.resolveUnitId(device);
+      return Registry.getDehumidificationActive(unitId);
     });
   }
 };
