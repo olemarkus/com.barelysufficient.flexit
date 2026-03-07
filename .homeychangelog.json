@@ -46,5 +46,8 @@
   },
   "1.4.0": {
     "en": "Duration of the fireplace mode can now be configured in device settings and through flows. In addition, this release contains minor stability improvements."
+  },
+  "1.5.0": {
+    "en": "Since v1.4.0, compatible Flexit Nordic units now expose dehumidification status in Homey. A new read-only “Dehumidification active” indicator has been added to the device, and you can now use new Flow cards to trigger automations when dehumidification starts or stops, or check whether dehumidification is currently active.\n\nThis update also improves fireplace mode handling. Repeated fireplace activations now behave more reliably and no longer risk toggling an already running fireplace mode back to Home, so fireplace automations should be more stable in day-to-day use."
   }
 }
