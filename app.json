@@ -50,6 +50,44 @@
     "triggers": [
       {
         "title": {
+          "en": "Dehumidification activated"
+        },
+        "titleFormatted": {
+          "en": "Dehumidification activated"
+        },
+        "hint": {
+          "en": "Triggers when dehumidification activates."
+        },
+        "args": [
+          {
+            "type": "device",
+            "name": "device",
+            "filter": "driver_id=nordic"
+          }
+        ],
+        "id": "dehumidification_activated"
+      },
+      {
+        "title": {
+          "en": "Dehumidification deactivated"
+        },
+        "titleFormatted": {
+          "en": "Dehumidification deactivated"
+        },
+        "hint": {
+          "en": "Triggers when dehumidification deactivates."
+        },
+        "args": [
+          {
+            "type": "device",
+            "name": "device",
+            "filter": "driver_id=nordic"
+          }
+        ],
+        "id": "dehumidification_deactivated"
+      },
+      {
+        "title": {
           "en": "Extract fan setpoint changed"
         },
         "titleFormatted": {
@@ -144,6 +182,25 @@
       }
     ],
     "conditions": [
+      {
+        "title": {
+          "en": "Dehumidification is active"
+        },
+        "titleFormatted": {
+          "en": "Dehumidification is active"
+        },
+        "hint": {
+          "en": "Checks whether dehumidification is active."
+        },
+        "args": [
+          {
+            "type": "device",
+            "name": "device",
+            "filter": "driver_id=nordic"
+          }
+        ],
+        "id": "dehumidification_is_active"
+      },
       {
         "title": {
           "en": "Heating coil is turned on"
@@ -349,6 +406,7 @@
         "measure_temperature.extract",
         "target_temperature",
         "measure_humidity",
+        "dehumidification_active",
         "measure_power",
         "fan_mode",
         "measure_motor_rpm",
@@ -364,6 +422,11 @@
         "measure_humidity": {
           "title": {
             "en": "Extract air humidity"
+          }
+        },
+        "dehumidification_active": {
+          "title": {
+            "en": "Dehumidification active"
           }
         },
         "measure_power": {
@@ -835,6 +898,16 @@
     }
   ],
   "capabilities": {
+    "dehumidification_active": {
+      "type": "boolean",
+      "title": {
+        "en": "Dehumidification active"
+      },
+      "icon": "/assets/capabilities/dehumidification_active.svg",
+      "getable": true,
+      "setable": false,
+      "uiComponent": "sensor"
+    },
     "measure_fan_setpoint_percent": {
       "type": "number",
       "title": {

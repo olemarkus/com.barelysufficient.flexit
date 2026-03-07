@@ -498,6 +498,61 @@ describe('UnitRegistry fake-unit e2e', function unitRegistryFakeUdpE2e() {
     expect(events[1]).to.equal(true);
   });
 
+  it('publishes dehumidification capability from observed BACnet points', async () => {
+    const device = makeMockDevice(SERVER_BIND_ADDRESS, serverPort, 4380);
+    registry.register('test_unit', device);
+
+    (state as any).setSimulatedPoint('dehumidification_fan_control', 100);
+    (state as any).setSimulatedPoint('dehumidification_request_by_slope', 1);
+    (registry as any).pollUnit('test_unit');
+
+    await waitFor(() => device.setCapabilityValue.getCalls().some((call: any) => (
+      call.args[0] === 'dehumidification_active' && call.args[1] === true
+    )));
+
+    (state as any).setSimulatedPoint('dehumidification_fan_control', 0);
+    (state as any).setSimulatedPoint('dehumidification_request_by_slope', 0);
+    device.setCapabilityValue.resetHistory();
+    (registry as any).pollUnit('test_unit');
+
+    await waitFor(() => device.setCapabilityValue.getCalls().some((call: any) => (
+      call.args[0] === 'dehumidification_active' && call.args[1] === false
+    )));
+  });
+
+  it('reads dehumidification state directly from BACnet when requested', async () => {
+    const device = makeMockDevice(SERVER_BIND_ADDRESS, serverPort, 4380);
+    registry.register('test_unit', device);
+
+    await waitFor(() => {
+      const unit = (registry as any).units.get('test_unit');
+      return Boolean(unit);
+    });
+
+    const unit = (registry as any).units.get('test_unit');
+    if (!unit) throw new Error('Expected unit to exist');
+
+    unit.dehumidificationActive = undefined;
+    unit.dehumidificationStateInitialized = false;
+    unit.probeValues.delete('2:1870');
+    unit.probeValues.delete('5:653');
+
+    (state as any).setSimulatedPoint('dehumidification_fan_control', 100);
+    (state as any).setSimulatedPoint('dehumidification_request_by_slope', 1);
+    const active = await registry.getDehumidificationActive('test_unit');
+    expect(active).to.equal(true);
+
+    unit.dehumidificationActive = undefined;
+    unit.dehumidificationStateInitialized = false;
+    unit.probeValues.delete('2:1870');
+    unit.probeValues.delete('5:653');
+
+    (state as any).setSimulatedPoint('dehumidification_fan_control', 0);
+    (state as any).setSimulatedPoint('dehumidification_request_by_slope', 0);
+    const inactive = await registry.getDehumidificationActive('test_unit');
+    expect(inactive).to.equal(false);
+  });
+
   it('writes home fan profile using AV 1836/1841 with priority 16', async () => {
     const device = makeMockDevice(SERVER_BIND_ADDRESS, serverPort, 4380);
     registry.register('test_unit', device);

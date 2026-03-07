@@ -179,6 +179,8 @@ const BACNET_OBJECTS = {
   ventilationMode: { type: OBJECT_TYPE.MULTI_STATE_VALUE, instance: 42 },
   operationMode: { type: OBJECT_TYPE.MULTI_STATE_VALUE, instance: 361 },
   heatingCoilEnable: { type: OBJECT_TYPE.BINARY_VALUE, instance: 445 },
+  dehumidificationSlopeRequest: { type: OBJECT_TYPE.BINARY_VALUE, instance: 653 },
+  dehumidificationFanControl: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 1870 },
   rapidVentilationTrigger: { type: OBJECT_TYPE.MULTI_STATE_VALUE, instance: 357 },
   rapidVentilationRuntime: { type: OBJECT_TYPE.POSITIVE_INTEGER_VALUE, instance: 293 },
   rapidVentilationRemaining: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 2031 },
@@ -237,6 +239,14 @@ const TEMP_VENT_REMAINING_KEY = objectKey(OBJECT_TYPE.ANALOG_VALUE, 2005);
 const RAPID_REMAINING_KEY = objectKey(OBJECT_TYPE.ANALOG_VALUE, 2031);
 const FIREPLACE_REMAINING_KEY = objectKey(OBJECT_TYPE.ANALOG_VALUE, 2038);
 const MODE_RF_INPUT_KEY = objectKey(OBJECT_TYPE.ANALOG_VALUE, 2125);
+const DEHUMIDIFICATION_FAN_CONTROL_KEY = objectKey(
+  BACNET_OBJECTS.dehumidificationFanControl.type,
+  BACNET_OBJECTS.dehumidificationFanControl.instance,
+);
+const DEHUMIDIFICATION_SLOPE_REQUEST_KEY = objectKey(
+  BACNET_OBJECTS.dehumidificationSlopeRequest.type,
+  BACNET_OBJECTS.dehumidificationSlopeRequest.instance,
+);
 const TARGET_TEMPERATURE_MODE_PROBE_KEY_MAP: ReadonlyArray<readonly [string, string]> = [
   [OPERATION_MODE_KEY, 'operation_mode'],
   [VENTILATION_MODE_KEY, 'ventilation_mode'],
@@ -271,6 +281,7 @@ const CAPABILITY_MAPPINGS = [
   { dataKey: 'measure_fan_speed_percent', capability: 'measure_fan_speed_percent' },
   { dataKey: 'measure_fan_speed_percent.extract', capability: 'measure_fan_speed_percent.extract' },
 ] as const;
+const DEHUMIDIFICATION_ACTIVE_CAPABILITY = 'dehumidification_active';
 
 const MODE_RF_INPUT_MAP: Record<number, 'home' | 'away' | 'high' | 'fireplace'> = {
   3: 'high',
@@ -322,6 +333,22 @@ function mapVentilationMode(value: number): 'home' | 'away' | 'high' {
 
 function valuesMatch(actual: number, expected: number) {
   return Math.abs(actual - expected) < 0.01;
+}
+
+// Real units expose dehumidification as either a positive fan-control demand or a
+// slope-request flag, depending on which internal signal changes first.
+function resolveDehumidificationActive(data: Record<string, number>): boolean | undefined {
+  const fanControl = data.dehumidification_fan_control;
+  const slopeRequest = data.dehumidification_request_by_slope;
+  const hasFanControl = Number.isFinite(fanControl);
+  const hasSlopeRequest = Number.isFinite(slopeRequest);
+
+  if (!hasFanControl && !hasSlopeRequest) return undefined;
+
+  return Boolean(
+    (hasFanControl && fanControl > 0)
+    || (hasSlopeRequest && Math.round(slopeRequest) === 1),
+  );
 }
 
 export function normalizeTargetTemperature(value: number): number {
@@ -440,6 +467,8 @@ interface UnitState {
   currentFanSetpointMode?: FanProfileMode;
   currentFanSetpoints: Partial<Record<FanProfileFan, number>>;
   currentFanSetpointsInitialized: boolean;
+  dehumidificationActive?: boolean;
+  dehumidificationStateInitialized: boolean;
   heatingCoilEnabled?: boolean;
   heatingCoilStateInitialized: boolean;
 }
@@ -505,6 +534,11 @@ interface HeatingCoilStateChangedEvent {
   enabled: boolean;
 }
 
+interface DehumidificationStateChangedEvent {
+  device: FlexitDevice;
+  active: boolean;
+}
+
 function presentValueRequest(objectId: { type: number; instance: number }) {
   return {
     objectId,
@@ -538,6 +572,8 @@ function buildPollRequest() {
     presentValueRequest({ type: OBJECT_TYPE.ANALOG_INPUT, instance: 12 }), // Fan RPM Extract
     presentValueRequest({ type: OBJECT_TYPE.ANALOG_OUTPUT, instance: 3 }), // Fan Speed % Supply
     presentValueRequest({ type: OBJECT_TYPE.ANALOG_OUTPUT, instance: 4 }), // Fan Speed % Extract
+    presentValueRequest(BACNET_OBJECTS.dehumidificationFanControl),
+    presentValueRequest(BACNET_OBJECTS.dehumidificationSlopeRequest),
     presentValueRequest(FAN_PROFILE_OBJECTS.home.supply), // Setpoint supply HOME
     presentValueRequest(FAN_PROFILE_OBJECTS.home.exhaust), // Setpoint exhaust HOME
     presentValueRequest(FAN_PROFILE_OBJECTS.away.supply), // Setpoint supply AWAY
@@ -604,6 +640,8 @@ const POLL_VALUE_MAPPINGS: Record<string, (value: number, target: PollParseTarge
   [objectKey(OBJECT_TYPE.ANALOG_INPUT, 12)]: mapPollValue('measure_motor_rpm.extract'),
   [objectKey(OBJECT_TYPE.ANALOG_OUTPUT, 3)]: mapPollValue('measure_fan_speed_percent'),
   [objectKey(OBJECT_TYPE.ANALOG_OUTPUT, 4)]: mapPollValue('measure_fan_speed_percent.extract'),
+  [DEHUMIDIFICATION_FAN_CONTROL_KEY]: mapPollValue('dehumidification_fan_control'),
+  [DEHUMIDIFICATION_SLOPE_REQUEST_KEY]: mapPollValue('dehumidification_request_by_slope'),
   [objectKey(
     FAN_PROFILE_OBJECTS.home.supply.type,
     FAN_PROFILE_OBJECTS.home.supply.instance,
@@ -670,6 +708,7 @@ export class UnitRegistry {
     private logger?: RegistryLogger;
     private readonly dependencies: RegistryDependencies;
     private fanSetpointChangedHandler?: (event: FanSetpointChangedEvent) => void;
+    private dehumidificationStateChangedHandler?: (event: DehumidificationStateChangedEvent) => void;
     private heatingCoilStateChangedHandler?: (event: HeatingCoilStateChangedEvent) => void;
 
     constructor(dependencies?: Partial<RegistryDependencies>) {
@@ -687,6 +726,12 @@ export class UnitRegistry {
 
     setFanSetpointChangedHandler(handler?: (event: FanSetpointChangedEvent) => void) {
       this.fanSetpointChangedHandler = handler;
+    }
+
+    setDehumidificationStateChangedHandler(
+      handler?: (event: DehumidificationStateChangedEvent) => void,
+    ) {
+      this.dehumidificationStateChangedHandler = handler;
     }
 
     setHeatingCoilStateChangedHandler(handler?: (event: HeatingCoilStateChangedEvent) => void) {
@@ -772,6 +817,8 @@ export class UnitRegistry {
           currentFanSetpointMode: undefined,
           currentFanSetpoints: {},
           currentFanSetpointsInitialized: false,
+          dehumidificationActive: undefined,
+          dehumidificationStateInitialized: false,
           heatingCoilEnabled: undefined,
           heatingCoilStateInitialized: false,
         };
@@ -1390,6 +1437,8 @@ export class UnitRegistry {
     }
 
     private distributeData(unit: UnitState, data: Record<string, number>) {
+      const dehumidificationActive = resolveDehumidificationActive(data);
+      this.observeDehumidificationState(unit, dehumidificationActive);
       this.observeHeatingCoilState(unit, data.heating_coil_enabled);
 
       const mode = this.resolveFanMode(unit, data);
@@ -1406,6 +1455,9 @@ export class UnitRegistry {
         this.syncFilterIntervalSetting(device, data.filter_limit);
         const filterLife = this.computeFilterLife(data);
         if (filterLife !== undefined) this.setCapability(device, 'measure_hepa_filter', filterLife);
+        if (dehumidificationActive !== undefined) {
+          this.setCapability(device, DEHUMIDIFICATION_ACTIVE_CAPABILITY, dehumidificationActive);
+        }
         if (mode !== undefined) this.setCapability(device, 'fan_mode', mode);
       }
     }
@@ -1536,6 +1588,37 @@ export class UnitRegistry {
         this.fanSetpointChangedHandler(event);
       } catch (error) {
         this.warn('[UnitRegistry] Failed to handle fan setpoint changed callback:', error);
+      }
+    }
+
+    private observeDehumidificationState(
+      unit: UnitState,
+      active: boolean | undefined,
+    ) {
+      if (active === undefined) return;
+
+      if (!unit.dehumidificationStateInitialized) {
+        unit.dehumidificationActive = active;
+        unit.dehumidificationStateInitialized = true;
+        return;
+      }
+      if (unit.dehumidificationActive === active) return;
+
+      unit.dehumidificationActive = active;
+      for (const device of unit.devices) {
+        this.triggerDehumidificationStateChanged({
+          device,
+          active,
+        });
+      }
+    }
+
+    private triggerDehumidificationStateChanged(event: DehumidificationStateChangedEvent) {
+      if (!this.dehumidificationStateChangedHandler) return;
+      try {
+        this.dehumidificationStateChangedHandler(event);
+      } catch (error) {
+        this.warn('[UnitRegistry] Failed to handle dehumidification state changed callback:', error);
       }
     }
 
@@ -1799,8 +1882,70 @@ export class UnitRegistry {
       }
     }
 
-    private setCapability(device: FlexitDevice, capability: string, value: number | string) {
+    private setCapability(device: FlexitDevice, capability: string, value: number | string | boolean) {
       device.setCapabilityValue(capability, value).catch(() => { });
+    }
+
+    async getDehumidificationActive(unitId: string): Promise<boolean> {
+      const unit = this.units.get(unitId);
+      if (!unit) throw new Error('Unit not found');
+
+      // Bootstrap from BACnet if a flow condition is evaluated before the first poll has
+      // populated the controller-driven dehumidification state.
+      if (unit.dehumidificationStateInitialized && typeof unit.dehumidificationActive === 'boolean') {
+        return unit.dehumidificationActive;
+      }
+
+      const client = this.dependencies.getBacnetClient(unit.bacnetPort);
+      const readResults = await Promise.allSettled([
+        this.readPresentValue(client, unit, BACNET_OBJECTS.dehumidificationFanControl),
+        this.readPresentValue(client, unit, BACNET_OBJECTS.dehumidificationSlopeRequest),
+      ]);
+
+      const mergedData: Record<string, number> = {};
+      const cachedSignals = [
+        {
+          probeKey: DEHUMIDIFICATION_FAN_CONTROL_KEY,
+          dataKey: 'dehumidification_fan_control',
+        },
+        {
+          probeKey: DEHUMIDIFICATION_SLOPE_REQUEST_KEY,
+          dataKey: 'dehumidification_request_by_slope',
+        },
+      ] as const;
+
+      for (const { probeKey, dataKey } of cachedSignals) {
+        const cachedValue = unit.probeValues.get(probeKey);
+        if (typeof cachedValue === 'number' && Number.isFinite(cachedValue)) {
+          mergedData[dataKey] = cachedValue;
+        }
+      }
+
+      const [fanControlResult, slopeRequestResult] = readResults;
+      if (fanControlResult.status === 'fulfilled') {
+        mergedData.dehumidification_fan_control = fanControlResult.value;
+        unit.probeValues.set(DEHUMIDIFICATION_FAN_CONTROL_KEY, fanControlResult.value);
+      }
+      if (slopeRequestResult.status === 'fulfilled') {
+        mergedData.dehumidification_request_by_slope = slopeRequestResult.value;
+        unit.probeValues.set(DEHUMIDIFICATION_SLOPE_REQUEST_KEY, slopeRequestResult.value);
+      }
+
+      const active = resolveDehumidificationActive(mergedData);
+      if (active === undefined) {
+        const firstReadError = readResults.find((result) => result.status === 'rejected');
+        if (firstReadError?.status === 'rejected') {
+          this.warn(
+            `[UnitRegistry] Failed to bootstrap dehumidification state for ${unitId}:`,
+            firstReadError.reason,
+          );
+        }
+        throw new Error('Dehumidification state unavailable');
+      }
+
+      unit.dehumidificationActive = active;
+      unit.dehumidificationStateInitialized = true;
+      return active;
     }
 
     async getHeatingCoilEnabled(unitId: string): Promise<boolean> {

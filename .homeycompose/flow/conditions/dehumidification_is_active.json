@@ -1,0 +1,18 @@
+{
+  "title": {
+    "en": "Dehumidification is active"
+  },
+  "titleFormatted": {
+    "en": "Dehumidification is active"
+  },
+  "hint": {
+    "en": "Checks whether dehumidification is active."
+  },
+  "args": [
+    {
+      "type": "device",
+      "name": "device",
+      "filter": "driver_id=nordic"
+    }
+  ]
+}

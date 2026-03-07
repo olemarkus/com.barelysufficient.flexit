@@ -210,6 +210,36 @@ describe('UnitRegistry', () => {
     expect(events[1].device).to.equal(mockDevice);
   });
 
+  it('emits dehumidification state change callback on transitions', () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    const events: Array<{ active: boolean; device: any }> = [];
+    registry.setDehumidificationStateChangedHandler((event: any) => {
+      events.push({ active: event.active, device: event.device });
+    });
+
+    const unit = (registry as any).units.get('test_unit');
+    (registry as any).distributeData(unit, {
+      dehumidification_fan_control: 100,
+      dehumidification_request_by_slope: 1,
+    });
+    (registry as any).distributeData(unit, {
+      dehumidification_fan_control: 0,
+      dehumidification_request_by_slope: 0,
+    });
+    (registry as any).distributeData(unit, {
+      dehumidification_fan_control: 100,
+      dehumidification_request_by_slope: 0,
+    });
+
+    expect(events).to.have.length(2);
+    expect(events[0].active).to.equal(false);
+    expect(events[1].active).to.equal(true);
+    expect(events[0].device).to.equal(mockDevice);
+    expect(events[1].device).to.equal(mockDevice);
+  });
+
   it('blocks further heating coil writes after unsupported object error (Code:31)', async () => {
     const mockDevice = makeMockDevice();
     registry.register('test_unit', mockDevice);
@@ -886,6 +916,130 @@ describe('UnitRegistry', () => {
     expect(filterLifeCalls.length).to.be.greaterThan(0);
     const lastCall = filterLifeCalls[filterLifeCalls.length - 1];
     expect(lastCall.args[1]).to.equal(77.2);
+  });
+
+  it('publishes dehumidification capability from fan-control state', () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    const unit = { unitId: 'test_unit', devices: new Set([mockDevice]) };
+    (registry as any).distributeData(unit, {
+      dehumidification_fan_control: 100,
+      dehumidification_request_by_slope: 0,
+    });
+
+    expect(mockDevice.setCapabilityValue.calledWith('dehumidification_active', true)).to.equal(true);
+
+    mockDevice.setCapabilityValue.resetHistory();
+    (registry as any).distributeData(unit, {
+      dehumidification_fan_control: 0,
+      dehumidification_request_by_slope: 0,
+    });
+
+    expect(mockDevice.setCapabilityValue.calledWith('dehumidification_active', false)).to.equal(true);
+  });
+
+  it('falls back to slope request when dehumidification fan control is unavailable', () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    const unit = { unitId: 'test_unit', devices: new Set([mockDevice]) };
+    (registry as any).distributeData(unit, {
+      dehumidification_request_by_slope: 1,
+    });
+
+    expect(mockDevice.setCapabilityValue.calledWith('dehumidification_active', true)).to.equal(true);
+  });
+
+  it('does not publish dehumidification capability when no dehumidification signals are available', () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    const unit = { unitId: 'test_unit', devices: new Set([mockDevice]) };
+    (registry as any).distributeData(unit, {
+      measure_humidity: 34,
+    });
+
+    expect(mockDevice.setCapabilityValue.calledWith('dehumidification_active', sinon.match.any)).to.equal(false);
+  });
+
+  it('reads dehumidification state from BACnet before the first poll initializes it', async () => {
+    const mockDevice = makeMockDevice();
+    mockClient.readPropertyMultiple.resetBehavior();
+    mockClient.readPropertyMultiple.callsFake((_ip: string, request: any[], cb: any) => {
+      const requestedObjects = request
+        .map((entry) => `${entry?.objectId?.type}:${entry?.objectId?.instance}`)
+        .sort()
+        .join(',');
+      if (requestedObjects === '2:1870') {
+        cb(null, { values: [makeReadObject(BACNET_ENUMS.ObjectType.ANALOG_VALUE, 1870, 100)] });
+        return;
+      }
+      if (requestedObjects === '5:653') {
+        cb(null, { values: [makeReadObject(BACNET_ENUMS.ObjectType.BINARY_VALUE, 653, 1)] });
+        return;
+      }
+      cb(null, { values: [] });
+    });
+
+    registry.register('test_unit', mockDevice);
+
+    const unit = (registry as any).units.get('test_unit');
+    unit.dehumidificationActive = undefined;
+    unit.dehumidificationStateInitialized = false;
+    unit.probeValues.delete('2:1870');
+    unit.probeValues.delete('5:653');
+
+    const active = await registry.getDehumidificationActive('test_unit');
+
+    expect(active).to.equal(true);
+    expect(unit.dehumidificationActive).to.equal(true);
+    expect(unit.dehumidificationStateInitialized).to.equal(true);
+  });
+
+  it('returns cached dehumidification state when initialized', async () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    const unit = (registry as any).units.get('test_unit');
+    unit.dehumidificationActive = true;
+    unit.dehumidificationStateInitialized = true;
+
+    mockClient.readPropertyMultiple.resetHistory();
+    const active = await registry.getDehumidificationActive('test_unit');
+
+    expect(active).to.equal(true);
+    expect(mockClient.readPropertyMultiple.called).to.equal(false);
+  });
+
+  it('derives dehumidification state from cached probe values when needed', async () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    const unit = (registry as any).units.get('test_unit');
+    unit.probeValues.set('2:1870', 100);
+    unit.probeValues.set('5:653', 0);
+
+    const active = await registry.getDehumidificationActive('test_unit');
+
+    expect(active).to.equal(true);
+    expect(unit.dehumidificationActive).to.equal(true);
+    expect(unit.dehumidificationStateInitialized).to.equal(true);
+  });
+
+  it('throws when dehumidification state is unavailable', async () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    let thrown: Error | null = null;
+    try {
+      await registry.getDehumidificationActive('test_unit');
+    } catch (error) {
+      thrown = error as Error;
+    }
+
+    expect(thrown).to.not.equal(null);
+    expect(thrown?.message).to.equal('Dehumidification state unavailable');
   });
 
   it('marks device unavailable after consecutive poll failures', () => {

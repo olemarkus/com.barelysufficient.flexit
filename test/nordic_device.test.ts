@@ -3,6 +3,7 @@ import sinon from 'sinon';
 import proxyquire from 'proxyquire';
 
 const EXHAUST_TEMP_CAPABILITY = 'measure_temperature.exhaust';
+const DEHUMIDIFICATION_ACTIVE_CAPABILITY = 'dehumidification_active';
 const RESET_FILTER_CAPABILITY = 'button.reset_filter';
 const proxyquireStrict = proxyquire.noCallThru().noPreserveCache();
 
@@ -102,6 +103,7 @@ describe('Nordic device', () => {
   it('adds exhaust capability during onInit when missing', async () => {
     const device = new DeviceClass();
     device.hasCapability.withArgs(EXHAUST_TEMP_CAPABILITY).returns(false);
+    device.hasCapability.withArgs(DEHUMIDIFICATION_ACTIVE_CAPABILITY).returns(true);
     device.hasCapability.withArgs(RESET_FILTER_CAPABILITY).returns(true);
 
     await device.onInit();
@@ -113,6 +115,7 @@ describe('Nordic device', () => {
   it('does not add exhaust capability during onInit when already present', async () => {
     const device = new DeviceClass();
     device.hasCapability.withArgs(EXHAUST_TEMP_CAPABILITY).returns(true);
+    device.hasCapability.withArgs(DEHUMIDIFICATION_ACTIVE_CAPABILITY).returns(true);
     device.hasCapability.withArgs(RESET_FILTER_CAPABILITY).returns(true);
 
     await device.onInit();
@@ -121,10 +124,23 @@ describe('Nordic device', () => {
     expect(registryStub.register.calledOnceWithExactly('test_unit', device)).to.equal(true);
   });
 
+  it('adds dehumidification capability during onInit when missing', async () => {
+    const device = new DeviceClass();
+    device.hasCapability.withArgs(EXHAUST_TEMP_CAPABILITY).returns(true);
+    device.hasCapability.withArgs(DEHUMIDIFICATION_ACTIVE_CAPABILITY).returns(false);
+    device.hasCapability.withArgs(RESET_FILTER_CAPABILITY).returns(true);
+
+    await device.onInit();
+
+    expect(device.addCapability.calledOnceWithExactly(DEHUMIDIFICATION_ACTIVE_CAPABILITY)).to.equal(true);
+    expect(registryStub.register.calledOnceWithExactly('test_unit', device)).to.equal(true);
+  });
+
   it('logs capability migration errors and continues initialization', async () => {
     const device = new DeviceClass();
     const err = new Error('add failed');
     device.hasCapability.withArgs(EXHAUST_TEMP_CAPABILITY).returns(false);
+    device.hasCapability.withArgs(DEHUMIDIFICATION_ACTIVE_CAPABILITY).returns(true);
     device.hasCapability.withArgs(RESET_FILTER_CAPABILITY).returns(true);
     device.addCapability.rejects(err);
 
@@ -139,6 +155,7 @@ describe('Nordic device', () => {
   it('registers capability listeners and forwards updates to registry', async () => {
     const device = new DeviceClass();
     device.hasCapability.withArgs(EXHAUST_TEMP_CAPABILITY).returns(true);
+    device.hasCapability.withArgs(DEHUMIDIFICATION_ACTIVE_CAPABILITY).returns(true);
     device.hasCapability.withArgs(RESET_FILTER_CAPABILITY).returns(true);
 
     await device.onInit();
@@ -165,6 +182,7 @@ describe('Nordic device', () => {
     const device = new DeviceClass();
     const failure = new Error('registry write failed');
     device.hasCapability.withArgs(EXHAUST_TEMP_CAPABILITY).returns(true);
+    device.hasCapability.withArgs(DEHUMIDIFICATION_ACTIVE_CAPABILITY).returns(true);
     device.hasCapability.withArgs(RESET_FILTER_CAPABILITY).returns(true);
     registryStub.writeSetpoint.rejects(failure);
 
@@ -190,6 +208,7 @@ describe('Nordic device', () => {
     const clock = sinon.useFakeTimers();
     const device = new DeviceClass();
     device.hasCapability.withArgs(EXHAUST_TEMP_CAPABILITY).returns(true);
+    device.hasCapability.withArgs(DEHUMIDIFICATION_ACTIVE_CAPABILITY).returns(true);
     device.hasCapability.withArgs(RESET_FILTER_CAPABILITY).returns(true);
 
     let resolveWrite: (() => void) | undefined;
@@ -230,6 +249,7 @@ describe('Nordic device', () => {
   it('logs slow completion based on elapsed time even when timer callback is delayed', async () => {
     const device = new DeviceClass();
     device.hasCapability.withArgs(EXHAUST_TEMP_CAPABILITY).returns(true);
+    device.hasCapability.withArgs(DEHUMIDIFICATION_ACTIVE_CAPABILITY).returns(true);
     device.hasCapability.withArgs(RESET_FILTER_CAPABILITY).returns(true);
 
     const setTimeoutStub = sinon.stub(global, 'setTimeout').callsFake((_fn: any) => 1 as any);

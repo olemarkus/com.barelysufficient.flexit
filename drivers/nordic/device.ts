@@ -24,6 +24,7 @@ import {
 } from '../../lib/UnitRegistry';
 
 const EXHAUST_TEMP_CAPABILITY = 'measure_temperature.exhaust';
+const DEHUMIDIFICATION_ACTIVE_CAPABILITY = 'dehumidification_active';
 const RESET_FILTER_CAPABILITY = 'button.reset_filter';
 const SUPPLY_SETPOINT_CAPABILITY = 'measure_fan_setpoint_percent';
 const EXTRACT_SETPOINT_CAPABILITY = 'measure_fan_setpoint_percent.extract';
@@ -33,6 +34,7 @@ const CAPABILITY_OPERATION_WARNING_MS = 5_000;
 const SETTING_SYNC_TOLERANCE = 0.1;
 const REQUIRED_CAPABILITIES = [
   EXHAUST_TEMP_CAPABILITY,
+  DEHUMIDIFICATION_ACTIVE_CAPABILITY,
   RESET_FILTER_CAPABILITY,
   SUPPLY_SETPOINT_CAPABILITY,
   EXTRACT_SETPOINT_CAPABILITY,
