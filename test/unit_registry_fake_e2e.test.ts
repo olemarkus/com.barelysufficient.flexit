@@ -20,6 +20,7 @@ const {
   DEFAULT_FIRMWARE,
   DEFAULT_MODEL_NAME,
   OBJECT_TYPE,
+  OPERATION_MODE_VALUES,
   PROPERTY_ID,
   DEFAULT_VENDOR_ID,
   DEFAULT_VENDOR_NAME,
@@ -559,7 +560,7 @@ describe('UnitRegistry fake-unit e2e', function unitRegistryFakeUdpE2e() {
       return fireplaceActive.ok
         && operationMode.ok
         && fireplaceActive.value.value === 1
-        && operationMode.value.value === 6;
+        && operationMode.value.value === OPERATION_MODE_VALUES.FIREPLACE;
     });
 
     (registry as any).pollUnit('test_unit');
@@ -592,6 +593,6 @@ describe('UnitRegistry fake-unit e2e', function unitRegistryFakeUdpE2e() {
     }
     expect(continuedRemaining.value.value).to.be.lessThan(activeRemaining.value.value - 0.5);
     expect(fireplaceActive.value.value).to.equal(1);
-    expect(operationMode.value.value).to.equal(6);
+    expect(operationMode.value.value).to.equal(OPERATION_MODE_VALUES.FIREPLACE);
   });
 });
