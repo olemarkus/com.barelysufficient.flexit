@@ -401,6 +401,75 @@ describe('fake-unit state', () => {
     expect(state.summary().timers.fireplaceMinutes).to.be.greaterThan(0);
   });
 
+  it('toggles fireplace ventilation off when re-triggered while already active', () => {
+    const state = createState();
+    const fireplaceRuntime = pointByName('runtime_fireplace');
+    const fireplaceTrigger = pointByName('trigger_fireplace');
+
+    expect(
+      state.writePresentValue(
+        fireplaceRuntime.type,
+        fireplaceRuntime.instance,
+        PROPERTY_ID.PRESENT_VALUE,
+        18,
+        13,
+      ).ok,
+    ).to.equal(true);
+    expect(
+      state.writePresentValue(
+        fireplaceTrigger.type,
+        fireplaceTrigger.instance,
+        PROPERTY_ID.PRESENT_VALUE,
+        2,
+        13,
+      ).ok,
+    ).to.equal(true);
+
+    const activeSummary = state.summary();
+    expect(activeSummary.mode).to.equal('fireplace');
+    expect(activeSummary.timers.fireplaceMinutes).to.be.closeTo(18, 0.1);
+
+    state.advanceSimulatedSeconds(60);
+    const activeRemaining = state.summary().timers.fireplaceMinutes;
+    expect(activeRemaining).to.be.lessThan(17.5);
+
+    expect(
+      state.writePresentValue(
+        fireplaceTrigger.type,
+        fireplaceTrigger.instance,
+        PROPERTY_ID.PRESENT_VALUE,
+        2,
+        13,
+      ).ok,
+    ).to.equal(true);
+
+    const inactiveSummary = state.summary();
+    expect(inactiveSummary.mode).to.equal('home');
+    expect(inactiveSummary.timers.fireplaceMinutes).to.be.closeTo(18, 0.1);
+
+    const fireplaceActive = state.readPresentValue(OBJECT_TYPE.BINARY_VALUE, 400, PROPERTY_ID.PRESENT_VALUE);
+    const operationMode = state.readPresentValue(OBJECT_TYPE.MULTI_STATE_VALUE, 361, PROPERTY_ID.PRESENT_VALUE);
+    if (!fireplaceActive.ok || !operationMode.ok) {
+      throw new Error('Expected fireplace active and operation mode points to be readable');
+    }
+    expect(fireplaceActive.value.value).to.equal(0);
+    expect(operationMode.value.value).to.equal(3);
+
+    state.advanceSimulatedSeconds(60);
+    expect(state.summary().timers.fireplaceMinutes).to.be.closeTo(inactiveSummary.timers.fireplaceMinutes, 0.05);
+
+    expect(
+      state.writePresentValue(
+        fireplaceTrigger.type,
+        fireplaceTrigger.instance,
+        PROPERTY_ID.PRESENT_VALUE,
+        2,
+        13,
+      ).ok,
+    ).to.equal(true);
+    expect(state.summary().mode).to.equal('fireplace');
+  });
+
   it('handles zero filter limit and alternate fan target modes', () => {
     const state = createState();
     (state as any).setByName('filter_exchange_limit', 0);

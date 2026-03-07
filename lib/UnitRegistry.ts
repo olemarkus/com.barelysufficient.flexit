@@ -1911,6 +1911,8 @@ export class UnitRegistry {
       const tempVentActive = (unit.probeValues.get(TEMP_VENT_REMAINING_KEY) ?? 0) > 0;
       const temporaryRapidActive = rapidActive || tempVentActive;
       const fireplaceActive = (unit.probeValues.get(FIREPLACE_ACTIVE_KEY) ?? 0) === 1;
+      const fireplaceModeReported = Math.round(unit.probeValues.get(OPERATION_MODE_KEY) ?? NaN)
+        === OPERATION_MODE_VALUES.FIREPLACE;
       const fireplaceRuntime = clamp(
         Math.round(unit.probeValues.get(FIREPLACE_RUNTIME_KEY) ?? DEFAULT_FIREPLACE_VENTILATION_MINUTES),
         1,
@@ -1921,7 +1923,7 @@ export class UnitRegistry {
         unit.deferredMode = undefined;
         unit.deferredSince = undefined;
       }
-      if (mode === 'fireplace' && temporaryRapidActive) {
+      if (mode === 'fireplace' && temporaryRapidActive && !(fireplaceActive || fireplaceModeReported)) {
         this.warn(
           '[UnitRegistry] Fireplace requested while temporary ventilation is active'
           + ` (rapid=${rapidActive} temp=${tempVentActive}); proceeding anyway.`,
@@ -1947,7 +1949,7 @@ export class UnitRegistry {
           await this.applyHighMode(context);
           return;
         case 'fireplace':
-          await this.applyFireplaceMode(context, fireplaceRuntime);
+          await this.applyFireplaceMode(context, fireplaceRuntime, fireplaceActive || fireplaceModeReported);
           return;
         default:
           this.warn(`[UnitRegistry] Unsupported fan mode '${mode}' for ${unit.unitId}`);
@@ -2183,7 +2185,15 @@ export class UnitRegistry {
       }
     }
 
-    private async applyFireplaceMode(context: FanModeWriteContext, fireplaceRuntime: number) {
+    private async applyFireplaceMode(
+      context: FanModeWriteContext,
+      fireplaceRuntime: number,
+      fireplaceAlreadyActive: boolean,
+    ) {
+      if (fireplaceAlreadyActive) {
+        this.log(`[UnitRegistry] Fireplace already active for ${context.unit.unitId}, skipping trigger.`);
+        return;
+      }
       const comfortState = context.unit.probeValues.get(context.comfortButtonKey);
       if (comfortState !== 1) {
         await this.writeComfort(context, 1);

@@ -127,6 +127,8 @@ export class FakeNordicUnitState {
 
   private fireplaceRemainingMinutes = 0;
 
+  private fireplaceVentilationActive = false;
+
   private awayDelayRemainingMinutes = 0;
 
   private mode: FanMode = 'home';
@@ -147,6 +149,8 @@ export class FakeNordicUnitState {
 
     this.rapidRemainingMinutes = this.getByName('remaining_rapid');
     this.fireplaceRemainingMinutes = this.getByName('remaining_fireplace');
+    this.fireplaceVentilationActive = asInteger(this.getByName('fireplace_active')) === 1
+      || this.fireplaceRemainingMinutes > 0;
     this.mode = this.computeMode();
     this.recomputeDerivedValues(0);
   }
@@ -172,7 +176,13 @@ export class FakeNordicUnitState {
     if (elapsedSimSeconds > 0) {
       const elapsedMinutes = elapsedSimSeconds / SECONDS_PER_MINUTE;
       this.rapidRemainingMinutes = Math.max(0, this.rapidRemainingMinutes - elapsedMinutes);
-      this.fireplaceRemainingMinutes = Math.max(0, this.fireplaceRemainingMinutes - elapsedMinutes);
+      if (this.fireplaceVentilationActive) {
+        this.fireplaceRemainingMinutes = Math.max(0, this.fireplaceRemainingMinutes - elapsedMinutes);
+        if (this.fireplaceRemainingMinutes <= 0) {
+          this.fireplaceRemainingMinutes = 0;
+          this.fireplaceVentilationActive = false;
+        }
+      }
 
       const comfortButton = asInteger(this.getByName('comfort_button'));
       if (comfortButton === 0 && this.awayDelayRemainingMinutes > 0) {
@@ -465,8 +475,7 @@ export class FakeNordicUnitState {
       const runtimeResult = this.setSimulatedPoint('runtime_fireplace', minutes, { round: 0 });
       if (!runtimeResult.ok) return runtimeResult;
     }
-    this.fireplaceRemainingMinutes = clamp(this.getByName('runtime_fireplace'), 1, 360);
-    this.setByName('trigger_fireplace', 1);
+    this.toggleFireplaceVentilation();
     this.tick();
     return { ok: true, value: null };
   }
@@ -491,7 +500,7 @@ export class FakeNordicUnitState {
     const cookerHoodActive = asInteger(this.getByName('cooker_hood')) === 1;
 
     this.setByName('rapid_active', this.rapidRemainingMinutes > 0 ? 1 : 0);
-    this.setByName('fireplace_active', this.fireplaceRemainingMinutes > 0 ? 1 : 0);
+    this.setByName('fireplace_active', this.fireplaceVentilationActive ? 1 : 0);
     this.setByName('remaining_temp_vent', this.rapidRemainingMinutes);
     this.setByName(
       'away_delay_active',
@@ -500,7 +509,7 @@ export class FakeNordicUnitState {
     this.setByName('mode_rf_input', MODE_RF_VALUES[this.mode]);
 
     let operationMode: number = OPERATION_MODE_VALUES.AWAY;
-    if (this.fireplaceRemainingMinutes > 0) operationMode = OPERATION_MODE_VALUES.FIREPLACE;
+    if (this.fireplaceVentilationActive) operationMode = OPERATION_MODE_VALUES.FIREPLACE;
     else if (this.rapidRemainingMinutes > 0) operationMode = OPERATION_MODE_VALUES.TEMPORARY_HIGH;
     else if (cookerHoodActive) operationMode = OPERATION_MODE_VALUES.COOKER_HOOD;
     else if (this.mode === 'home') operationMode = OPERATION_MODE_VALUES.HOME;
@@ -571,7 +580,7 @@ export class FakeNordicUnitState {
     const comfortButton = asInteger(this.getByName('comfort_button'));
     const ventMode = asInteger(this.getByName('ventilation_mode'));
 
-    if (this.fireplaceRemainingMinutes > 0) return 'fireplace';
+    if (this.fireplaceVentilationActive) return 'fireplace';
     if (this.rapidRemainingMinutes > 0) return 'high';
     if (comfortButton === 0 && this.awayDelayRemainingMinutes <= 0) return 'away';
 
@@ -581,7 +590,7 @@ export class FakeNordicUnitState {
   }
 
   private targetFanPercent(mode: FanMode, cookerHoodActive: boolean): { supply: number; extract: number } {
-    if (this.fireplaceRemainingMinutes > 0 || mode === 'fireplace') {
+    if (this.fireplaceVentilationActive || mode === 'fireplace') {
       return {
         supply: this.getByName('fan_profile_supply_fireplace'),
         extract: this.getByName('fan_profile_extract_fireplace'),
@@ -630,8 +639,7 @@ export class FakeNordicUnitState {
     }
 
     if (point.name === 'trigger_fireplace' && asInteger(value) === 2) {
-      this.fireplaceRemainingMinutes = clamp(this.getByName('runtime_fireplace'), 1, 360);
-      this.setByName('trigger_fireplace', 1);
+      this.toggleFireplaceVentilation();
       return;
     }
 
@@ -652,6 +660,12 @@ export class FakeNordicUnitState {
     if (point.name === 'runtime_fireplace') {
       this.setByName('runtime_fireplace', clamp(asInteger(value), point.min, point.max));
     }
+  }
+
+  private toggleFireplaceVentilation() {
+    this.fireplaceRemainingMinutes = clamp(this.getByName('runtime_fireplace'), 1, 360);
+    this.fireplaceVentilationActive = !this.fireplaceVentilationActive;
+    this.setByName('trigger_fireplace', 1);
   }
 
   private setValue(point: SupportedPoint, value: number) {
