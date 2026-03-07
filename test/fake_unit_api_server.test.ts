@@ -294,6 +294,32 @@ describe('fake-unit api server', () => {
     }
   });
 
+  it('keeps fireplace active when the start endpoint is called repeatedly', async () => {
+    const state = createState();
+    const port = await getFreePort();
+    const server = new FakeApiServer(state, { host: '127.0.0.1', port });
+    await server.start();
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    try {
+      const firstStart = await request(baseUrl, 'POST', '/feature/fireplace/start', { minutes: 18 });
+      expect(firstStart.response.status).to.equal(200);
+      expect(firstStart.json.state.mode).to.equal('fireplace');
+      expect(firstStart.json.state.timers.fireplaceMinutes).to.be.closeTo(18, 0.1);
+
+      state.advanceSimulatedSeconds(60);
+      const activeRemaining = state.summary().timers.fireplaceMinutes;
+      expect(activeRemaining).to.be.lessThan(17.5);
+
+      const secondStart = await request(baseUrl, 'POST', '/feature/fireplace/start', { minutes: 12 });
+      expect(secondStart.response.status).to.equal(200);
+      expect(secondStart.json.state.mode).to.equal('fireplace');
+      expect(secondStart.json.state.timers.fireplaceMinutes).to.be.closeTo(12, 0.1);
+    } finally {
+      server.stop();
+    }
+  });
+
   it('returns 409 for action routes when state operations fail and start/stop stay idempotent', async () => {
     const failure = {
       ok: false,

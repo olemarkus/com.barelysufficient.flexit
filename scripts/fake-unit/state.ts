@@ -476,7 +476,7 @@ export class FakeNordicUnitState {
       const runtimeResult = this.setSimulatedPoint('runtime_fireplace', minutes, { round: 0 });
       if (!runtimeResult.ok) return runtimeResult;
     }
-    this.toggleFireplaceVentilation();
+    this.startFireplaceVentilation();
     this.tick();
     return { ok: true, value: null };
   }
@@ -664,9 +664,19 @@ export class FakeNordicUnitState {
   }
 
   private toggleFireplaceVentilation() {
-    this.fireplaceRemainingMinutes = clamp(this.getByName('runtime_fireplace'), 1, 360);
+    this.reloadFireplaceRuntime();
     this.fireplaceVentilationActive = !this.fireplaceVentilationActive;
     this.setByName('trigger_fireplace', 1);
+  }
+
+  private startFireplaceVentilation() {
+    this.reloadFireplaceRuntime();
+    this.fireplaceVentilationActive = true;
+    this.setByName('trigger_fireplace', 1);
+  }
+
+  private reloadFireplaceRuntime() {
+    this.fireplaceRemainingMinutes = clamp(this.getByName('runtime_fireplace'), 1, 360);
   }
 
   private setValue(point: SupportedPoint, value: number) {

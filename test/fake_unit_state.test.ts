@@ -455,7 +455,7 @@ describe('fake-unit state', () => {
       throw new Error('Expected fireplace active and operation mode points to be readable');
     }
     expect(fireplaceActive.value.value).to.equal(0);
-    expect(operationMode.value.value).to.equal(3);
+    expect(operationMode.value.value).to.equal(OPERATION_MODE_VALUES.HOME);
 
     state.advanceSimulatedSeconds(60);
     expect(state.summary().timers.fireplaceMinutes).to.be.closeTo(inactiveSummary.timers.fireplaceMinutes, 0.05);
@@ -470,6 +470,32 @@ describe('fake-unit state', () => {
       ).ok,
     ).to.equal(true);
     expect(state.summary().mode).to.equal('fireplace');
+  });
+
+  it('keeps fireplace ventilation active when startFireplace is called repeatedly', () => {
+    const state = createState();
+
+    expect(state.startFireplace(18).ok).to.equal(true);
+    expect(state.summary().mode).to.equal('fireplace');
+    expect(state.summary().timers.fireplaceMinutes).to.be.closeTo(18, 0.1);
+
+    state.advanceSimulatedSeconds(60);
+    const activeRemaining = state.summary().timers.fireplaceMinutes;
+    expect(activeRemaining).to.be.lessThan(17.5);
+
+    expect(state.startFireplace(12).ok).to.equal(true);
+
+    const summary = state.summary();
+    expect(summary.mode).to.equal('fireplace');
+    expect(summary.timers.fireplaceMinutes).to.be.closeTo(12, 0.1);
+
+    const fireplaceActive = state.readPresentValue(OBJECT_TYPE.BINARY_VALUE, 400, PROPERTY_ID.PRESENT_VALUE);
+    const operationMode = state.readPresentValue(OBJECT_TYPE.MULTI_STATE_VALUE, 361, PROPERTY_ID.PRESENT_VALUE);
+    if (!fireplaceActive.ok || !operationMode.ok) {
+      throw new Error('Expected fireplace active and operation mode points to be readable');
+    }
+    expect(fireplaceActive.value.value).to.equal(1);
+    expect(operationMode.value.value).to.equal(OPERATION_MODE_VALUES.FIREPLACE);
   });
 
   it('does not infer fireplace mode from stale remaining runtime on startup', () => {
