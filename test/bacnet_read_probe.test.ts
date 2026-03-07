@@ -61,6 +61,21 @@ describe('bacnet-read-probe', () => {
     expect(parsed.changesOnly).to.equal(true);
   });
 
+  it('parses print-baseline for watch mode', () => {
+    const parsed = probe.parseArgs([
+      '--ip',
+      '192.0.2.15',
+      '--query',
+      '264:2:4743',
+      '--watch',
+      '--changes-only',
+      '--print-baseline',
+    ]);
+    expect(parsed.watch).to.equal(true);
+    expect(parsed.changesOnly).to.equal(true);
+    expect(parsed.printBaseline).to.equal(true);
+  });
+
   it('enables watch when changes-only is set', () => {
     const parsed = probe.parseArgs([
       '--ip',
@@ -411,5 +426,36 @@ describe('bacnet-read-probe', () => {
     expect(probe.valuesEqual([1], { 0: 1 })).to.equal(false);
     expect(probe.valuesEqual({ a: 1 }, { a: 1, b: 2 })).to.equal(false);
     expect(probe.valuesEqual({ a: 1 }, { b: 1 })).to.equal(false);
+  });
+
+  it('creates a baseline payload that nests the initial poll values', () => {
+    const timestamp = '2026-03-07T12:00:00.000Z';
+    expect(probe.createWatchBaselinePayload(
+      {
+        mode: 'rp',
+        responses: [{
+          objectId: { type: Bacnet.enum.ObjectType.ANALOG_INPUT, instance: 5 },
+          property: { id: Bacnet.enum.PropertyIdentifier.PRESENT_VALUE, index: probe.ASN1_ARRAY_ALL },
+          values: [{ type: 'REAL', value: 1234 }],
+        }],
+      },
+      timestamp,
+      1,
+      1,
+    )).to.deep.equal({
+      mode: 'watch',
+      kind: 'baseline',
+      timestamp,
+      iteration: 1,
+      size: 1,
+      payload: {
+        mode: 'rp',
+        responses: [{
+          objectId: { type: Bacnet.enum.ObjectType.ANALOG_INPUT, instance: 5 },
+          property: { id: Bacnet.enum.PropertyIdentifier.PRESENT_VALUE, index: probe.ASN1_ARRAY_ALL },
+          values: [{ type: 'REAL', value: 1234 }],
+        }],
+      },
+    });
   });
 });

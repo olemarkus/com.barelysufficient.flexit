@@ -57,6 +57,7 @@ function printUsage() {
   console.log('  --watch                     Continuously poll until Ctrl+C');
   console.log('  --interval <ms>             Poll interval for watch mode (default 1000)');
   console.log('  --changes-only              In watch mode, print only changed values');
+  console.log('  --print-baseline            In watch + changes-only mode, print the initial values once');
   console.log('  --query <spec>              Query, repeatable');
   console.log('  --json                      Print normalized JSON response');
   console.log('  --help                      Show this help');
@@ -146,6 +147,7 @@ function parseArgs(argv) {
     watch: false,
     intervalMs: 1000,
     changesOnly: false,
+    printBaseline: false,
     querySpecs: [],
     json: false,
   };
@@ -171,6 +173,11 @@ function parseArgs(argv) {
 
     if (arg === '--changes-only') {
       options.changesOnly = true;
+      continue;
+    }
+
+    if (arg === '--print-baseline') {
+      options.printBaseline = true;
       continue;
     }
 
@@ -373,6 +380,23 @@ function diffSnapshots(previous, current) {
   return changes.sort((a, b) => a.key.localeCompare(b.key));
 }
 
+function createWatchBaselinePayload(result, timestamp, iteration, snapshotSize) {
+  return {
+    mode: 'watch',
+    kind: 'baseline',
+    timestamp,
+    iteration,
+    size: snapshotSize,
+    payload: result.mode === 'rp'
+      ? { mode: 'rp', responses: result.responses }
+      : {
+        mode: 'rpm',
+        request: result.request,
+        response: result.response,
+      },
+  };
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -554,6 +578,18 @@ async function main(argv = process.argv.slice(2)) {
     }
   };
 
+  const printWatchBaseline = (result, timestamp, iteration, snapshotSize) => {
+    console.log(`[Watch] ${timestamp} baseline poll=${iteration} values=${snapshotSize}`);
+    printPollResult(result);
+    if (options.json) {
+      console.log(JSON.stringify(
+        createWatchBaselinePayload(result, timestamp, iteration, snapshotSize),
+        null,
+        2,
+      ));
+    }
+  };
+
   const watchPolls = async () => {
     let iteration = 0;
     let previous = null;
@@ -591,8 +627,12 @@ async function main(argv = process.argv.slice(2)) {
           const snapshot = buildSnapshot(result);
           if (options.changesOnly) {
             if (previous === null) {
-              console.log(`[Watch] ${timestamp} baseline captured (${snapshot.size} values)`);
-              if (options.json) {
+              if (options.printBaseline) {
+                printWatchBaseline(result, timestamp, iteration, snapshot.size);
+              } else {
+                console.log(`[Watch] ${timestamp} baseline captured (${snapshot.size} values)`);
+              }
+              if (options.json && !options.printBaseline) {
                 console.log(JSON.stringify({
                   mode: 'watch',
                   kind: 'baseline',
@@ -645,7 +685,7 @@ async function main(argv = process.argv.slice(2)) {
     + ` local=${options.bindAddress || '0.0.0.0'}:${options.localPort}`
     + ` mode=${options.mode} timeoutMs=${options.timeoutMs}`
     + (options.watch
-      ? ` watch intervalMs=${options.intervalMs} changesOnly=${options.changesOnly}`
+      ? ` watch intervalMs=${options.intervalMs} changesOnly=${options.changesOnly} printBaseline=${options.printBaseline}`
       : ''),
   );
   options.queries.forEach((query) => {
@@ -699,6 +739,7 @@ module.exports = {
   buildSnapshotFromRpmResponse,
   valuesEqual,
   diffSnapshots,
+  createWatchBaselinePayload,
   sleep,
   renderBacnetValue,
   normalizeBacnetValue,
