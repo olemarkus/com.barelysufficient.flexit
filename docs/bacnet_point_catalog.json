@@ -27,6 +27,10 @@
     {
       "point": "2:1987",
       "note": "Flexit GO additional-heating menu reads this point as heating neutral-zone value for AWAY mode."
+    },
+    {
+      "point": "19:360",
+      "note": "Observed on a real Nordic unit: writing TRIGGER (2) to the fireplace trigger while fireplace ventilation is already active resets AV 2:2038 to the configured runtime and returns the unit to its base HOME/AWAY mode instead of leaving fireplace active."
     }
   ],
   "points": [

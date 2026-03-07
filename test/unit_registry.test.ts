@@ -739,6 +739,40 @@ describe('UnitRegistry', () => {
     expect(trigger[4].priority).to.equal(13);
   });
 
+  it('does not re-trigger fireplace mode when the unit already reports fireplace active', async () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    const unit = (registry as any).units.get('test_unit');
+    unit.probeValues.set('5:400', 1); // fireplace_active
+    unit.probeValues.set('19:361', 6); // operation_mode fireplace
+
+    await registry.setFanMode('test_unit', 'fireplace');
+
+    expect(mockClient.writeProperty.called).to.equal(false);
+  });
+
+  it('does not warn about temporary ventilation when fireplace is already active', async () => {
+    const mockDevice = makeMockDevice();
+    const logger = {
+      log: sinon.stub(),
+      warn: sinon.stub(),
+      error: sinon.stub(),
+    };
+    registry.setLogger(logger);
+    registry.register('test_unit', mockDevice);
+
+    const unit = (registry as any).units.get('test_unit');
+    unit.probeValues.set('5:400', 1); // fireplace_active
+    unit.probeValues.set('19:361', 6); // operation_mode fireplace
+    unit.probeValues.set('2:2005', 9); // remaining_temp_vent_op
+
+    await registry.setFanMode('test_unit', 'fireplace');
+
+    expect(logger.warn.calledWithMatch('[UnitRegistry] Fireplace requested while temporary ventilation is active'))
+      .to.equal(false);
+  });
+
   it('uses priority 13 for all writes when clearing active fireplace/rapid on away', async () => {
     const mockDevice = makeMockDevice();
     registry.register('test_unit', mockDevice);

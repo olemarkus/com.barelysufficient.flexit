@@ -546,4 +546,52 @@ describe('UnitRegistry fake-unit e2e', function unitRegistryFakeUdpE2e() {
     expect(runtimeWrite).to.not.equal(undefined);
     expect(device.getSetting('fireplace_duration_minutes')).to.equal(27);
   });
+
+  it('does not re-trigger fireplace when fireplace is already active', async () => {
+    const device = makeMockDevice(SERVER_BIND_ADDRESS, serverPort, 4380);
+    registry.register('test_unit', device);
+
+    await registry.setFireplaceVentilationDuration('test_unit', 10);
+    await registry.setFanMode('test_unit', 'fireplace');
+    await waitFor(() => {
+      const fireplaceActive = state.readPresentValue(OBJECT_TYPE.BINARY_VALUE, 400, PROPERTY_ID.PRESENT_VALUE);
+      const operationMode = state.readPresentValue(OBJECT_TYPE.MULTI_STATE_VALUE, 361, PROPERTY_ID.PRESENT_VALUE);
+      return fireplaceActive.ok
+        && operationMode.ok
+        && fireplaceActive.value.value === 1
+        && operationMode.value.value === 6;
+    });
+
+    (registry as any).pollUnit('test_unit');
+    await waitFor(() => device.setCapabilityValue.getCalls().some((call: any) => (
+      call.args[0] === 'fan_mode' && call.args[1] === 'fireplace'
+    )));
+
+    state.advanceSimulatedSeconds(60);
+    const activeRemaining = state.readPresentValue(OBJECT_TYPE.ANALOG_VALUE, 2038, PROPERTY_ID.PRESENT_VALUE);
+    if (!activeRemaining.ok) throw new Error('Expected remaining fireplace runtime to be readable');
+    expect(activeRemaining.value.value).to.be.lessThan(10);
+
+    writePresentValueSpy.resetHistory();
+    device.setCapabilityValue.resetHistory();
+
+    await registry.setFanMode('test_unit', 'fireplace');
+    expect(writePresentValueSpy.called).to.equal(false);
+
+    (registry as any).pollUnit('test_unit');
+    await waitFor(() => device.setCapabilityValue.getCalls().some((call: any) => (
+      call.args[0] === 'fan_mode' && call.args[1] === 'fireplace'
+    )));
+
+    state.advanceSimulatedSeconds(60);
+    const continuedRemaining = state.readPresentValue(OBJECT_TYPE.ANALOG_VALUE, 2038, PROPERTY_ID.PRESENT_VALUE);
+    const fireplaceActive = state.readPresentValue(OBJECT_TYPE.BINARY_VALUE, 400, PROPERTY_ID.PRESENT_VALUE);
+    const operationMode = state.readPresentValue(OBJECT_TYPE.MULTI_STATE_VALUE, 361, PROPERTY_ID.PRESENT_VALUE);
+    if (!continuedRemaining.ok || !fireplaceActive.ok || !operationMode.ok) {
+      throw new Error('Expected fireplace runtime and mode points to be readable');
+    }
+    expect(continuedRemaining.value.value).to.be.lessThan(activeRemaining.value.value - 0.5);
+    expect(fireplaceActive.value.value).to.equal(1);
+    expect(operationMode.value.value).to.equal(6);
+  });
 });
