@@ -149,8 +149,10 @@ export class FakeNordicUnitState {
 
     this.rapidRemainingMinutes = this.getByName('remaining_rapid');
     this.fireplaceRemainingMinutes = this.getByName('remaining_fireplace');
-    this.fireplaceVentilationActive = asInteger(this.getByName('fireplace_active')) === 1
-      || this.fireplaceRemainingMinutes > 0;
+    const fireplaceActive = asInteger(this.getByName('fireplace_active')) === 1;
+    const operationMode = asInteger(this.getByName('operation_mode'));
+    this.fireplaceVentilationActive = fireplaceActive
+      || operationMode === OPERATION_MODE_VALUES.FIREPLACE;
     this.mode = this.computeMode();
     this.recomputeDerivedValues(0);
   }
