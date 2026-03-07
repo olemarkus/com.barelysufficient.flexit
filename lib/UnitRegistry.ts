@@ -1913,6 +1913,7 @@ export class UnitRegistry {
       const fireplaceActive = (unit.probeValues.get(FIREPLACE_ACTIVE_KEY) ?? 0) === 1;
       const fireplaceModeReported = Math.round(unit.probeValues.get(OPERATION_MODE_KEY) ?? NaN)
         === OPERATION_MODE_VALUES.FIREPLACE;
+      const fireplaceAlreadyActive = fireplaceActive || fireplaceModeReported;
       const fireplaceRuntime = clamp(
         Math.round(unit.probeValues.get(FIREPLACE_RUNTIME_KEY) ?? DEFAULT_FIREPLACE_VENTILATION_MINUTES),
         1,
@@ -1928,6 +1929,10 @@ export class UnitRegistry {
           '[UnitRegistry] Fireplace requested while temporary ventilation is active'
           + ` (rapid=${rapidActive} temp=${tempVentActive}); proceeding anyway.`,
         );
+      }
+      if (mode === 'fireplace' && fireplaceAlreadyActive) {
+        this.log(`[UnitRegistry] Fireplace already active for ${unit.unitId}, skipping trigger.`);
+        return;
       }
 
       unit.expectedMode = mode;
@@ -1949,7 +1954,7 @@ export class UnitRegistry {
           await this.applyHighMode(context);
           return;
         case 'fireplace':
-          await this.applyFireplaceMode(context, fireplaceRuntime, fireplaceActive || fireplaceModeReported);
+          await this.applyFireplaceMode(context, fireplaceRuntime);
           return;
         default:
           this.warn(`[UnitRegistry] Unsupported fan mode '${mode}' for ${unit.unitId}`);
@@ -2185,15 +2190,7 @@ export class UnitRegistry {
       }
     }
 
-    private async applyFireplaceMode(
-      context: FanModeWriteContext,
-      fireplaceRuntime: number,
-      fireplaceAlreadyActive: boolean,
-    ) {
-      if (fireplaceAlreadyActive) {
-        this.log(`[UnitRegistry] Fireplace already active for ${context.unit.unitId}, skipping trigger.`);
-        return;
-      }
+    private async applyFireplaceMode(context: FanModeWriteContext, fireplaceRuntime: number) {
       const comfortState = context.unit.probeValues.get(context.comfortButtonKey);
       if (comfortState !== 1) {
         await this.writeComfort(context, 1);

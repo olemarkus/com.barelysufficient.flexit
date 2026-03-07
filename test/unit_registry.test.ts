@@ -746,10 +746,16 @@ describe('UnitRegistry', () => {
     const unit = (registry as any).units.get('test_unit');
     unit.probeValues.set('5:400', 1); // fireplace_active
     unit.probeValues.set('19:361', 6); // operation_mode fireplace
+    unit.expectedMode = 'away';
+    unit.expectedModeAt = 1234;
+    unit.lastMismatchKey = 'away->home';
 
     await registry.setFanMode('test_unit', 'fireplace');
 
     expect(mockClient.writeProperty.called).to.equal(false);
+    expect(unit.expectedMode).to.equal('away');
+    expect(unit.expectedModeAt).to.equal(1234);
+    expect(unit.lastMismatchKey).to.equal('away->home');
   });
 
   it('does not warn about temporary ventilation when fireplace is already active', async () => {

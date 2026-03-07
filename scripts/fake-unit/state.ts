@@ -178,8 +178,7 @@ export class FakeNordicUnitState {
       this.rapidRemainingMinutes = Math.max(0, this.rapidRemainingMinutes - elapsedMinutes);
       if (this.fireplaceVentilationActive) {
         this.fireplaceRemainingMinutes = Math.max(0, this.fireplaceRemainingMinutes - elapsedMinutes);
-        if (this.fireplaceRemainingMinutes <= 0) {
-          this.fireplaceRemainingMinutes = 0;
+        if (this.fireplaceRemainingMinutes === 0) {
           this.fireplaceVentilationActive = false;
         }
       }
