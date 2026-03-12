@@ -196,9 +196,74 @@ describe('Nordic device', () => {
       thrown = error as Error;
     }
 
-    expect(thrown).to.equal(failure);
+    expect(thrown).to.be.instanceOf(Error);
+    expect(thrown?.message).to.equal(
+      'Failed writing setpoint 21.5 for Test Nordic (unit test_unit): registry write failed',
+    );
     const failureLog = device.error.getCalls().find((call: any) => (
       String(call.args[0]).includes("Capability 'target_temperature' writing setpoint 21.5 failed after")
+    ));
+    expect(failureLog).to.not.equal(undefined);
+    expect(failureLog?.args[1]).to.equal(failure);
+  });
+
+  it('surfaces descriptive timeout messages for capability writes', async () => {
+    const device = new DeviceClass();
+    const failure = new Error('Timeout') as Error & { code?: string };
+    failure.code = 'ERR_TIMEOUT';
+    device.hasCapability.withArgs(EXHAUST_TEMP_CAPABILITY).returns(true);
+    device.hasCapability.withArgs(DEHUMIDIFICATION_ACTIVE_CAPABILITY).returns(true);
+    device.hasCapability.withArgs(RESET_FILTER_CAPABILITY).returns(true);
+    device.getSetting.withArgs('ip').returns('192.168.88.32');
+    registryStub.writeSetpoint.rejects(failure);
+
+    await device.onInit();
+
+    const targetListener = device.registerCapabilityListener.firstCall.args[1];
+    let thrown: Error | null = null;
+    try {
+      await targetListener(16);
+    } catch (error) {
+      thrown = error as Error;
+    }
+
+    expect(thrown).to.be.instanceOf(Error);
+    expect(thrown?.message).to.equal(
+      'Timed out writing setpoint 16 for Test Nordic (unit test_unit, ip 192.168.88.32);'
+      + ' the BACnet unit did not respond in time.',
+    );
+    const failureLog = device.error.getCalls().find((call: any) => (
+      String(call.args[0]).includes("Capability 'target_temperature' writing setpoint 16 failed after")
+    ));
+    expect(failureLog).to.not.equal(undefined);
+    expect(failureLog?.args[1]).to.equal(failure);
+  });
+
+  it('surfaces object-like thrown values with structured details', async () => {
+    const device = new DeviceClass();
+    const failure = { reason: 'device busy', retryable: true };
+    device.hasCapability.withArgs(EXHAUST_TEMP_CAPABILITY).returns(true);
+    device.hasCapability.withArgs(DEHUMIDIFICATION_ACTIVE_CAPABILITY).returns(true);
+    device.hasCapability.withArgs(RESET_FILTER_CAPABILITY).returns(true);
+    registryStub.writeSetpoint.rejects(failure);
+
+    await device.onInit();
+
+    const targetListener = device.registerCapabilityListener.firstCall.args[1];
+    let thrown: Error | null = null;
+    try {
+      await targetListener(19);
+    } catch (error) {
+      thrown = error as Error;
+    }
+
+    expect(thrown).to.be.instanceOf(Error);
+    expect(thrown?.message).to.equal(
+      'Failed writing setpoint 19 for Test Nordic (unit test_unit):'
+      + ' {"reason":"device busy","retryable":true}',
+    );
+    const failureLog = device.error.getCalls().find((call: any) => (
+      String(call.args[0]).includes("Capability 'target_temperature' writing setpoint 19 failed after")
     ));
     expect(failureLog).to.not.equal(undefined);
     expect(failureLog?.args[1]).to.equal(failure);

@@ -5,6 +5,7 @@ import proxyquire from 'proxyquire';
 const FILTER_CHANGE_INTERVAL_HOURS_PER_MONTH = 732;
 const MIN_FILTER_CHANGE_INTERVAL_HOURS = 3 * FILTER_CHANGE_INTERVAL_HOURS_PER_MONTH;
 const MAX_FILTER_CHANGE_INTERVAL_HOURS = 12 * FILTER_CHANGE_INTERVAL_HOURS_PER_MONTH;
+const TEST_WRITE_TIMEOUT_MS = 5000;
 
 function makeMockDevice() {
   const device: any = {
@@ -79,7 +80,9 @@ describe('UnitRegistry', () => {
     });
 
     UnitRegistryClass = mod.UnitRegistry;
-    registry = new UnitRegistryClass();
+    registry = new UnitRegistryClass({
+      writeTimeoutMs: TEST_WRITE_TIMEOUT_MS,
+    });
   });
 
   afterEach(() => {
@@ -302,6 +305,50 @@ describe('UnitRegistry', () => {
     expect(args[1]).to.deep.equal({ type: 2, instance: 1985 });
     expect(args[3][0].value).to.equal(17.5);
     expect(args[4].priority).to.equal(13);
+  });
+
+  it('recovers setpoint writes after a timed out queued write', async () => {
+    const clock = sinon.useFakeTimers();
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    let writeCount = 0;
+    mockClient.writeProperty.resetBehavior();
+    mockClient.writeProperty.callsFake(
+      (
+        _ip: string,
+        _objectId: { type: number; instance: number },
+        _propertyId: number,
+        _value: any,
+        _options: any,
+        cb: any,
+      ) => {
+        writeCount += 1;
+        if (writeCount === 1) return;
+        cb(null, {});
+      },
+    );
+
+    try {
+      const firstWrite = registry.writeSetpoint('test_unit', 21).then(
+        () => ({ ok: true as const }),
+        (error: Error) => ({ ok: false as const, error }),
+      );
+
+      await clock.tickAsync(TEST_WRITE_TIMEOUT_MS);
+
+      const firstResult = await firstWrite;
+      expect(firstResult.ok).to.equal(false);
+      if (firstResult.ok) throw new Error('Expected timed out write to fail');
+      expect(firstResult.error.message).to.equal('Timeout');
+
+      await registry.writeSetpoint('test_unit', 22);
+
+      expect(mockClient.writeProperty.callCount).to.equal(2);
+      expect(mockClient.writeProperty.secondCall.args[3][0].value).to.equal(22);
+    } finally {
+      clock.restore();
+    }
   });
 
   it('probes target temperature mode without fan-mode side effects', async () => {

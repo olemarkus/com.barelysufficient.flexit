@@ -29,6 +29,7 @@ const {
 const CLIENT_BIND_ADDRESS = '127.0.0.1';
 const SERVER_BIND_ADDRESS = '127.0.0.2';
 const SOCKET_LISTEN_TIMEOUT_MS = 2000;
+const SHORT_WRITE_TIMEOUT_MS = 300;
 const FILTER_CHANGE_INTERVAL_HOURS_PER_MONTH = 732;
 const DEFAULT_FAN_SETTINGS: Record<string, number> = {
   fan_profile_home_supply: 80,
@@ -452,6 +453,61 @@ describe('UnitRegistry fake-unit e2e', function unitRegistryFakeUdpE2e() {
 
     expect(writes.some((call: any) => call.args[3] === 0)).to.equal(true);
     expect(writes.some((call: any) => call.args[3] === 1)).to.equal(true);
+  });
+
+  it('recovers queued setpoint writes after a timed-out BACnet write', async () => {
+    registry.destroy();
+    registry = new UnitRegistry({
+      getBacnetClient: sinon.stub().returns(client),
+      discoverFlexitUnits: sinon.stub().resolves([]),
+      writeTimeoutMs: SHORT_WRITE_TIMEOUT_MS,
+    });
+
+    const device = makeMockDevice(SERVER_BIND_ADDRESS, serverPort, 4380);
+    registry.register('test_unit', device);
+
+    const originalHandleWriteProperty = (server as any).handleWriteProperty.bind(server);
+    let ignoredFirstWrite = false;
+    const handleWritePropertyStub = sinon.stub(server as any, 'handleWriteProperty').callsFake((request: any) => {
+      if (!ignoredFirstWrite) {
+        ignoredFirstWrite = true;
+        return undefined;
+      }
+      return originalHandleWriteProperty(request);
+    });
+
+    try {
+      const firstWrite = registry.writeSetpoint('test_unit', 16).then(
+        () => ({ ok: true as const }),
+        (error: Error) => ({ ok: false as const, error }),
+      );
+
+      const firstResult = await firstWrite;
+      expect(firstResult.ok).to.equal(false);
+      if (firstResult.ok) throw new Error('Expected timed out write to fail');
+      expect(String(firstResult.error.message)).to.match(/timeout/i);
+
+      await registry.writeSetpoint('test_unit', 18);
+      await waitFor(() => {
+        const setpoint = state.readPresentValue(
+          OBJECT_TYPE.ANALOG_VALUE,
+          1994,
+          PROPERTY_ID.PRESENT_VALUE,
+        );
+        return setpoint.ok && Math.abs(setpoint.value.value - 18) < 0.1;
+      });
+
+      const setpoint = state.readPresentValue(
+        OBJECT_TYPE.ANALOG_VALUE,
+        1994,
+        PROPERTY_ID.PRESENT_VALUE,
+      );
+      if (!setpoint.ok) throw new Error('Expected setpoint to be readable');
+      expect(setpoint.value.value).to.be.closeTo(18, 0.1);
+      expect(handleWritePropertyStub.callCount).to.equal(2);
+    } finally {
+      handleWritePropertyStub.restore();
+    }
   });
 
   it('reads and toggles heating coil state via BV:445', async () => {
