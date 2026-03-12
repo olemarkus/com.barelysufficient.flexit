@@ -149,6 +149,7 @@ const POLL_INTERVAL_MS = 10_000;
 const POLL_WATCHDOG_TIMEOUT_MS = 12_000;
 const REDISCOVERY_INTERVAL_MS = 60_000;
 const MAX_CONSECUTIVE_FAILURES = 3;
+const DEFAULT_WRITE_TIMEOUT_MS = 5_000;
 const EXTRACT_AIR_TEMPERATURE_PRIMARY_INSTANCE = 59;
 const EXTRACT_AIR_TEMPERATURE_ALT_INSTANCE = 95;
 
@@ -520,6 +521,7 @@ interface RegistryLogger {
 interface RegistryDependencies {
   getBacnetClient(port: number): any;
   discoverFlexitUnits: typeof discoverFlexitUnits;
+  writeTimeoutMs?: number;
 }
 
 interface FanSetpointChangedEvent {
@@ -874,6 +876,17 @@ export class UnitRegistry {
       return this.units.get(unit.unitId) === unit;
     }
 
+    private enqueueWrite<T>(unit: UnitState, operation: () => Promise<T>): Promise<T> {
+      const precedingWrite = unit.writeQueue.catch(() => undefined);
+      const result = precedingWrite.then(() => operation());
+      unit.writeQueue = result.then(() => undefined, () => undefined);
+      return result;
+    }
+
+    private getWriteTimeoutMs() {
+      return this.dependencies.writeTimeoutMs ?? DEFAULT_WRITE_TIMEOUT_MS;
+    }
+
     async writeSetpoint(unitId: string, setpoint: number) {
       const unit = this.units.get(unitId);
       if (!unit) throw new Error('Unit not found');
@@ -907,7 +920,7 @@ export class UnitRegistry {
         + ` ${unit.unitId} (${unit.ip})`,
       );
 
-      unit.writeQueue = unit.writeQueue.then(async () => new Promise<void>((resolve, reject) => {
+      return this.enqueueWrite(unit, async () => new Promise<void>((resolve, reject) => {
         let handled = false;
         const tm = setTimeout(() => {
           if (!handled) {
@@ -915,7 +928,7 @@ export class UnitRegistry {
             this.error(`[UnitRegistry] Timeout writing ${mode} setpoint to ${unit.unitId}`);
             reject(new Error('Timeout'));
           }
-        }, 5000);
+        }, this.getWriteTimeoutMs());
 
         try {
           client.writeProperty(
@@ -950,8 +963,6 @@ export class UnitRegistry {
           }
         }
       }));
-
-      return unit.writeQueue;
     }
 
     private resolveTargetTemperatureModeFromProbe(unit: UnitState): TargetTemperatureMode {
@@ -977,7 +988,7 @@ export class UnitRegistry {
 
       this.log(`[UnitRegistry] Resetting filter timer for ${unitId}`);
 
-      unit.writeQueue = unit.writeQueue.then(async () => {
+      return this.enqueueWrite(unit, async () => {
         const context: FanModeWriteContext = {
           unit,
           mode: 'filter_reset',
@@ -1002,8 +1013,6 @@ export class UnitRegistry {
 
         throw new Error('Failed to reset filter timer via AV:285');
       });
-
-      return unit.writeQueue;
     }
 
     async setFilterChangeInterval(unitId: string, requestedHours: number) {
@@ -1019,7 +1028,7 @@ export class UnitRegistry {
 
       this.log(`[UnitRegistry] Setting filter change interval to ${intervalHours}h for ${unitId}`);
 
-      unit.writeQueue = unit.writeQueue.then(async () => {
+      return this.enqueueWrite(unit, async () => {
         const context: FanModeWriteContext = {
           unit,
           mode: 'filter_interval',
@@ -1056,8 +1065,6 @@ export class UnitRegistry {
 
         this.pollUnit(unitId);
       });
-
-      return unit.writeQueue;
     }
 
     async setFireplaceVentilationDuration(unitId: string, requestedMinutes: number) {
@@ -1073,7 +1080,7 @@ export class UnitRegistry {
 
       this.log(`[UnitRegistry] Setting fireplace duration to ${durationMinutes} minutes for ${unitId}`);
 
-      unit.writeQueue = unit.writeQueue.then(async () => {
+      return this.enqueueWrite(unit, async () => {
         const context: FanModeWriteContext = {
           unit,
           mode: 'fireplace_duration',
@@ -1109,8 +1116,6 @@ export class UnitRegistry {
 
         this.pollUnit(unitId);
       });
-
-      return unit.writeQueue;
     }
 
     async setFanProfileMode(
@@ -1137,7 +1142,7 @@ export class UnitRegistry {
         + ` supply=${supplyPercent}% exhaust=${exhaustPercent}% for ${unitId}`,
       );
 
-      unit.writeQueue = unit.writeQueue.then(async () => {
+      return this.enqueueWrite(unit, async () => {
         const context: FanModeWriteContext = {
           unit,
           mode: `fan_profile:${mode}`,
@@ -1196,8 +1201,6 @@ export class UnitRegistry {
 
         this.pollUnit(unitId);
       });
-
-      return unit.writeQueue;
     }
 
     private pollUnit(unitId: string) {
@@ -1999,7 +2002,7 @@ export class UnitRegistry {
         priority: DEFAULT_WRITE_PRIORITY,
       };
 
-      unit.writeQueue = unit.writeQueue.then(async () => {
+      return this.enqueueWrite(unit, async () => {
         const context: FanModeWriteContext = {
           unit,
           mode: `heating_coil:${state}`,
@@ -2019,8 +2022,6 @@ export class UnitRegistry {
 
         this.pollUnit(unitId);
       });
-
-      return unit.writeQueue;
     }
 
     async setFanMode(unitId: string, mode: string) {
@@ -2034,8 +2035,7 @@ export class UnitRegistry {
         priority: DEFAULT_WRITE_PRIORITY,
       };
 
-      unit.writeQueue = unit.writeQueue.then(() => this.applyFanMode(unit, mode, writeOptions));
-      return unit.writeQueue;
+      return this.enqueueWrite(unit, () => this.applyFanMode(unit, mode, writeOptions));
     }
 
     private async applyFanMode(unit: UnitState, mode: string, writeOptions: WriteOptions) {
@@ -2220,7 +2220,7 @@ export class UnitRegistry {
             this.error(`[UnitRegistry] Timeout writing ${update.objectId.type}:${update.objectId.instance}`);
             resolve(false);
           }
-        }, 5000);
+        }, this.getWriteTimeoutMs());
 
         try {
           this.log(`[UnitRegistry] Writing ${update.objectId.type}:${update.objectId.instance} = ${update.value}`);
