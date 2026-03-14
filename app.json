@@ -62,7 +62,7 @@
           {
             "type": "device",
             "name": "device",
-            "filter": "driver_id=nordic"
+            "filter": "driver_id=nordic|nordic-cloud"
           }
         ],
         "id": "dehumidification_activated"
@@ -81,7 +81,7 @@
           {
             "type": "device",
             "name": "device",
-            "filter": "driver_id=nordic"
+            "filter": "driver_id=nordic|nordic-cloud"
           }
         ],
         "id": "dehumidification_deactivated"
@@ -100,7 +100,7 @@
           {
             "type": "device",
             "name": "device",
-            "filter": "driver_id=nordic"
+            "filter": "driver_id=nordic|nordic-cloud"
           }
         ],
         "tokens": [
@@ -128,7 +128,7 @@
           {
             "type": "device",
             "name": "device",
-            "filter": "driver_id=nordic"
+            "filter": "driver_id=nordic|nordic-cloud"
           }
         ],
         "id": "heating_coil_turned_off"
@@ -147,7 +147,7 @@
           {
             "type": "device",
             "name": "device",
-            "filter": "driver_id=nordic"
+            "filter": "driver_id=nordic|nordic-cloud"
           }
         ],
         "id": "heating_coil_turned_on"
@@ -166,7 +166,7 @@
           {
             "type": "device",
             "name": "device",
-            "filter": "driver_id=nordic"
+            "filter": "driver_id=nordic|nordic-cloud"
           }
         ],
         "tokens": [
@@ -196,7 +196,7 @@
           {
             "type": "device",
             "name": "device",
-            "filter": "driver_id=nordic"
+            "filter": "driver_id=nordic|nordic-cloud"
           }
         ],
         "id": "dehumidification_is_active"
@@ -215,7 +215,7 @@
           {
             "type": "device",
             "name": "device",
-            "filter": "driver_id=nordic"
+            "filter": "driver_id=nordic|nordic-cloud"
           }
         ],
         "id": "heating_coil_is_on"
@@ -236,7 +236,7 @@
           {
             "type": "device",
             "name": "device",
-            "filter": "driver_id=nordic"
+            "filter": "driver_id=nordic|nordic-cloud"
           },
           {
             "type": "dropdown",
@@ -314,7 +314,7 @@
           {
             "type": "device",
             "name": "device",
-            "filter": "driver_id=nordic"
+            "filter": "driver_id=nordic|nordic-cloud"
           },
           {
             "name": "minutes",
@@ -343,7 +343,7 @@
           {
             "type": "device",
             "name": "device",
-            "filter": "driver_id=nordic"
+            "filter": "driver_id=nordic|nordic-cloud"
           }
         ],
         "id": "toggle_heating_coil_onoff"
@@ -362,7 +362,7 @@
           {
             "type": "device",
             "name": "device",
-            "filter": "driver_id=nordic"
+            "filter": "driver_id=nordic|nordic-cloud"
           }
         ],
         "id": "turn_heating_coil_off"
@@ -381,7 +381,7 @@
           {
             "type": "device",
             "name": "device",
-            "filter": "driver_id=nordic"
+            "filter": "driver_id=nordic|nordic-cloud"
           }
         ],
         "id": "turn_heating_coil_on"
@@ -391,7 +391,7 @@
   "drivers": [
     {
       "name": {
-        "en": "Nordic"
+        "en": "Nordic Local"
       },
       "class": "airtreatment",
       "images": {
@@ -901,6 +901,510 @@
         }
       ],
       "id": "nordic"
+    },
+    {
+      "name": {
+        "en": "Nordic Cloud"
+      },
+      "class": "airtreatment",
+      "images": {
+        "small": "/drivers/nordic-cloud/assets/images/small.png",
+        "large": "/drivers/nordic-cloud/assets/images/large.png",
+        "xlarge": "/drivers/nordic-cloud/assets/images/xlarge.png"
+      },
+      "capabilities": [
+        "measure_temperature",
+        "measure_temperature.outdoor",
+        "measure_temperature.exhaust",
+        "measure_temperature.extract",
+        "target_temperature",
+        "measure_humidity",
+        "dehumidification_active",
+        "measure_power",
+        "fan_mode",
+        "measure_motor_rpm",
+        "measure_motor_rpm.extract",
+        "measure_fan_speed_percent",
+        "measure_fan_speed_percent.extract",
+        "measure_fan_setpoint_percent",
+        "measure_fan_setpoint_percent.extract",
+        "measure_hepa_filter",
+        "button.reset_filter"
+      ],
+      "capabilitiesOptions": {
+        "measure_humidity": {
+          "title": {
+            "en": "Extract air humidity"
+          }
+        },
+        "dehumidification_active": {
+          "title": {
+            "en": "Dehumidification active"
+          }
+        },
+        "measure_power": {
+          "title": {
+            "en": "Heating coil power usage"
+          }
+        },
+        "measure_temperature": {
+          "title": {
+            "en": "Supply air temperature"
+          }
+        },
+        "measure_temperature.outdoor": {
+          "title": {
+            "en": "Outdoor air temperature"
+          }
+        },
+        "measure_temperature.exhaust": {
+          "title": {
+            "en": "Exhaust air temperature"
+          }
+        },
+        "measure_temperature.extract": {
+          "title": {
+            "en": "Extract air temperature"
+          }
+        },
+        "target_temperature": {
+          "title": {
+            "en": "Supply air target temperature"
+          },
+          "min": 10,
+          "max": 30,
+          "step": 0.5
+        },
+        "measure_motor_rpm": {
+          "title": {
+            "en": "Supply Fan RPM"
+          }
+        },
+        "measure_motor_rpm.extract": {
+          "title": {
+            "en": "Extract Fan RPM"
+          }
+        },
+        "measure_fan_speed_percent": {
+          "title": {
+            "en": "Supply Fan Speed"
+          },
+          "units": {
+            "en": "%"
+          }
+        },
+        "measure_fan_speed_percent.extract": {
+          "title": {
+            "en": "Extract Fan Speed"
+          },
+          "units": {
+            "en": "%"
+          }
+        },
+        "measure_fan_setpoint_percent": {
+          "title": {
+            "en": "Supply fan setpoint"
+          },
+          "units": {
+            "en": "%"
+          }
+        },
+        "measure_fan_setpoint_percent.extract": {
+          "title": {
+            "en": "Extract fan setpoint"
+          },
+          "units": {
+            "en": "%"
+          }
+        },
+        "measure_hepa_filter": {
+          "title": {
+            "en": "Filter Life Remaining"
+          },
+          "units": {
+            "en": "%"
+          }
+        },
+        "button.reset_filter": {
+          "maintenanceAction": true,
+          "title": {
+            "en": "Reset filter timer"
+          },
+          "desc": {
+            "en": "Use only after replacing both filters."
+          }
+        },
+        "fan_mode": {
+          "values": [
+            {
+              "id": "home",
+              "title": {
+                "en": "Home"
+              }
+            },
+            {
+              "id": "away",
+              "title": {
+                "en": "Away"
+              }
+            },
+            {
+              "id": "high",
+              "title": {
+                "en": "High"
+              }
+            },
+            {
+              "id": "fireplace",
+              "title": {
+                "en": "Fireplace"
+              }
+            },
+            {
+              "id": "cooker",
+              "title": {
+                "en": "Cooker Hood"
+              }
+            }
+          ]
+        }
+      },
+      "platforms": [
+        "local"
+      ],
+      "pair": [
+        {
+          "id": "login_credentials",
+          "template": "login_credentials",
+          "options": {
+            "title": {
+              "en": "Flexit Cloud Login"
+            },
+            "usernameLabel": {
+              "en": "Email"
+            },
+            "usernamePlaceholder": {
+              "en": "name@example.com"
+            },
+            "passwordLabel": {
+              "en": "Password"
+            },
+            "passwordPlaceholder": {
+              "en": "Password"
+            }
+          }
+        },
+        {
+          "id": "list_devices",
+          "template": "list_devices",
+          "navigation": {
+            "next": "add_devices"
+          }
+        },
+        {
+          "id": "add_devices",
+          "template": "add_devices"
+        }
+      ],
+      "settings": [
+        {
+          "type": "group",
+          "label": {
+            "en": "Filter settings"
+          },
+          "children": [
+            {
+              "id": "filter_change_interval_months",
+              "type": "number",
+              "label": {
+                "en": "Filter change interval"
+              },
+              "hint": {
+                "en": "Filter replacement interval in months. This matches Flexit GO style."
+              },
+              "units": {
+                "en": "months"
+              },
+              "value": 6,
+              "min": 3,
+              "max": 12,
+              "step": 1
+            }
+          ]
+        },
+        {
+          "type": "group",
+          "label": {
+            "en": "Temperature setpoints"
+          },
+          "children": [
+            {
+              "id": "target_temperature_home",
+              "type": "number",
+              "label": {
+                "en": "Target temperature, home"
+              },
+              "hint": {
+                "en": "Used in Home, High, Fireplace, and Cooker operation."
+              },
+              "units": {
+                "en": "degC"
+              },
+              "value": 20,
+              "min": 10,
+              "max": 30,
+              "step": 0.5
+            },
+            {
+              "id": "target_temperature_away",
+              "type": "number",
+              "label": {
+                "en": "Target temperature, away"
+              },
+              "hint": {
+                "en": "Used in Away operation."
+              },
+              "units": {
+                "en": "degC"
+              },
+              "value": 18,
+              "min": 10,
+              "max": 30,
+              "step": 0.5
+            }
+          ]
+        },
+        {
+          "type": "group",
+          "label": {
+            "en": "Temporary ventilation"
+          },
+          "children": [
+            {
+              "id": "fireplace_duration_minutes",
+              "type": "number",
+              "label": {
+                "en": "Fireplace duration"
+              },
+              "hint": {
+                "en": "Duration used when Fireplace mode is activated."
+              },
+              "units": {
+                "en": "min"
+              },
+              "value": 10,
+              "min": 1,
+              "max": 360,
+              "step": 1
+            }
+          ]
+        },
+        {
+          "type": "group",
+          "label": {
+            "en": "Fan setpoints"
+          },
+          "children": [
+            {
+              "type": "group",
+              "label": {
+                "en": "Fan setpoint, home"
+              },
+              "children": [
+                {
+                  "id": "fan_profile_home_supply",
+                  "type": "number",
+                  "label": {
+                    "en": "Supply fan"
+                  },
+                  "units": {
+                    "en": "%"
+                  },
+                  "value": 80,
+                  "min": 56,
+                  "max": 100,
+                  "step": 1
+                },
+                {
+                  "id": "fan_profile_home_exhaust",
+                  "type": "number",
+                  "label": {
+                    "en": "Exhaust fan"
+                  },
+                  "units": {
+                    "en": "%"
+                  },
+                  "value": 79,
+                  "min": 55,
+                  "max": 99,
+                  "step": 1
+                }
+              ]
+            },
+            {
+              "type": "group",
+              "label": {
+                "en": "Fan setpoint, away"
+              },
+              "children": [
+                {
+                  "id": "fan_profile_away_supply",
+                  "type": "number",
+                  "label": {
+                    "en": "Supply fan"
+                  },
+                  "units": {
+                    "en": "%"
+                  },
+                  "value": 56,
+                  "min": 30,
+                  "max": 80,
+                  "step": 1
+                },
+                {
+                  "id": "fan_profile_away_exhaust",
+                  "type": "number",
+                  "label": {
+                    "en": "Exhaust fan"
+                  },
+                  "units": {
+                    "en": "%"
+                  },
+                  "value": 55,
+                  "min": 30,
+                  "max": 79,
+                  "step": 1
+                }
+              ]
+            },
+            {
+              "type": "group",
+              "label": {
+                "en": "Fan setpoint, high"
+              },
+              "children": [
+                {
+                  "id": "fan_profile_high_supply",
+                  "type": "number",
+                  "label": {
+                    "en": "Supply fan"
+                  },
+                  "units": {
+                    "en": "%"
+                  },
+                  "value": 100,
+                  "min": 80,
+                  "max": 100,
+                  "step": 1
+                },
+                {
+                  "id": "fan_profile_high_exhaust",
+                  "type": "number",
+                  "label": {
+                    "en": "Exhaust fan"
+                  },
+                  "units": {
+                    "en": "%"
+                  },
+                  "value": 99,
+                  "min": 79,
+                  "max": 100,
+                  "step": 1
+                }
+              ]
+            },
+            {
+              "type": "group",
+              "label": {
+                "en": "Fan setpoint, fireplace"
+              },
+              "children": [
+                {
+                  "id": "fan_profile_fireplace_supply",
+                  "type": "number",
+                  "label": {
+                    "en": "Supply fan"
+                  },
+                  "units": {
+                    "en": "%"
+                  },
+                  "value": 90,
+                  "min": 30,
+                  "max": 100,
+                  "step": 1
+                },
+                {
+                  "id": "fan_profile_fireplace_exhaust",
+                  "type": "number",
+                  "label": {
+                    "en": "Exhaust fan"
+                  },
+                  "units": {
+                    "en": "%"
+                  },
+                  "value": 50,
+                  "min": 30,
+                  "max": 100,
+                  "step": 1
+                }
+              ]
+            },
+            {
+              "type": "group",
+              "label": {
+                "en": "Fan setpoint, cooker"
+              },
+              "children": [
+                {
+                  "id": "fan_profile_cooker_supply",
+                  "type": "number",
+                  "label": {
+                    "en": "Supply fan"
+                  },
+                  "units": {
+                    "en": "%"
+                  },
+                  "value": 90,
+                  "min": 30,
+                  "max": 100,
+                  "step": 1
+                },
+                {
+                  "id": "fan_profile_cooker_exhaust",
+                  "type": "number",
+                  "label": {
+                    "en": "Exhaust fan"
+                  },
+                  "units": {
+                    "en": "%"
+                  },
+                  "value": 50,
+                  "min": 30,
+                  "max": 100,
+                  "step": 1
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "group",
+          "label": {
+            "en": "Cloud connection"
+          },
+          "children": [
+            {
+              "id": "plantId",
+              "type": "label",
+              "label": {
+                "en": "Plant ID"
+              },
+              "value": "-"
+            }
+          ]
+        }
+      ],
+      "id": "nordic-cloud"
     }
   ],
   "capabilities": {

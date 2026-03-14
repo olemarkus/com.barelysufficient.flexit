@@ -1,12 +1,12 @@
 {
   "name": {
-    "en": "Nordic Local"
+    "en": "Nordic Cloud"
   },
   "class": "airtreatment",
   "images": {
-    "small": "/drivers/nordic/assets/images/small.png",
-    "large": "/drivers/nordic/assets/images/large.png",
-    "xlarge": "/drivers/nordic/assets/images/xlarge.png"
+    "small": "/drivers/nordic-cloud/assets/images/small.png",
+    "large": "/drivers/nordic-cloud/assets/images/large.png",
+    "xlarge": "/drivers/nordic-cloud/assets/images/xlarge.png"
   },
   "capabilities": [
     "measure_temperature",
@@ -170,6 +170,27 @@
   ],
   "pair": [
     {
+      "id": "login_credentials",
+      "template": "login_credentials",
+      "options": {
+        "title": {
+          "en": "Flexit Cloud Login"
+        },
+        "usernameLabel": {
+          "en": "Email"
+        },
+        "usernamePlaceholder": {
+          "en": "name@example.com"
+        },
+        "passwordLabel": {
+          "en": "Password"
+        },
+        "passwordPlaceholder": {
+          "en": "Password"
+        }
+      }
+    },
+    {
       "id": "list_devices",
       "template": "list_devices",
       "navigation": {
@@ -195,7 +216,7 @@
             "en": "Filter change interval"
           },
           "hint": {
-            "en": "Filter replacement interval in months (Flexit GO style)."
+            "en": "Filter replacement interval in months. This matches Flexit GO style."
           },
           "units": {
             "en": "months"
@@ -465,44 +486,14 @@
     {
       "type": "group",
       "label": {
-        "en": "Connection settings"
+        "en": "Cloud connection"
       },
       "children": [
         {
-          "id": "ip",
+          "id": "plantId",
           "type": "label",
           "label": {
-            "en": "Device IP"
-          },
-          "hint": {
-            "en": "Detected during pairing. Read-only informational value."
-          },
-          "value": "-"
-        },
-        {
-          "id": "bacnetPort",
-          "type": "label",
-          "label": {
-            "en": "BACnet Port"
-          },
-          "hint": {
-            "en": "Detected during pairing. Read-only informational value."
-          },
-          "value": "47808"
-        },
-        {
-          "id": "serial",
-          "type": "label",
-          "label": {
-            "en": "Serial"
-          },
-          "value": "-"
-        },
-        {
-          "id": "mac",
-          "type": "label",
-          "label": {
-            "en": "MAC"
+            "en": "Plant ID"
           },
           "value": "-"
         }

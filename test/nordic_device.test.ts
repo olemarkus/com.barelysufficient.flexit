@@ -94,9 +94,14 @@ describe('Nordic device', () => {
       filterIntervalHoursToMonths: (hours: number) => Math.max(3, Math.min(12, Math.round(hours / 732))),
     };
 
-    DeviceClass = proxyquireStrict('../drivers/nordic/device', {
+    const baseDeviceStub = proxyquireStrict('../lib/FlexitNordicBaseDevice', {
       homey: { Device: MockHomeyDevice },
+      './UnitRegistry': unitRegistryModuleStub,
+    });
+
+    DeviceClass = proxyquireStrict('../drivers/nordic/device', {
       '../../lib/UnitRegistry': unitRegistryModuleStub,
+      '../../lib/FlexitNordicBaseDevice': baseDeviceStub,
     });
   });
 
