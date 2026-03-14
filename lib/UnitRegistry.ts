@@ -300,7 +300,7 @@ const NEVER_BLOCK_KEYS = new Set<string>([
   objectKey(BACNET_OBJECTS.filterOperatingTime.type, BACNET_OBJECTS.filterOperatingTime.instance),
 ]);
 
-function mapOperationMode(value: number): 'home' | 'away' | 'high' | 'fireplace' {
+function mapOperationMode(value: number): 'home' | 'away' | 'high' | 'fireplace' | 'cooker' {
   switch (value) {
     case OPERATION_MODE_VALUES.HOME:
       return 'home';
@@ -312,7 +312,7 @@ function mapOperationMode(value: number): 'home' | 'away' | 'high' | 'fireplace'
     case OPERATION_MODE_VALUES.FIREPLACE:
       return 'fireplace';
     case OPERATION_MODE_VALUES.COOKER_HOOD:
-      return 'high';
+      return 'cooker';
     case OPERATION_MODE_VALUES.OFF:
     default:
       return 'away';
@@ -1820,7 +1820,7 @@ export class UnitRegistry {
     private resolveFanModeFromSignals(
       data: Record<string, number>,
       tempOpActive: boolean = (data.remaining_temp_vent_op ?? 0) > 0,
-    ): 'home' | 'away' | 'high' | 'fireplace' | undefined {
+    ): 'home' | 'away' | 'high' | 'fireplace' | 'cooker' | undefined {
       if (!MODE_SIGNAL_KEYS.some((key) => data[key] !== undefined)) return undefined;
 
       let mode = this.resolveBaseMode(data, tempOpActive);
@@ -1832,7 +1832,7 @@ export class UnitRegistry {
     private resolveBaseMode(
       data: Record<string, number>,
       tempOpActive: boolean,
-    ): 'home' | 'away' | 'high' | 'fireplace' {
+    ): 'home' | 'away' | 'high' | 'fireplace' | 'cooker' {
       const rfMode = MODE_RF_INPUT_MAP[Math.round(data.mode_rf_input ?? NaN)];
       if (data.operation_mode !== undefined) {
         return mapOperationMode(Math.round(data.operation_mode));

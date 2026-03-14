@@ -546,6 +546,12 @@
               "title": {
                 "en": "Fireplace"
               }
+            },
+            {
+              "id": "cooker",
+              "title": {
+                "en": "Cooker Hood"
+              }
             }
           ]
         }

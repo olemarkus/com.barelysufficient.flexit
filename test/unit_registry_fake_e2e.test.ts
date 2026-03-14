@@ -706,4 +706,35 @@ describe('UnitRegistry fake-unit e2e', function unitRegistryFakeUdpE2e() {
     expect(fireplaceActive.value.value).to.equal(1);
     expect(operationMode.value.value).to.equal(OPERATION_MODE_VALUES.FIREPLACE);
   });
+
+  it('detects cooker hood mode and sets fan capabilities accordingly', async () => {
+    const device = makeMockDevice(SERVER_BIND_ADDRESS, serverPort, 4380);
+    registry.register('test_unit', device);
+
+    // Simulate cooker hood activation in the fake unit
+    (state as any).setSimulatedPoint('cooker_hood', 1);
+
+    await waitFor(() => {
+      const operationMode = state.readPresentValue(OBJECT_TYPE.MULTI_STATE_VALUE, 361, PROPERTY_ID.PRESENT_VALUE);
+      return operationMode.ok && operationMode.value.value === OPERATION_MODE_VALUES.COOKER_HOOD;
+    });
+
+    (registry as any).pollUnit('test_unit');
+    await waitFor(() => device.setCapabilityValue.getCalls().some((call: any) => (
+      call.args[0] === 'fan_mode' && call.args[1] === 'cooker'
+    )));
+
+    const cookerFanModeCall = device.setCapabilityValue.getCalls().find((call: any) => (
+      call.args[0] === 'fan_mode' && call.args[1] === 'cooker'
+    ));
+    expect(cookerFanModeCall).to.not.equal(undefined);
+
+    // Verify it also updates the fan profile setpoints to cooker values
+    await waitFor(() => device.setCapabilityValue.getCalls().some((call: any) => (
+      call.args[0] === 'measure_fan_setpoint_percent' && call.args[1] === 90
+    )));
+    await waitFor(() => device.setCapabilityValue.getCalls().some((call: any) => (
+      call.args[0] === 'measure_fan_setpoint_percent.extract' && call.args[1] === 50
+    )));
+  });
 });
