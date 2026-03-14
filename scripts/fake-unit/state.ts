@@ -23,6 +23,8 @@ const ERROR_CODE = BacnetEnums.ErrorCode;
 
 const MINUTES_PER_HOUR = 60;
 const SECONDS_PER_MINUTE = 60;
+const DEFAULT_BACNET_WRITE_PRIORITY = 13;
+const COOKER_HOOD_EXTERNAL_PRIORITY = 15;
 
 export interface FakeUnitIdentity {
   deviceId: number;
@@ -121,6 +123,8 @@ export class FakeNordicUnitState {
 
   private readonly pointsByName = new Map<string, SupportedPoint>();
 
+  private readonly cookerHoodPriorityValues = new Map<number, number>();
+
   private lastTickMs = Date.now();
 
   private rapidRemainingMinutes = 0;
@@ -145,6 +149,15 @@ export class FakeNordicUnitState {
       const key = pointKey(point.type, point.instance);
       const value = DEFAULT_POINT_VALUES[key];
       this.values.set(key, typeof value === 'number' ? value : 0);
+    }
+
+    const cookerHood = this.getPointByName('cooker_hood');
+    if (cookerHood) {
+      const initialCookerHood = this.values.get(pointKey(cookerHood.type, cookerHood.instance));
+      if (typeof initialCookerHood === 'number') {
+        this.cookerHoodPriorityValues.set(COOKER_HOOD_EXTERNAL_PRIORITY, asInteger(initialCookerHood));
+      }
+      this.syncCookerHoodEffectiveValue();
     }
 
     this.rapidRemainingMinutes = this.getByName('remaining_rapid');
@@ -238,13 +251,9 @@ export class FakeNordicUnitState {
     type: number,
     instance: number,
     propertyId: number,
-    numericValue: number,
+    numericValue: number | null,
     priority?: number,
   ): BacnetResult<null> {
-    if (!Number.isFinite(numericValue)) {
-      return this.failure(ERROR_CLASS.PROPERTY, ERROR_CODE.INVALID_DATA_TYPE, 'Value must be numeric');
-    }
-
     if (propertyId !== PROPERTY_ID.PRESENT_VALUE) {
       return this.failure(ERROR_CLASS.PROPERTY, ERROR_CODE.UNKNOWN_PROPERTY, `Unsupported property ${propertyId}`);
     }
@@ -254,11 +263,9 @@ export class FakeNordicUnitState {
       return this.failure(ERROR_CLASS.OBJECT, ERROR_CODE.UNKNOWN_OBJECT, `Unsupported object ${type}:${instance}`);
     }
 
-    const isObservedFlexitGoCompatibilityWrite = this.isObservedFlexitGoFilterResetWrite(
-      point,
-      numericValue,
-      priority,
-    );
+    const isRelinquishWrite = numericValue === null;
+    const isObservedFlexitGoCompatibilityWrite = !isRelinquishWrite
+      && this.isObservedFlexitGoFilterResetWrite(point, numericValue, priority);
 
     if (point.access !== 'RW' && !isObservedFlexitGoCompatibilityWrite) {
       return this.failure(ERROR_CLASS.PROPERTY, ERROR_CODE.WRITE_ACCESS_DENIED, `${point.name} is read-only`);
@@ -269,6 +276,19 @@ export class FakeNordicUnitState {
     // Allow both to emulate real-unit interoperability.
     if (point.requiresPriority13 && priority !== undefined && priority !== 13 && priority !== 16) {
       return this.failure(ERROR_CLASS.PROPERTY, ERROR_CODE.WRITE_ACCESS_DENIED, `${point.name} requires priority 13`);
+    }
+
+    if (isRelinquishWrite) {
+      if (point.name !== 'cooker_hood') {
+        return this.failure(ERROR_CLASS.PROPERTY, ERROR_CODE.INVALID_DATA_TYPE, 'Value must be numeric');
+      }
+      this.setCookerHoodPriority(priority ?? DEFAULT_BACNET_WRITE_PRIORITY, null);
+      this.tick();
+      return { ok: true, value: null };
+    }
+
+    if (!Number.isFinite(numericValue)) {
+      return this.failure(ERROR_CLASS.PROPERTY, ERROR_CODE.INVALID_DATA_TYPE, 'Value must be numeric');
     }
 
     const normalized = this.normalizeWriteValue(point, numericValue);
@@ -287,7 +307,11 @@ export class FakeNordicUnitState {
       );
     }
 
-    this.setValue(point, normalized);
+    if (point.name === 'cooker_hood') {
+      this.setCookerHoodPriority(priority ?? DEFAULT_BACNET_WRITE_PRIORITY, normalized);
+    } else {
+      this.setValue(point, normalized);
+    }
     this.applyPostWriteBehavior(point, normalized);
     this.tick();
     return { ok: true, value: null };
@@ -679,6 +703,33 @@ export class FakeNordicUnitState {
     this.fireplaceRemainingMinutes = clamp(this.getByName('runtime_fireplace'), 1, 360);
   }
 
+  private setCookerHoodPriority(priority: number, value: number | null) {
+    const cookerHood = this.getPointByName('cooker_hood');
+    if (!cookerHood) return;
+
+    if (value === null) {
+      this.cookerHoodPriorityValues.delete(priority);
+    } else {
+      this.cookerHoodPriorityValues.set(priority, clamp(asInteger(value), cookerHood.min, cookerHood.max));
+    }
+    this.syncCookerHoodEffectiveValue();
+  }
+
+  private syncCookerHoodEffectiveValue() {
+    const cookerHood = this.getPointByName('cooker_hood');
+    if (!cookerHood) return;
+
+    let effectiveValue = 0;
+    let effectivePriority = Number.POSITIVE_INFINITY;
+    for (const [priority, value] of this.cookerHoodPriorityValues.entries()) {
+      if (priority >= effectivePriority) continue;
+      effectivePriority = priority;
+      effectiveValue = value;
+    }
+
+    this.setValue(cookerHood, effectiveValue);
+  }
+
   private setValue(point: SupportedPoint, value: number) {
     this.values.set(pointKey(point.type, point.instance), value);
   }
@@ -709,6 +760,10 @@ export class FakeNordicUnitState {
         ERROR_CODE.VALUE_OUT_OF_RANGE,
         `Out of range for ${pointName}`,
       );
+    }
+    if (point.name === 'cooker_hood') {
+      this.setCookerHoodPriority(COOKER_HOOD_EXTERNAL_PRIORITY, normalized);
+      return { ok: true, value: null };
     }
     this.setByName(pointName, normalized);
     return { ok: true, value: null };

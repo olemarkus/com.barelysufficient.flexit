@@ -707,6 +707,118 @@ describe('UnitRegistry fake-unit e2e', function unitRegistryFakeUdpE2e() {
     expect(operationMode.value.value).to.equal(OPERATION_MODE_VALUES.FIREPLACE);
   });
 
+  it('treats away as active when comfort button is away but operation mode still reports home', async () => {
+    const device = makeMockDevice(SERVER_BIND_ADDRESS, serverPort, 4380);
+    const logger = {
+      log: sinon.stub(),
+      warn: sinon.stub(),
+      error: sinon.stub(),
+    };
+    registry.setLogger(logger);
+    registry.register('test_unit', device);
+
+    const originalTick = state.tick.bind(state);
+    const tickStub = sinon.stub(state, 'tick').callsFake((nowMs?: number) => {
+      originalTick(nowMs);
+      (state as any).setByName('comfort_button', 0);
+      (state as any).setByName('operation_mode', OPERATION_MODE_VALUES.HOME);
+      (state as any).setByName('ventilation_mode', 3);
+      (state as any).setByName('away_delay_active', 0);
+    });
+
+    try {
+      await registry.setFanMode('test_unit', 'away');
+
+      device.setCapabilityValue.resetHistory();
+      (registry as any).pollUnit('test_unit');
+
+      await waitFor(() => device.setCapabilityValue.getCalls().some((call: any) => (
+        call.args[0] === 'fan_mode' && call.args[1] === 'away'
+      )));
+
+      writePresentValueSpy.resetHistory();
+      await registry.writeSetpoint('test_unit', 17.5);
+
+      const awaySetpointWrite = writePresentValueSpy.getCalls().find((call: any) => (
+        call.args[0] === OBJECT_TYPE.ANALOG_VALUE
+        && call.args[1] === 1985
+        && call.args[2] === PROPERTY_ID.PRESENT_VALUE
+        && call.args[3] === 17.5
+        && call.args[4] === 13
+      ));
+      expect(awaySetpointWrite).to.not.equal(undefined);
+      expect(logger.warn.calledWithMatch('[UnitRegistry] Mode mismatch')).to.equal(false);
+    } finally {
+      tickStub.restore();
+    }
+  });
+
+  it('writes cooker hood mode and updates the unit and Homey capabilities', async () => {
+    const device = makeMockDevice(SERVER_BIND_ADDRESS, serverPort, 4380);
+    registry.register('test_unit', device);
+
+    await registry.setFanMode('test_unit', 'cooker');
+    await waitFor(() => {
+      const cookerHood = state.readPresentValue(OBJECT_TYPE.BINARY_VALUE, 402, PROPERTY_ID.PRESENT_VALUE);
+      const operationMode = state.readPresentValue(OBJECT_TYPE.MULTI_STATE_VALUE, 361, PROPERTY_ID.PRESENT_VALUE);
+      return cookerHood.ok
+        && operationMode.ok
+        && cookerHood.value.value === 1
+        && operationMode.value.value === OPERATION_MODE_VALUES.COOKER_HOOD;
+    });
+
+    (registry as any).pollUnit('test_unit');
+    await waitFor(() => device.setCapabilityValue.getCalls().some((call: any) => (
+      call.args[0] === 'fan_mode' && call.args[1] === 'cooker'
+    )));
+    await waitFor(() => device.setCapabilityValue.getCalls().some((call: any) => (
+      call.args[0] === 'measure_fan_setpoint_percent' && call.args[1] === 90
+    )));
+    await waitFor(() => device.setCapabilityValue.getCalls().some((call: any) => (
+      call.args[0] === 'measure_fan_setpoint_percent.extract' && call.args[1] === 50
+    )));
+
+    const cookerWrite = writePresentValueSpy.getCalls().find((call: any) => (
+      call.args[0] === OBJECT_TYPE.BINARY_VALUE
+      && call.args[1] === 402
+      && call.args[2] === PROPERTY_ID.PRESENT_VALUE
+      && call.args[3] === 1
+      && call.args[4] === 13
+    ));
+    expect(cookerWrite).to.not.equal(undefined);
+  });
+
+  it('relinquishes cooker hood so a remote cooker trigger can take over again', async () => {
+    const device = makeMockDevice(SERVER_BIND_ADDRESS, serverPort, 4380);
+    registry.register('test_unit', device);
+
+    await registry.setFanMode('test_unit', 'cooker');
+    await waitFor(() => {
+      const cookerHood = state.readPresentValue(OBJECT_TYPE.BINARY_VALUE, 402, PROPERTY_ID.PRESENT_VALUE);
+      return cookerHood.ok && cookerHood.value.value === 1;
+    });
+
+    writePresentValueSpy.resetHistory();
+    await registry.setFanMode('test_unit', 'away');
+
+    const relinquishWrite = writePresentValueSpy.getCalls().find((call: any) => (
+      call.args[0] === OBJECT_TYPE.BINARY_VALUE
+      && call.args[1] === 402
+      && call.args[2] === PROPERTY_ID.PRESENT_VALUE
+      && call.args[3] === null
+      && call.args[4] === 13
+    ));
+    expect(relinquishWrite).to.not.equal(undefined);
+
+    device.setCapabilityValue.resetHistory();
+    (state as any).setSimulatedPoint('cooker_hood', 1);
+
+    (registry as any).pollUnit('test_unit');
+    await waitFor(() => device.setCapabilityValue.getCalls().some((call: any) => (
+      call.args[0] === 'fan_mode' && call.args[1] === 'cooker'
+    )));
+  });
+
   it('detects cooker hood mode and sets fan capabilities accordingly', async () => {
     const device = makeMockDevice(SERVER_BIND_ADDRESS, serverPort, 4380);
     registry.register('test_unit', device);
@@ -714,20 +826,10 @@ describe('UnitRegistry fake-unit e2e', function unitRegistryFakeUdpE2e() {
     // Simulate cooker hood activation in the fake unit
     (state as any).setSimulatedPoint('cooker_hood', 1);
 
-    await waitFor(() => {
-      const operationMode = state.readPresentValue(OBJECT_TYPE.MULTI_STATE_VALUE, 361, PROPERTY_ID.PRESENT_VALUE);
-      return operationMode.ok && operationMode.value.value === OPERATION_MODE_VALUES.COOKER_HOOD;
-    });
-
     (registry as any).pollUnit('test_unit');
     await waitFor(() => device.setCapabilityValue.getCalls().some((call: any) => (
       call.args[0] === 'fan_mode' && call.args[1] === 'cooker'
     )));
-
-    const cookerFanModeCall = device.setCapabilityValue.getCalls().find((call: any) => (
-      call.args[0] === 'fan_mode' && call.args[1] === 'cooker'
-    ));
-    expect(cookerFanModeCall).to.not.equal(undefined);
 
     // Verify it also updates the fan profile setpoints to cooker values
     await waitFor(() => device.setCapabilityValue.getCalls().some((call: any) => (
