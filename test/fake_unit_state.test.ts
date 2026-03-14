@@ -559,6 +559,31 @@ describe('fake-unit state', () => {
     expect(state.summary().fan.supplyPercent).to.be.greaterThan(0);
   });
 
+  it('relinquishes local cooker hood priority so the external source becomes effective again', () => {
+    const state = createState();
+    const cookerHood = pointByName('cooker_hood');
+
+    expect((state as any).setSimulatedPoint('cooker_hood', 1).ok).to.equal(true);
+
+    const externallyActive = state.readPresentValue(cookerHood.type, cookerHood.instance, PROPERTY_ID.PRESENT_VALUE);
+    if (!externallyActive.ok) throw new Error('Expected cooker hood point to be readable');
+    expect(externallyActive.value.value).to.equal(1);
+
+    expect(
+      state.writePresentValue(cookerHood.type, cookerHood.instance, PROPERTY_ID.PRESENT_VALUE, 0, 13).ok,
+    ).to.equal(true);
+    const locallyOverridden = state.readPresentValue(cookerHood.type, cookerHood.instance, PROPERTY_ID.PRESENT_VALUE);
+    if (!locallyOverridden.ok) throw new Error('Expected cooker hood point to be readable after override');
+    expect(locallyOverridden.value.value).to.equal(0);
+
+    expect(
+      state.writePresentValue(cookerHood.type, cookerHood.instance, PROPERTY_ID.PRESENT_VALUE, null, 13).ok,
+    ).to.equal(true);
+    const relinquished = state.readPresentValue(cookerHood.type, cookerHood.instance, PROPERTY_ID.PRESENT_VALUE);
+    if (!relinquished.ok) throw new Error('Expected cooker hood point to be readable after relinquish');
+    expect(relinquished.value.value).to.equal(1);
+  });
+
   it('normalizes writable payloads and read tags across value types', () => {
     expect(valueToWriteNumber(12.5)).to.equal(12.5);
     expect(valueToWriteNumber(true)).to.equal(1);

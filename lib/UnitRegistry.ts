@@ -340,6 +340,10 @@ function valuesMatch(actual: number, expected: number) {
   return Math.abs(actual - expected) < 0.01;
 }
 
+function formatWriteValue(value: number | null) {
+  return value === null ? 'NULL' : String(value);
+}
+
 // Real units expose dehumidification as either a positive fan-control demand or a
 // slope-request flag, depending on which internal signal changes first.
 function resolveDehumidificationActive(data: Record<string, number>): boolean | undefined {
@@ -458,8 +462,8 @@ interface UnitState {
   writeQueue: Promise<void>;
   probeValues: Map<string, number>;
   blockedWrites: Set<string>;
-  pendingWriteErrors: Map<string, { value: number; code: number }>;
-  lastWriteValues: Map<string, { value: number; at: number }>;
+  pendingWriteErrors: Map<string, { value: number | null; code: number }>;
+  lastWriteValues: Map<string, { value: number | null; at: number }>;
   lastPollAt?: number;
   writeContext: Map<string, { value: number; mode: string; at: number }>;
   deferredMode?: 'fireplace';
@@ -503,7 +507,7 @@ interface WriteOptions {
 interface WriteUpdate {
   objectId: { type: number; instance: number };
   tag: number;
-  value: number;
+  value: number | null;
   priority?: number | null;
 }
 
@@ -1334,7 +1338,7 @@ export class UnitRegistry {
 
     private reconcileObservedWriteStatus(unit: UnitState, key: string, value: number, pollTime: number) {
       const pending = unit.pendingWriteErrors.get(key);
-      if (pending && valuesMatch(value, pending.value)) {
+      if (pending && pending.value !== null && valuesMatch(value, pending.value)) {
         this.warn(`[UnitRegistry] Write error cleared for ${key}: now ${value} (was code ${pending.code})`);
         unit.pendingWriteErrors.delete(key);
       }
@@ -1840,24 +1844,26 @@ export class UnitRegistry {
       const rfMode = MODE_RF_INPUT_MAP[Math.round(data.mode_rf_input ?? NaN)];
       const operationMode = Math.round(data.operation_mode ?? NaN);
       const ventilationMode = Math.round(data.ventilation_mode ?? NaN);
+      const operationModeMapped = data.operation_mode !== undefined ? mapOperationMode(operationMode) : undefined;
+      const ventilationModeMapped = data.ventilation_mode !== undefined
+        ? mapVentilationMode(ventilationMode)
+        : undefined;
 
-      if (operationMode === OPERATION_MODE_VALUES.FIREPLACE) return 'fireplace';
-      if (operationMode === OPERATION_MODE_VALUES.COOKER_HOOD) return 'cooker';
-      if (operationMode === OPERATION_MODE_VALUES.HIGH || operationMode === OPERATION_MODE_VALUES.TEMPORARY_HIGH) {
-        return 'high';
+      if (
+        operationModeMapped === 'fireplace'
+        || operationModeMapped === 'cooker'
+        || operationModeMapped === 'high'
+      ) {
+        return operationModeMapped;
       }
-      if (ventilationMode === VENTILATION_MODE_VALUES.HIGH) return 'high';
+      if (ventilationModeMapped === 'high') return 'high';
       if (rfMode === 'high' || rfMode === 'fireplace') return rfMode;
 
       // Real units can briefly keep operation_mode at HOME after BV:50 has already switched to AWAY.
       if (data.comfort_button === 0) return 'away';
 
-      if (data.operation_mode !== undefined) {
-        return mapOperationMode(operationMode);
-      }
-      if (data.ventilation_mode !== undefined) {
-        return mapVentilationMode(ventilationMode);
-      }
+      if (operationModeMapped) return operationModeMapped;
+      if (ventilationModeMapped) return ventilationModeMapped;
       if (rfMode) return rfMode;
       if (tempOpActive) {
         if ((data.remaining_fireplace_vent ?? 0) > 0) return 'fireplace';
@@ -2115,7 +2121,7 @@ export class UnitRegistry {
         await this.writeFireplaceTrigger(context, TRIGGER_VALUE);
       }
       if (mode !== 'cooker' && cookerAlreadyActive) {
-        await this.writeCookerHood(context, 0);
+        await this.relinquishCookerHood(context);
       }
 
       switch (mode) {
@@ -2175,7 +2181,7 @@ export class UnitRegistry {
         this.log(
           '[UnitRegistry] Successfully wrote'
           + ` ${update.objectId.type}:${update.objectId.instance}`
-          + ` to ${update.value}`,
+          + ` to ${formatWriteValue(update.value)}`,
         );
         return true;
       }
@@ -2185,7 +2191,9 @@ export class UnitRegistry {
       const code = errMatch ? Number(errMatch[1]) : undefined;
       if (code === 37) {
         unit.lastWriteValues.set(writeKey, { value: update.value, at: now });
-        unit.pendingWriteErrors.set(writeKey, { value: update.value, code });
+        if (update.value !== null) {
+          unit.pendingWriteErrors.set(writeKey, { value: update.value, code });
+        }
         this.warn(
           `[UnitRegistry] Write returned Code:37 for ${writeKey};`
           + ' will verify on next poll.',
@@ -2230,7 +2238,7 @@ export class UnitRegistry {
         this.error(
           '[UnitRegistry] Failed to write'
           + ` ${update.objectId.type}:${update.objectId.instance}`
-          + ` to ${update.value}`,
+          + ` to ${formatWriteValue(update.value)}`,
           err,
         );
       }
@@ -2256,14 +2264,20 @@ export class UnitRegistry {
         }, this.getWriteTimeoutMs());
 
         try {
-          this.log(`[UnitRegistry] Writing ${update.objectId.type}:${update.objectId.instance} = ${update.value}`);
+          this.log(
+            `[UnitRegistry] Writing ${update.objectId.type}:${update.objectId.instance}`
+            + ` = ${formatWriteValue(update.value)}`,
+          );
           const options = this.buildWriteOptions(context, update);
+          const values = update.value === null
+            ? [{ type: BacnetEnums.ApplicationTags.NULL, value: null }]
+            : [{ type: update.tag, value: update.value }];
 
           context.client.writeProperty(
             unit.ip,
             update.objectId,
             PRESENT_VALUE_ID,
-            [{ type: update.tag, value: update.value }],
+            values,
             options,
             (err: any) => {
               if (handled) return;
@@ -2341,6 +2355,15 @@ export class UnitRegistry {
         objectId: BACNET_OBJECTS.cookerHood,
         tag: BacnetEnums.ApplicationTags.ENUMERATED,
         value,
+        priority: DEFAULT_WRITE_PRIORITY,
+      });
+    }
+
+    private relinquishCookerHood(context: FanModeWriteContext) {
+      return this.writeUpdate(context, {
+        objectId: BACNET_OBJECTS.cookerHood,
+        tag: BacnetEnums.ApplicationTags.ENUMERATED,
+        value: null,
         priority: DEFAULT_WRITE_PRIORITY,
       });
     }
