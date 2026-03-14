@@ -31,7 +31,12 @@ function makeMockDevice() {
 }
 
 const BACNET_ENUMS = {
-  ApplicationTags: { REAL: 4, ENUMERATED: 9, UNSIGNED_INTEGER: 2 },
+  ApplicationTags: {
+    NULL: 0,
+    REAL: 4,
+    ENUMERATED: 9,
+    UNSIGNED_INTEGER: 2,
+  },
   MaxSegmentsAccepted: { SEGMENTS_0: 0 },
   MaxApduLengthAccepted: { OCTETS_1476: 5 },
   ObjectType: {
@@ -827,7 +832,8 @@ describe('UnitRegistry', () => {
     expect(comfort).to.not.equal(undefined);
     if (!cookerHood || !comfort) throw new Error('Expected cooker hood clear and away write');
 
-    expect(cookerHood[3][0].value).to.equal(0);
+    expect(cookerHood[3][0].type).to.equal(BACNET_ENUMS.ApplicationTags.NULL);
+    expect(cookerHood[3][0].value).to.equal(null);
     expect(cookerHood[4].priority).to.equal(13);
     expect(comfort[3][0].value).to.equal(0);
   });
@@ -856,7 +862,8 @@ describe('UnitRegistry', () => {
       throw new Error('Expected cooker hood clear and home mode writes');
     }
 
-    expect(cookerHood[3][0].value).to.equal(0);
+    expect(cookerHood[3][0].type).to.equal(BACNET_ENUMS.ApplicationTags.NULL);
+    expect(cookerHood[3][0].value).to.equal(null);
     expect(cookerHood[4].priority).to.equal(13);
     expect(comfort[3][0].value).to.equal(1);
     expect(ventilation[3][0].value).to.equal(3);

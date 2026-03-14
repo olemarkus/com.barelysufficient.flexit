@@ -40,6 +40,14 @@ for (const [name, value] of Object.entries(PROPERTY_ID)) {
   if (typeof value === 'number') PROPERTY_ID_NAME_BY_ID.set(value, name);
 }
 
+function isNullWriteValue(value: unknown): boolean {
+  return Boolean(
+    value
+    && typeof value === 'object'
+    && (value as { type?: unknown }).type === APPLICATION_TAG.NULL,
+  );
+}
+
 interface NpduAddress {
   net: number;
   adr?: number[];
@@ -832,8 +840,9 @@ export class FakeBacnetServer {
       return;
     }
 
-    const numeric = valueToWriteNumber(valueNode);
-    if (numeric === null) {
+    const nullWrite = isNullWriteValue(valueNode);
+    const numeric = nullWrite ? null : valueToWriteNumber(valueNode);
+    if (numeric === null && !nullWrite) {
       this.log('[FakeBacnet]  writeProperty rejected: invalid data type');
       this.client.errorResponse(
         request.address,
@@ -949,8 +958,9 @@ export class FakeBacnetServer {
         return;
       }
 
-      const numeric = valueToWriteNumber(valueNode);
-      if (numeric === null) {
+      const nullWrite = isNullWriteValue(valueNode);
+      const numeric = nullWrite ? null : valueToWriteNumber(valueNode);
+      if (numeric === null && !nullWrite) {
         this.log('[FakeBacnet]  writePropertyMultiple rejected: invalid data type');
         this.client.errorResponse(
           request.address,
