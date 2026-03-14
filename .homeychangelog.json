@@ -52,5 +52,8 @@
   },
   "1.5.1": {
     "en": "Fixed a bug where a single failed temperature write could jam the whole device."
+  },
+  "1.6.0": {
+    "en": "Full support for cooker hood fan mode."
   }
 }
