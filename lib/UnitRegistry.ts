@@ -1,6 +1,11 @@
 /* eslint-disable max-lines */
 import { getBacnetClient, BacnetEnums, setBacnetLogger } from './bacnetClient';
 import { discoverFlexitUnits } from './flexitDiscovery';
+import {
+  FlexitCloudClient,
+  bacnetObjectToCloudPath,
+  AuthenticationError,
+} from './flexitCloudClient';
 
 // Helper to clamp values
 function clamp(n: number, min: number, max: number) {
@@ -146,6 +151,7 @@ export const MAX_FILTER_CHANGE_INTERVAL_HOURS = (
 );
 
 const POLL_INTERVAL_MS = 10_000;
+const CLOUD_POLL_INTERVAL_MS = 60_000;
 const POLL_WATCHDOG_TIMEOUT_MS = 12_000;
 const REDISCOVERY_INTERVAL_MS = 60_000;
 const MAX_CONSECUTIVE_FAILURES = 3;
@@ -173,6 +179,7 @@ const OPERATION_MODE_VALUES = {
 const TRIGGER_VALUE = 2;
 const HEATING_COIL_OFF = 0;
 const HEATING_COIL_ON = 1;
+const COOKER_HOOD_ON = 1;
 
 const BACNET_OBJECTS = {
   comfortButton: { type: OBJECT_TYPE.BINARY_VALUE, instance: 50 },
@@ -448,13 +455,21 @@ export function filterIntervalHoursToMonths(
   return clampedMonths;
 }
 
+export interface CloudTransportConfig {
+  plantId: string;
+  client: FlexitCloudClient;
+}
+
 interface UnitState {
   unitId: string;
   serial: string;
+  transport: 'bacnet' | 'cloud';
+  cloud?: CloudTransportConfig;
   devices: Set<FlexitDevice>;
   pollInterval: ReturnType<typeof setInterval> | null;
   rediscoverInterval: ReturnType<typeof setInterval> | null;
   pollInFlight: boolean;
+  cloudPollPromise?: Promise<void>;
   pollRetryTimer: ReturnType<typeof setTimeout> | null;
   pollWatchdogTimer: ReturnType<typeof setTimeout> | null;
   ip: string;
@@ -802,6 +817,7 @@ export class UnitRegistry {
         unit = {
           unitId,
           serial,
+          transport: 'bacnet' as const,
           devices: new Set(),
           pollInterval: null,
           rediscoverInterval: null,
@@ -842,6 +858,78 @@ export class UnitRegistry {
       if (!this.logger) this.syncBacnetLogger();
     }
 
+    registerCloud(
+      unitId: string,
+      device: FlexitDevice,
+      config: CloudTransportConfig,
+    ): FlexitCloudClient {
+      let unit = this.units.get(unitId);
+      if (unit && unit.transport !== 'cloud') {
+        throw new Error(
+          `Unit ${unitId} is already registered with transport`
+          + ` '${unit.transport}' — cannot register as cloud`,
+        );
+      }
+      if (unit) {
+        if (unit.cloud!.plantId !== config.plantId) {
+          config.client.destroy();
+          throw new Error(
+            `Unit ${unitId} already registered with plantId`
+            + ` '${unit.cloud!.plantId}' — cannot register with '${config.plantId}'`,
+          );
+        }
+        config.client.destroy();
+      } else {
+        unit = {
+          unitId,
+          serial: '',
+          transport: 'cloud' as const,
+          cloud: config,
+          devices: new Set(),
+          pollInterval: null,
+          rediscoverInterval: null,
+          pollInFlight: false,
+          pollRetryTimer: null,
+          pollWatchdogTimer: null,
+          ip: '',
+          bacnetPort: 0,
+          writeQueue: Promise.resolve(),
+          probeValues: new Map(),
+          blockedWrites: new Set(),
+          pendingWriteErrors: new Map(),
+          lastWriteValues: new Map(),
+          lastPollAt: undefined,
+          writeContext: new Map(),
+          deferredMode: undefined,
+          deferredSince: undefined,
+          expectedMode: undefined,
+          expectedModeAt: undefined,
+          lastMismatchKey: undefined,
+          consecutiveFailures: 0,
+          available: true,
+          currentFanSetpointMode: undefined,
+          currentFanSetpoints: {},
+          currentFanSetpointsInitialized: false,
+          dehumidificationActive: undefined,
+          dehumidificationStateInitialized: false,
+          heatingCoilEnabled: undefined,
+          heatingCoilStateInitialized: false,
+        };
+        this.units.set(unitId, unit);
+
+        this.cloudPollUnit(unit).catch((err) => {
+          this.warn(`[UnitRegistry] Initial cloud poll failed for ${unitId}:`, err);
+        });
+        unit.pollInterval = setInterval(() => {
+          this.cloudPollUnit(unit!).catch((err) => {
+            this.warn(`[UnitRegistry] Cloud poll failed for ${unitId}:`, err);
+          });
+        }, CLOUD_POLL_INTERVAL_MS);
+      }
+      unit.devices.add(device);
+      return unit.cloud!.client;
+    }
+
     unregister(unitId: string, device: FlexitDevice) {
       const unit = this.units.get(unitId);
       if (unit) {
@@ -850,6 +938,9 @@ export class UnitRegistry {
           if (unit.pollInterval) clearInterval(unit.pollInterval);
           if (unit.rediscoverInterval) clearInterval(unit.rediscoverInterval);
           this.clearUnitPollTimers(unit);
+          if (unit.transport === 'cloud' && unit.cloud) {
+            unit.cloud.client.destroy();
+          }
           this.units.delete(unitId);
         }
       }
@@ -864,6 +955,9 @@ export class UnitRegistry {
         if (unit.pollInterval) clearInterval(unit.pollInterval);
         if (unit.rediscoverInterval) clearInterval(unit.rediscoverInterval);
         this.clearUnitPollTimers(unit);
+        if (unit.transport === 'cloud' && unit.cloud) {
+          unit.cloud.client.destroy();
+        }
       }
       this.units.clear();
     }
@@ -914,6 +1008,9 @@ export class UnitRegistry {
       mode: TargetTemperatureMode,
       setpoint: number,
     ) {
+      if (unit.transport === 'cloud') {
+        return this.cloudWriteTemperatureSetpoint(unit, mode, setpoint);
+      }
       const client = this.dependencies.getBacnetClient(unit.bacnetPort);
       const normalizedSetpoint = normalizeTargetTemperature(setpoint);
       const writeOptions = {
@@ -987,6 +1084,7 @@ export class UnitRegistry {
     async resetFilterTimer(unitId: string) {
       const unit = this.units.get(unitId);
       if (!unit) throw new Error('Unit not found');
+      if (unit.transport === 'cloud') return this.cloudResetFilterTimer(unit);
 
       const writeOptions: WriteOptions = {
         maxSegments: BacnetEnums.MaxSegmentsAccepted.SEGMENTS_0,
@@ -1026,6 +1124,7 @@ export class UnitRegistry {
     async setFilterChangeInterval(unitId: string, requestedHours: number) {
       const unit = this.units.get(unitId);
       if (!unit) throw new Error('Unit not found');
+      if (unit.transport === 'cloud') return this.cloudSetFilterChangeInterval(unit, requestedHours);
 
       const intervalHours = this.normalizeFilterChangeIntervalHours(requestedHours);
       const writeOptions: WriteOptions = {
@@ -1078,6 +1177,7 @@ export class UnitRegistry {
     async setFireplaceVentilationDuration(unitId: string, requestedMinutes: number) {
       const unit = this.units.get(unitId);
       if (!unit) throw new Error('Unit not found');
+      if (unit.transport === 'cloud') return this.cloudSetFireplaceVentilationDuration(unit, requestedMinutes);
 
       const durationMinutes = normalizeFireplaceDurationMinutes(requestedMinutes);
       const writeOptions: WriteOptions = {
@@ -1136,6 +1236,9 @@ export class UnitRegistry {
 
       const unit = this.units.get(unitId);
       if (!unit) throw new Error('Unit not found');
+      if (unit.transport === 'cloud') {
+        return this.cloudSetFanProfileMode(unit, mode, requestedSupplyPercent, requestedExhaustPercent);
+      }
 
       const supplyPercent = normalizeFanProfilePercent(requestedSupplyPercent, mode, 'supply');
       const exhaustPercent = normalizeFanProfilePercent(requestedExhaustPercent, mode, 'exhaust');
@@ -1214,6 +1317,12 @@ export class UnitRegistry {
     private pollUnit(unitId: string) {
       const unit = this.units.get(unitId);
       if (!unit) return;
+      if (unit.transport === 'cloud') {
+        this.cloudPollUnit(unit).catch((err) => {
+          this.warn(`[UnitRegistry] Cloud poll failed for ${unitId}:`, err);
+        });
+        return;
+      }
       this.pollAttempt(unit, 0);
     }
 
@@ -1384,13 +1493,16 @@ export class UnitRegistry {
       unit.consecutiveFailures = 0;
       if (!unit.available) {
         unit.available = true;
+        const location = unit.transport === 'cloud' ? 'cloud' : unit.ip;
         this.log(
-          `[UnitRegistry] Unit ${unit.unitId} is available again at ${unit.ip}`,
+          `[UnitRegistry] Unit ${unit.unitId} is available again (${location})`,
         );
         for (const device of unit.devices) {
           device.setAvailable().catch(() => { });
         }
-        this.stopRediscovery(unit);
+        if (unit.transport !== 'cloud') {
+          this.stopRediscovery(unit);
+        }
       }
     }
 
@@ -2023,6 +2135,7 @@ export class UnitRegistry {
     async setHeatingCoilEnabled(unitId: string, enabled: boolean) {
       const unit = this.units.get(unitId);
       if (!unit) throw new Error('Unit not found');
+      if (unit.transport === 'cloud') return this.cloudSetHeatingCoilEnabled(unit, enabled);
 
       const state = enabled ? 'on' : 'off';
       this.log(`[UnitRegistry] Setting heating coil ${state} for ${unitId}`);
@@ -2057,6 +2170,7 @@ export class UnitRegistry {
     async setFanMode(unitId: string, mode: string) {
       const unit = this.units.get(unitId);
       if (!unit) throw new Error('Unit not found');
+      if (unit.transport === 'cloud') return this.cloudSetFanMode(unit, mode);
 
       this.log(`[UnitRegistry] Setting fan mode to '${mode}' for ${unitId}`);
       const writeOptions: WriteOptions = {
@@ -2515,6 +2629,372 @@ export class UnitRegistry {
         }
       } catch (_e) { /* ignore */ }
       return undefined;
+    }
+
+    // -------------------------------------------------------------------
+    // Cloud transport implementation
+    // -------------------------------------------------------------------
+
+    private cloudPollUnit(unit: UnitState): Promise<void> {
+      if (!unit.cloud) return Promise.resolve();
+      if (unit.pollInFlight) return unit.cloudPollPromise ?? Promise.resolve();
+      unit.pollInFlight = true;
+      const promise = this.executeCloudPoll(unit);
+      unit.cloudPollPromise = promise;
+      return promise;
+    }
+
+    private async executeCloudPoll(unit: UnitState) {
+      if (!unit.cloud) return;
+
+      const { plantId, client } = unit.cloud;
+
+      const paths = POLL_REQUEST.map((req: any) => {
+        const objId = req.objectId;
+        return bacnetObjectToCloudPath(objId.type, objId.instance);
+      });
+
+      let values: Record<string, any>;
+      try {
+        values = await client.readDatapoints(plantId, paths);
+      } catch (err) {
+        unit.pollInFlight = false;
+        if (err instanceof AuthenticationError) {
+          this.warn(`[UnitRegistry] Cloud auth failed for ${unit.unitId}: ${(err as Error).message}`);
+          unit.available = false;
+          if (unit.pollInterval) {
+            clearInterval(unit.pollInterval);
+            unit.pollInterval = null;
+          }
+          for (const device of unit.devices) {
+            device.setUnavailable('Cloud authentication failed. Please re-pair the device.')
+              .catch((e) => {
+                this.warn(`[UnitRegistry] Failed to set device unavailable for ${unit.unitId}:`, e);
+              });
+          }
+          return;
+        }
+        this.handleCloudPollFailure(unit);
+        return;
+      }
+
+      try {
+        this.handlePollSuccess(unit);
+        unit.lastPollAt = Date.now();
+        const data = this.parseCloudPollValues(unit, values);
+        this.distributeData(unit, data);
+      } catch (e) {
+        this.error(`[UnitRegistry] Cloud parse error for ${unit.unitId}:`, e);
+      } finally {
+        unit.pollInFlight = false;
+      }
+    }
+
+    private handleCloudPollFailure(unit: UnitState) {
+      unit.consecutiveFailures++;
+      if (unit.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES && unit.available) {
+        unit.available = false;
+        this.warn(
+          `[UnitRegistry] Cloud unit ${unit.unitId} marked unavailable after`
+          + ` ${unit.consecutiveFailures} consecutive failures`,
+        );
+        for (const device of unit.devices) {
+          device
+            .setUnavailable('Cloud connection lost. Will retry automatically.')
+            .catch((e) => {
+              this.warn(`[UnitRegistry] Failed to set device unavailable for ${unit.unitId}:`, e);
+            });
+        }
+      }
+    }
+
+    private parseCloudPollValues(
+      unit: UnitState,
+      values: Record<string, any>,
+    ): Record<string, number> {
+      const target: PollParseTarget = { data: {} };
+      const { plantId } = unit.cloud!;
+
+      for (const [fullPath, entry] of Object.entries(values)) {
+        const pathPart = fullPath.startsWith(plantId)
+          ? fullPath.slice(plantId.length)
+          : fullPath;
+
+        const hex = pathPart.replace(/^;1!/, '');
+        if (hex.length < 9) continue;
+        const objectType = parseInt(hex.substring(0, 3), 16);
+        const instance = parseInt(hex.substring(3, 9), 16);
+
+        const val = entry?.value?.value;
+        if (typeof val !== 'number' || Number.isNaN(val)) continue;
+
+        const key = objectKey(objectType, instance);
+        const mapper = POLL_VALUE_MAPPINGS[key];
+        if (mapper) mapper(val, target);
+        unit.probeValues.set(key, val);
+      }
+
+      const extractTemp = selectExtractTemperature(target.extractTempPrimary, target.extractTempAlt);
+      if (extractTemp !== undefined) {
+        target.data['measure_temperature.extract'] = extractTemp;
+      }
+      return target.data;
+    }
+
+    private async cloudWriteDatapoint(
+      unit: UnitState,
+      objectId: { type: number; instance: number },
+      value: number | string | null,
+    ): Promise<boolean> {
+      if (!unit.cloud) return false;
+      const { plantId, client } = unit.cloud;
+      const path = bacnetObjectToCloudPath(objectId.type, objectId.instance);
+
+      try {
+        return await client.writeDatapoint(plantId, path, value);
+      } catch (err) {
+        if (err instanceof AuthenticationError) {
+          throw err;
+        }
+        this.error(`[UnitRegistry] Cloud write failed for ${unit.unitId}:`, err);
+        return false;
+      }
+    }
+
+    private async cloudWriteTemperatureSetpoint(
+      unit: UnitState,
+      mode: TargetTemperatureMode,
+      setpoint: number,
+    ) {
+      const objectId = TARGET_TEMPERATURE_OBJECTS[mode];
+      const normalizedSetpoint = normalizeTargetTemperature(setpoint);
+
+      this.log(
+        `[UnitRegistry] Cloud: writing ${mode} setpoint ${normalizedSetpoint}`
+        + ` for ${unit.unitId}`,
+      );
+
+      const success = await this.cloudWriteDatapoint(unit, objectId, normalizedSetpoint);
+      if (!success) throw new Error(`Failed to write ${mode} setpoint via cloud`);
+
+      await this.cloudPollUnit(unit);
+    }
+
+    private async cloudResetFilterTimer(unit: UnitState) {
+      this.log(`[UnitRegistry] Cloud: resetting filter timer for ${unit.unitId}`);
+      const success = await this.cloudWriteDatapoint(
+        unit,
+        BACNET_OBJECTS.filterOperatingTime,
+        0,
+      );
+      if (!success) throw new Error('Failed to reset filter timer via cloud');
+      await this.cloudPollUnit(unit);
+    }
+
+    private async cloudSetFilterChangeInterval(unit: UnitState, requestedHours: number) {
+      const intervalHours = this.normalizeFilterChangeIntervalHours(requestedHours);
+      this.log(`[UnitRegistry] Cloud: setting filter change interval to ${intervalHours}h for ${unit.unitId}`);
+
+      const success = await this.cloudWriteDatapoint(
+        unit,
+        FILTER_LIMIT_OBJECT,
+        intervalHours,
+      );
+      if (!success) throw new Error('Failed to write filter change interval via cloud');
+
+      const months = filterIntervalHoursToMonths(
+        intervalHours,
+        (message) => this.warn(message),
+      );
+      for (const device of unit.devices) {
+        this.updateDeviceSettings(device, {
+          [FILTER_CHANGE_INTERVAL_MONTHS_SETTING]: months,
+          [FILTER_CHANGE_INTERVAL_HOURS_LEGACY_SETTING]: intervalHours,
+        }).catch((err) => {
+          this.warn(`[UnitRegistry] Failed to sync filter settings for ${unit.unitId}:`, err);
+        });
+      }
+
+      await this.cloudPollUnit(unit);
+    }
+
+    private async cloudSetFireplaceVentilationDuration(
+      unit: UnitState,
+      requestedMinutes: number,
+    ) {
+      const durationMinutes = normalizeFireplaceDurationMinutes(requestedMinutes);
+      this.log(`[UnitRegistry] Cloud: setting fireplace duration to ${durationMinutes} min for ${unit.unitId}`);
+
+      const success = await this.cloudWriteDatapoint(
+        unit,
+        BACNET_OBJECTS.fireplaceVentilationRuntime,
+        durationMinutes,
+      );
+      if (!success) throw new Error('Failed to write fireplace duration via cloud');
+
+      for (const device of unit.devices) {
+        this.updateDeviceSettings(device, {
+          [FIREPLACE_DURATION_SETTING]: durationMinutes,
+        }).catch((err) => {
+          this.warn(
+            `[UnitRegistry] Failed to sync fireplace duration setting for ${unit.unitId}:`,
+            err,
+          );
+        });
+      }
+
+      await this.cloudPollUnit(unit);
+    }
+
+    private async cloudSetFanProfileMode(
+      unit: UnitState,
+      mode: FanProfileMode,
+      requestedSupplyPercent: number,
+      requestedExhaustPercent: number,
+    ) {
+      const supplyPercent = normalizeFanProfilePercent(requestedSupplyPercent, mode, 'supply');
+      const exhaustPercent = normalizeFanProfilePercent(requestedExhaustPercent, mode, 'exhaust');
+      const objects = FAN_PROFILE_OBJECTS[mode];
+
+      this.log(
+        `[UnitRegistry] Cloud: updating ${mode} fan profile to`
+        + ` supply=${supplyPercent}% exhaust=${exhaustPercent}% for ${unit.unitId}`,
+      );
+
+      const supplyOk = await this.cloudWriteDatapoint(unit, objects.supply, supplyPercent);
+      const exhaustOk = await this.cloudWriteDatapoint(unit, objects.exhaust, exhaustPercent);
+      if (!supplyOk || !exhaustOk) throw new Error(`Failed to write ${mode} fan profile via cloud`);
+
+      const settingsForMode = FAN_PROFILE_SETTING_KEYS[mode];
+      for (const device of unit.devices) {
+        this.updateDeviceSettings(device, {
+          [settingsForMode.supply]: supplyPercent,
+          [settingsForMode.exhaust]: exhaustPercent,
+        }).catch((err) => {
+          this.warn(`[UnitRegistry] Failed to sync ${mode} fan settings for ${unit.unitId}:`, err);
+        });
+      }
+
+      await this.cloudPollUnit(unit);
+    }
+
+    private async cloudSetFanMode(unit: UnitState, mode: string) {
+      this.log(`[UnitRegistry] Cloud: setting fan mode to '${mode}' for ${unit.unitId}`);
+
+      const fireplaceActive = (unit.probeValues.get(FIREPLACE_ACTIVE_KEY) ?? 0) === 1;
+      const operationMode = Math.round(unit.probeValues.get(OPERATION_MODE_KEY) ?? NaN);
+      const fireplaceAlreadyActive = fireplaceActive
+        || operationMode === OPERATION_MODE_VALUES.FIREPLACE;
+      const cookerAlreadyActive = operationMode === OPERATION_MODE_VALUES.COOKER_HOOD;
+      const rapidActive = (unit.probeValues.get(RAPID_ACTIVE_KEY) ?? 0) === 1;
+      const tempVentActive = (unit.probeValues.get(TEMP_VENT_REMAINING_KEY) ?? 0) > 0;
+      const temporaryRapidActive = rapidActive || tempVentActive;
+
+      if (mode !== 'fireplace') {
+        unit.deferredMode = undefined;
+        unit.deferredSince = undefined;
+      }
+      if (mode === 'fireplace' && fireplaceAlreadyActive) {
+        this.log(
+          `[UnitRegistry] Cloud: fireplace already active for ${unit.unitId}, skipping.`,
+        );
+        return;
+      }
+
+      unit.expectedMode = mode;
+      unit.expectedModeAt = Date.now();
+      unit.lastMismatchKey = undefined;
+
+      // Deactivate fireplace/cooker when switching to a different mode
+      if (mode !== 'fireplace' && fireplaceActive) {
+        await this.cloudWriteDatapoint(
+          unit, BACNET_OBJECTS.fireplaceVentilationTrigger, TRIGGER_VALUE,
+        );
+      }
+      if (mode !== 'cooker' && cookerAlreadyActive) {
+        await this.cloudWriteDatapoint(unit, BACNET_OBJECTS.cookerHood, null);
+      }
+
+      switch (mode) {
+        case 'home':
+          await this.cloudWriteDatapoint(unit, BACNET_OBJECTS.comfortButton, 1);
+          await this.cloudWriteDatapoint(
+            unit, BACNET_OBJECTS.ventilationMode, VENTILATION_MODE_VALUES.HOME,
+          );
+          if (temporaryRapidActive) {
+            await this.cloudWriteDatapoint(
+              unit, BACNET_OBJECTS.rapidVentilationTrigger, TRIGGER_VALUE,
+            );
+          }
+          break;
+        case 'away':
+          await this.cloudWriteDatapoint(unit, BACNET_OBJECTS.comfortButton, 0);
+          if (temporaryRapidActive) {
+            await this.cloudWriteDatapoint(
+              unit, BACNET_OBJECTS.rapidVentilationTrigger, TRIGGER_VALUE,
+            );
+          }
+          break;
+        case 'high':
+          await this.cloudWriteDatapoint(unit, BACNET_OBJECTS.comfortButton, 1);
+          await this.cloudWriteDatapoint(
+            unit, BACNET_OBJECTS.ventilationMode, VENTILATION_MODE_VALUES.HIGH,
+          );
+          break;
+        case 'fireplace': {
+          const comfortState = unit.probeValues.get(COMFORT_BUTTON_KEY);
+          if (comfortState !== 1) {
+            await this.cloudWriteDatapoint(unit, BACNET_OBJECTS.comfortButton, 1);
+          }
+          const runtime = clamp(
+            Math.round(
+              unit.probeValues.get(FIREPLACE_RUNTIME_KEY)
+              ?? DEFAULT_FIREPLACE_VENTILATION_MINUTES,
+            ),
+            1, 360,
+          );
+          await this.cloudWriteDatapoint(
+            unit, BACNET_OBJECTS.fireplaceVentilationRuntime, runtime,
+          );
+          await this.cloudWriteDatapoint(
+            unit, BACNET_OBJECTS.fireplaceVentilationTrigger, TRIGGER_VALUE,
+          );
+          break;
+        }
+        case 'cooker':
+          if (temporaryRapidActive) {
+            await this.cloudWriteDatapoint(
+              unit, BACNET_OBJECTS.rapidVentilationTrigger, TRIGGER_VALUE,
+            );
+          }
+          if (!cookerAlreadyActive) {
+            await this.cloudWriteDatapoint(
+              unit, BACNET_OBJECTS.cookerHood, COOKER_HOOD_ON,
+            );
+          }
+          break;
+        default:
+          this.warn(
+            `[UnitRegistry] Unsupported cloud fan mode '${mode}' for ${unit.unitId}`,
+          );
+          return;
+      }
+
+      await this.cloudPollUnit(unit);
+    }
+
+    private async cloudSetHeatingCoilEnabled(unit: UnitState, enabled: boolean) {
+      const state = enabled ? 'on' : 'off';
+      this.log(`[UnitRegistry] Cloud: setting heating coil ${state} for ${unit.unitId}`);
+
+      const success = await this.cloudWriteDatapoint(
+        unit,
+        BACNET_OBJECTS.heatingCoilEnable,
+        enabled ? HEATING_COIL_ON : HEATING_COIL_OFF,
+      );
+      if (!success) throw new Error(`Failed to set heating coil ${state} via cloud`);
+
+      await this.cloudPollUnit(unit);
     }
 }
 
