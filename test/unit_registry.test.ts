@@ -574,6 +574,7 @@ describe('UnitRegistry', () => {
       'fan_profile.cooker.exhaust': 50,
     });
 
+    expect(mockDevice.setCapabilityValue.calledWith('fan_mode', 'cooker')).to.equal(true);
     expect(mockDevice.setCapabilityValue.calledWith('measure_fan_setpoint_percent', 90)).to.equal(true);
     expect(mockDevice.setCapabilityValue.calledWith('measure_fan_setpoint_percent.extract', 50)).to.equal(true);
   });
