@@ -788,6 +788,80 @@ describe('UnitRegistry', () => {
     expect(ventilation[4].priority).to.equal(13);
   });
 
+  it('writes cooker hood mode via BV:402 with priority 13', async () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    await registry.setFanMode('test_unit', 'cooker');
+
+    const calls = mockClient.writeProperty.getCalls().map((call: any) => call.args);
+    const callsByObject = new Map<string, any[]>(calls.map((args: any) => [JSON.stringify(args[1]), args]));
+
+    const cookerHood = callsByObject.get(JSON.stringify({ type: 5, instance: 402 })) as any[] | undefined;
+
+    expect(cookerHood).to.not.equal(undefined);
+    if (!cookerHood) throw new Error('Expected cooker hood write');
+
+    expect(cookerHood[3][0].type).to.equal(9); // ENUMERATED
+    expect(cookerHood[3][0].value).to.equal(1);
+    expect(cookerHood[4].priority).to.equal(13);
+  });
+
+  it('clears cooker hood when switching away after a local cooker write before the next poll', async () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    const unit = (registry as any).units.get('test_unit');
+    unit.lastPollAt = 100;
+    unit.lastWriteValues.set('5:402', { value: 1, at: 200 });
+
+    await registry.setFanMode('test_unit', 'away');
+
+    const calls = mockClient.writeProperty.getCalls().map((call: any) => call.args);
+    const callsByObject = new Map<string, any[]>(calls.map((args: any) => [JSON.stringify(args[1]), args]));
+
+    const cookerHood = callsByObject.get(JSON.stringify({ type: 5, instance: 402 })) as any[] | undefined;
+    const comfort = callsByObject.get(JSON.stringify({ type: 5, instance: 50 })) as any[] | undefined;
+
+    expect(cookerHood).to.not.equal(undefined);
+    expect(comfort).to.not.equal(undefined);
+    if (!cookerHood || !comfort) throw new Error('Expected cooker hood clear and away write');
+
+    expect(cookerHood[3][0].value).to.equal(0);
+    expect(cookerHood[4].priority).to.equal(13);
+    expect(comfort[3][0].value).to.equal(0);
+  });
+
+  it('clears cooker hood before switching back to home mode', async () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    const unit = (registry as any).units.get('test_unit');
+    unit.probeValues.set('19:361', 5); // operation_mode cooker hood
+
+    await registry.setFanMode('test_unit', 'home');
+
+    const calls = mockClient.writeProperty.getCalls().map((call: any) => call.args);
+    const callsByObject = new Map<string, any[]>(calls.map((args: any) => [JSON.stringify(args[1]), args]));
+
+    const cookerHood = callsByObject.get(JSON.stringify({ type: 5, instance: 402 })) as any[] | undefined;
+    const comfort = callsByObject.get(JSON.stringify({ type: 5, instance: 50 })) as any[] | undefined;
+    const ventilation = callsByObject.get(JSON.stringify({ type: 19, instance: 42 })) as any[] | undefined;
+
+    expect(cookerHood).to.not.equal(undefined);
+    expect(comfort).to.not.equal(undefined);
+    expect(ventilation).to.not.equal(undefined);
+
+    if (!cookerHood || !comfort || !ventilation) {
+      throw new Error('Expected cooker hood clear and home mode writes');
+    }
+
+    expect(cookerHood[3][0].value).to.equal(0);
+    expect(cookerHood[4].priority).to.equal(13);
+    expect(comfort[3][0].value).to.equal(1);
+    expect(ventilation[3][0].value).to.equal(3);
+  });
+
   it('writes fireplace mode with runtime and trigger', async () => {
     const mockDevice = makeMockDevice();
     registry.register('test_unit', mockDevice);
@@ -897,6 +971,22 @@ describe('UnitRegistry', () => {
     expect(call.args[1]).to.equal('fireplace');
   });
 
+  it('prefers away comfort-button state over stale home operation mode', () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    const unit = { unitId: 'test_unit', devices: new Set([mockDevice]) };
+    (registry as any).distributeData(unit, {
+      comfort_button: 0,
+      operation_mode: 3, // stale home
+      ventilation_mode: 3, // stale home
+    });
+
+    const call = mockDevice.setCapabilityValue.lastCall;
+    expect(call.args[0]).to.equal('fan_mode');
+    expect(call.args[1]).to.equal('away');
+  });
+
   it('prefers operation mode over ventilation mode when both are present', () => {
     const mockDevice = makeMockDevice();
     registry.register('test_unit', mockDevice);
@@ -930,6 +1020,22 @@ describe('UnitRegistry', () => {
 
     expect(mockDevice.setCapabilityValue.calledWith('measure_fan_setpoint_percent', 81)).to.equal(true);
     expect(mockDevice.setCapabilityValue.calledWith('measure_fan_setpoint_percent.extract', 80)).to.equal(true);
+  });
+
+  it('writes away setpoint when comfort-button state says away despite stale home operation mode', async () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    const unit = (registry as any).units.get('test_unit');
+    unit.probeValues.set('5:50', 0); // comfort_button away
+    unit.probeValues.set('19:361', 3); // stale operation_mode home
+    unit.probeValues.set('19:42', 3); // stale ventilation_mode home
+
+    await registry.writeSetpoint('test_unit', 17.5);
+
+    const { args } = mockClient.writeProperty.firstCall;
+    expect(args[1]).to.deep.equal({ type: 2, instance: 1985 });
+    expect(args[3][0].value).to.equal(17.5);
   });
 
   it('uses RF input mapping when available', () => {
