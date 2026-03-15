@@ -55,5 +55,8 @@
   },
   "1.6.0": {
     "en": "Full support for cooker hood fan mode."
+  },
+  "1.7.0": {
+    "en": "Added support for units connected through cloud."
   }
 }
