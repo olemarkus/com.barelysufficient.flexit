@@ -58,31 +58,32 @@
         <ellipse cx="485" cy="176" rx="16" ry="5"></ellipse>
       </g>
     </g>
-
     <!-- ===== BADGE: cloud, centered and aligned to front-face perspective ===== -->
     <g fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round"
        transform="matrix(1 0.05454545 0 1 287 452)">
-      <g stroke-width="12">
-        <rect x="0" y="0" width="230" height="210" rx="26" ry="26"></rect>
-      </g>
+      <g transform="translate(115 105) scale(1.65) translate(-115 -105)">
+        <g stroke-width="12">
+          <rect x="0" y="0" width="230" height="210" rx="26" ry="26"></rect>
+        </g>
 
-      <g stroke-width="14" transform="translate(2 9)">
-        <!-- cloud and arrows nudged into the true visual center of the badge -->
-        <path d="M62 118
-                 C42 118 26 103 26 84
-                 C26 68 37 55 52 50
-                 C58 28 77 14 99 14
-                 C121 14 140 26 149 45
-                 C152 44 156 44 159 44
-                 C181 44 199 62 199 84
-                 C199 105 182 118 161 118
-                 Z"></path>
+        <g stroke-width="14">
+          <path d="M58 114
+                   C41 114 28 102 28 86
+                   C28 71 39 59 54 57
+                   C61 35 84 22 109 22
+                   C132 22 152 33 162 52
+                   C167 50 173 49 178 49
+                   C200 49 216 65 216 86
+                   C216 102 203 114 186 114 Z"></path>
 
-        <path d="M92 136 L92 173"></path>
-        <path d="M78 159 L92 173 L106 159"></path>
+          <path d="M88 134 L88 176"></path>
+          <path d="M88 176 L74 162"></path>
+          <path d="M88 176 L102 162"></path>
 
-        <path d="M138 173 L138 136"></path>
-        <path d="M124 150 L138 136 L152 150"></path>
+          <path d="M142 176 L142 134"></path>
+          <path d="M142 134 L128 148"></path>
+          <path d="M142 134 L156 148"></path>
+        </g>
       </g>
     </g>
 
