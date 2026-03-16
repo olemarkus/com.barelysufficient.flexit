@@ -58,5 +58,8 @@
   },
   "1.7.0": {
     "en": "Added support for units connected through cloud."
+  },
+  "1.7.1": {
+    "en": "Add driver icon for Nordic cloud driver"
   }
 }
