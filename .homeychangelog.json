@@ -61,5 +61,8 @@
   },
   "1.7.1": {
     "en": "Add driver icon for Nordic cloud driver"
+  },
+  "1.7.2": {
+    "en": "Fix repair device should the auth token become invalid."
   }
 }
