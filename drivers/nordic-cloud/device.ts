@@ -26,7 +26,7 @@ export = class FlexitNordicCloudDevice extends FlexitNordicBaseDevice {
       if (e instanceof AuthenticationError) {
         this.error('Cloud authentication failed:', e.message);
         await this.setUnavailable(
-          'Cloud authentication failed. Please re-pair the device.',
+          'Cloud authentication failed. Please repair the device.',
         );
         return;
       }
@@ -49,7 +49,7 @@ export = class FlexitNordicCloudDevice extends FlexitNordicBaseDevice {
 
     if (!refreshToken) {
       this.error('Cloud refresh token not found in device store');
-      await this.setUnavailable('Cloud credentials missing. Please re-pair the device.');
+      await this.setUnavailable('Cloud credentials missing. Please repair the device.');
       return null;
     }
 

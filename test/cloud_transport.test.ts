@@ -149,6 +149,8 @@ function makeMockCloudClient(options: {
     ),
     writeDatapoint: sinon.stub().resolves(options.writeSuccess ?? true),
     hasValidToken: sinon.stub().returns(true),
+    restoreToken: sinon.stub(),
+    getToken: sinon.stub().returns(null),
     destroy: sinon.stub(),
   };
 
@@ -697,7 +699,7 @@ describe('Cloud transport – UnitRegistry integration', () => {
     await sleep(50);
 
     expect(mock.device.setUnavailable.called).to.equal(true);
-    expect(mock.device.setUnavailable.firstCall.args[0]).to.include('re-pair');
+    expect(mock.device.setUnavailable.firstCall.args[0]).to.include('repair');
   });
 
   it('unregisters cloud device cleanly', async () => {
@@ -725,6 +727,74 @@ describe('Cloud transport – UnitRegistry integration', () => {
     // Auth failure should have cleared the poll interval
     const unit = (registry as any).units.get(UNIT_ID);
     expect(unit.pollInterval).to.equal(null);
+  });
+
+  it('hasCloudUnit returns false for unknown unit and true for registered unit', () => {
+    expect(registry.hasCloudUnit(UNIT_ID)).to.equal(false);
+
+    registry.registerCloud(UNIT_ID, mock.device, {
+      plantId: PLANT_ID,
+      client: mockClient,
+    });
+
+    expect(registry.hasCloudUnit(UNIT_ID)).to.equal(true);
+  });
+
+  it('restoreCloudAuth restores polling after auth failure', async () => {
+    const { AuthenticationError: AuthErr } = require('../lib/flexitCloudClient.ts');
+    const client = makeMockCloudClient({});
+    client.readDatapoints.rejects(new AuthErr('Token expired'));
+
+    registry.registerCloud(UNIT_ID, mock.device, {
+      plantId: PLANT_ID,
+      client,
+    });
+    await sleep(50);
+
+    // Device should be unavailable with polling stopped
+    expect(mock.device.setUnavailable.called).to.equal(true);
+    const unit = (registry as any).units.get(UNIT_ID);
+    expect(unit.pollInterval).to.equal(null);
+
+    // Now restore auth with a fresh token and make reads succeed again
+    client.readDatapoints.resolves({});
+    const newToken = {
+      accessToken: 'new-access',
+      refreshToken: 'new-refresh',
+      expiresAt: Date.now() + 86400000,
+    };
+    registry.restoreCloudAuth(UNIT_ID, newToken);
+    await sleep(50);
+
+    expect(client.restoreToken.calledWith(newToken)).to.equal(true);
+    expect(mock.device.setAvailable.called).to.equal(true);
+    expect(unit.pollInterval).to.not.equal(null);
+  });
+
+  it('restoreCloudAuth preserves existing refresh token when new token has null', async () => {
+    registry.registerCloud(UNIT_ID, mock.device, {
+      plantId: PLANT_ID,
+      client: mockClient,
+    });
+    await sleep(50);
+
+    // Simulate the client already having a refresh token
+    mockClient.getToken.returns({
+      accessToken: 'old-access',
+      refreshToken: 'existing-refresh',
+      expiresAt: Date.now() + 86400000,
+    });
+
+    const tokenWithoutRefresh = {
+      accessToken: 'new-access',
+      refreshToken: null,
+      expiresAt: Date.now() + 86400000,
+    };
+    registry.restoreCloudAuth(UNIT_ID, tokenWithoutRefresh);
+
+    const restored = mockClient.restoreToken.lastCall.args[0];
+    expect(restored.accessToken).to.equal('new-access');
+    expect(restored.refreshToken).to.equal('existing-refresh');
   });
 
   it('propagates AuthenticationError from cloud write', async () => {
