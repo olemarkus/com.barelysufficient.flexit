@@ -917,17 +917,55 @@ export class UnitRegistry {
         };
         this.units.set(unitId, unit);
 
-        this.cloudPollUnit(unit).catch((err) => {
-          this.warn(`[UnitRegistry] Initial cloud poll failed for ${unitId}:`, err);
-        });
-        unit.pollInterval = setInterval(() => {
-          this.cloudPollUnit(unit!).catch((err) => {
-            this.warn(`[UnitRegistry] Cloud poll failed for ${unitId}:`, err);
-          });
-        }, CLOUD_POLL_INTERVAL_MS);
+        this.startCloudPolling(unit);
       }
       unit.devices.add(device);
       return unit.cloud!.client;
+    }
+
+    hasCloudUnit(unitId: string): boolean {
+      const unit = this.units.get(unitId);
+      return !!unit && unit.transport === 'cloud' && !!unit.cloud;
+    }
+
+    restoreCloudAuth(unitId: string, token: import('./flexitCloudClient').CloudToken) {
+      const unit = this.units.get(unitId);
+      if (!unit || unit.transport !== 'cloud' || !unit.cloud) {
+        throw new Error(`Unit ${unitId} is not a registered cloud unit`);
+      }
+
+      const mergedToken = { ...token };
+      if (!mergedToken.refreshToken) {
+        const existing = unit.cloud.client.getToken();
+        if (existing?.refreshToken) {
+          mergedToken.refreshToken = existing.refreshToken;
+        }
+      }
+      unit.cloud.client.restoreToken(mergedToken);
+      unit.available = true;
+      unit.consecutiveFailures = 0;
+
+      for (const device of unit.devices) {
+        device.setAvailable().catch((e) => {
+          this.warn(`[UnitRegistry] Failed to set device available for ${unitId}:`, e);
+        });
+      }
+
+      if (!unit.pollInterval) {
+        this.startCloudPolling(unit);
+      }
+    }
+
+    private startCloudPolling(unit: UnitState) {
+      const { unitId } = unit;
+      this.cloudPollUnit(unit).catch((err) => {
+        this.warn(`[UnitRegistry] Cloud poll failed for ${unitId}:`, err);
+      });
+      unit.pollInterval = setInterval(() => {
+        this.cloudPollUnit(unit).catch((err) => {
+          this.warn(`[UnitRegistry] Cloud poll failed for ${unitId}:`, err);
+        });
+      }, CLOUD_POLL_INTERVAL_MS);
     }
 
     unregister(unitId: string, device: FlexitDevice) {
@@ -1082,6 +1120,7 @@ export class UnitRegistry {
     }
 
     async resetFilterTimer(unitId: string) {
+      this.log(`[UnitRegistry] Resetting filter timer for ${unitId}`);
       const unit = this.units.get(unitId);
       if (!unit) throw new Error('Unit not found');
       if (unit.transport === 'cloud') return this.cloudResetFilterTimer(unit);
@@ -1091,8 +1130,6 @@ export class UnitRegistry {
         maxApdu: BacnetEnums.MaxApduLengthAccepted.OCTETS_1476,
         priority: DEFAULT_WRITE_PRIORITY,
       };
-
-      this.log(`[UnitRegistry] Resetting filter timer for ${unitId}`);
 
       return this.enqueueWrite(unit, async () => {
         const context: FanModeWriteContext = {
@@ -1122,6 +1159,7 @@ export class UnitRegistry {
     }
 
     async setFilterChangeInterval(unitId: string, requestedHours: number) {
+      this.log(`[UnitRegistry] Setting filter change interval to ${requestedHours}h for ${unitId}`);
       const unit = this.units.get(unitId);
       if (!unit) throw new Error('Unit not found');
       if (unit.transport === 'cloud') return this.cloudSetFilterChangeInterval(unit, requestedHours);
@@ -1132,8 +1170,6 @@ export class UnitRegistry {
         maxApdu: BacnetEnums.MaxApduLengthAccepted.OCTETS_1476,
         priority: DEFAULT_WRITE_PRIORITY,
       };
-
-      this.log(`[UnitRegistry] Setting filter change interval to ${intervalHours}h for ${unitId}`);
 
       return this.enqueueWrite(unit, async () => {
         const context: FanModeWriteContext = {
@@ -1175,6 +1211,7 @@ export class UnitRegistry {
     }
 
     async setFireplaceVentilationDuration(unitId: string, requestedMinutes: number) {
+      this.log(`[UnitRegistry] Setting fireplace duration to ${requestedMinutes} min for ${unitId}`);
       const unit = this.units.get(unitId);
       if (!unit) throw new Error('Unit not found');
       if (unit.transport === 'cloud') return this.cloudSetFireplaceVentilationDuration(unit, requestedMinutes);
@@ -1185,8 +1222,6 @@ export class UnitRegistry {
         maxApdu: BacnetEnums.MaxApduLengthAccepted.OCTETS_1476,
         priority: DEFAULT_WRITE_PRIORITY,
       };
-
-      this.log(`[UnitRegistry] Setting fireplace duration to ${durationMinutes} minutes for ${unitId}`);
 
       return this.enqueueWrite(unit, async () => {
         const context: FanModeWriteContext = {
@@ -1233,6 +1268,10 @@ export class UnitRegistry {
       requestedExhaustPercent: number,
     ) {
       if (!isFanProfileMode(mode)) throw new Error(`Unsupported fan profile mode '${mode}'`);
+      this.log(
+        `[UnitRegistry] Setting ${mode} fan profile`
+        + ` supply=${requestedSupplyPercent}% exhaust=${requestedExhaustPercent}% for ${unitId}`,
+      );
 
       const unit = this.units.get(unitId);
       if (!unit) throw new Error('Unit not found');
@@ -1247,11 +1286,6 @@ export class UnitRegistry {
         maxApdu: BacnetEnums.MaxApduLengthAccepted.OCTETS_1476,
         priority: DEFAULT_WRITE_PRIORITY,
       };
-
-      this.log(
-        `[UnitRegistry] Setting ${mode} fan profile`
-        + ` supply=${supplyPercent}% exhaust=${exhaustPercent}% for ${unitId}`,
-      );
 
       return this.enqueueWrite(unit, async () => {
         const context: FanModeWriteContext = {
@@ -2133,12 +2167,11 @@ export class UnitRegistry {
     }
 
     async setHeatingCoilEnabled(unitId: string, enabled: boolean) {
+      const state = enabled ? 'on' : 'off';
+      this.log(`[UnitRegistry] Setting heating coil ${state} for ${unitId}`);
       const unit = this.units.get(unitId);
       if (!unit) throw new Error('Unit not found');
       if (unit.transport === 'cloud') return this.cloudSetHeatingCoilEnabled(unit, enabled);
-
-      const state = enabled ? 'on' : 'off';
-      this.log(`[UnitRegistry] Setting heating coil ${state} for ${unitId}`);
       const writeOptions: WriteOptions = {
         maxSegments: BacnetEnums.MaxSegmentsAccepted.SEGMENTS_0,
         maxApdu: BacnetEnums.MaxApduLengthAccepted.OCTETS_1476,
@@ -2168,11 +2201,10 @@ export class UnitRegistry {
     }
 
     async setFanMode(unitId: string, mode: string) {
+      this.log(`[UnitRegistry] Setting fan mode to '${mode}' for ${unitId}`);
       const unit = this.units.get(unitId);
       if (!unit) throw new Error('Unit not found');
       if (unit.transport === 'cloud') return this.cloudSetFanMode(unit, mode);
-
-      this.log(`[UnitRegistry] Setting fan mode to '${mode}' for ${unitId}`);
       const writeOptions: WriteOptions = {
         maxSegments: BacnetEnums.MaxSegmentsAccepted.SEGMENTS_0,
         maxApdu: BacnetEnums.MaxApduLengthAccepted.OCTETS_1476,
@@ -2667,7 +2699,7 @@ export class UnitRegistry {
             unit.pollInterval = null;
           }
           for (const device of unit.devices) {
-            device.setUnavailable('Cloud authentication failed. Please re-pair the device.')
+            device.setUnavailable('Cloud authentication failed. Please repair the device.')
               .catch((e) => {
                 this.warn(`[UnitRegistry] Failed to set device unavailable for ${unit.unitId}:`, e);
               });
