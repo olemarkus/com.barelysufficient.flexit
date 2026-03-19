@@ -152,7 +152,7 @@ describe('bacnet-read-probe', () => {
     expect(nodes).to.deep.equal([{ type: Bacnet.enum.ApplicationTags.REAL, value: 1.5 }]);
   });
 
-  it('covers direct and empty readProperty node extraction branches', () => {
+  it('returns direct, empty, and null readProperty node lists', () => {
     const direct = probe.extractReadPropertyNodes({
       values: [{ type: Bacnet.enum.ApplicationTags.REAL, value: 9.5 }],
     });
@@ -287,7 +287,7 @@ describe('bacnet-read-probe', () => {
       .to.include('REAL=');
   });
 
-  it('renders BACnet values across no-value and error branches', () => {
+  it('renders null and error BACnet values consistently', () => {
     expect(probe.renderBacnetValue(null)).to.equal('<no-value>');
     expect(probe.renderBacnetValue({
       type: Bacnet.enum.ApplicationTags.ERROR,
@@ -419,7 +419,7 @@ describe('bacnet-read-probe', () => {
     )).to.equal(false);
   });
 
-  it('covers strict comparison branches for valuesEqual', () => {
+  it('treats NaN as equal and rejects mismatched value shapes', () => {
     expect(probe.valuesEqual(NaN, NaN)).to.equal(true);
     expect(probe.valuesEqual(null, undefined)).to.equal(false);
     expect(probe.valuesEqual([1, 2], [1])).to.equal(false);

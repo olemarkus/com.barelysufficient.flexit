@@ -75,7 +75,7 @@ describe('fake-unit discovery responder', () => {
     }
   });
 
-  it('covers self-address and external-reply logging branches', () => {
+  it('logs unique external replies and skips self-originated replies', () => {
     const logStub = sinon.stub(console, 'log');
     const responder = new DiscoveryResponder({
       bindAddress: '192.0.2.10',
@@ -138,7 +138,7 @@ describe('fake-unit discovery responder', () => {
     expect(logStub.called).to.equal(false);
   });
 
-  it('covers mocked socket setup, multicast error handling, and reply variants', async () => {
+  it('starts mocked sockets, replies to discovery, and logs multicast setup failures', async () => {
     const errorStub = sinon.stub(console, 'error');
 
     const createSocket = (membershipFails = false, interfaceFails = false) => {

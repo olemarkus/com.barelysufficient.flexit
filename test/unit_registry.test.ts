@@ -94,7 +94,7 @@ describe('UnitRegistry', () => {
     registry.destroy();
   });
 
-  it('should write fan mode correctly', async () => {
+  it('writes away mode via BV:50 with priority 13', async () => {
     const mockDevice = makeMockDevice();
     registry.register('test_unit', mockDevice);
 

@@ -12,7 +12,7 @@
   "main": "app.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "lint": "eslint . --ext .ts --max-warnings=0",
+    "lint": "node scripts/check-test-titles.js && eslint . --ext .ts --max-warnings=0",
     "lint:fix": "eslint . --ext .ts --fix",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run typecheck && c8 --reporter=text --reporter=lcov mocha --require ts-node/register test/**/*.ts",
