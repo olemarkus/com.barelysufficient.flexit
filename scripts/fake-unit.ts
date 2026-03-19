@@ -184,7 +184,7 @@ export function parseArgs(argv: string[]): CliOptions {
     mac: args.get('--mac') ?? autoMac ?? DEFAULT_MAC,
     vendorName: args.get('--vendor-name') ?? DEFAULT_VENDOR_NAME,
     vendorId: parseNumber(args.get('--vendor-id'), DEFAULT_VENDOR_ID),
-    timeScale: parseNumber(args.get('--time-scale'), 60),
+    timeScale: parseNumber(args.get('--time-scale'), 1),
     periodicIAmMs: parseNumber(args.get('--periodic-iam-ms'), 20000),
     tickMs: parseNumber(args.get('--tick-ms'), 1000),
   };
@@ -214,7 +214,7 @@ export function printUsage() {
   console.log('  --model <string>           Model name for BACnet device properties');
   console.log('  --firmware <string>        Firmware revision string');
   console.log('  --mac <aa:bb:cc:dd:ee:ff>  MAC in discovery reply');
-  console.log('  --time-scale <n>           Sim speed (1=real, 60=1 min/s)');
+  console.log('  --time-scale <n>           Sim speed (default 1=real, 60=1 min/s)');
   console.log('  --periodic-iam-ms <ms>     Periodic I-Am broadcast interval');
 }
 

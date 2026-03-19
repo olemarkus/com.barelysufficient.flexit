@@ -28,6 +28,7 @@ Useful options:
 - `--serial 800111-123456`
 - `--device-id 123456` (optional; default is derived from serial to avoid collisions)
 - `--name HvacFnct21y_A`
+- `--time-scale 1` (default, real time)
 - `--time-scale 60` (1 simulated minute per real second)
 - `--quiet` (disable discovery + BACnet traffic logs)
 - `--go-login-key ABCDEF-GHJKL-MNPQR-STUVW-XYZ12` (override proprietary 264:2:4743 response)

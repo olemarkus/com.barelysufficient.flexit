@@ -345,7 +345,25 @@ describe('fake-unit state', () => {
     expect(state.advanceSimulatedSeconds(0)).to.equal(undefined);
   });
 
-  it('tracks away delay, trigger writes, and direct runtime writes', () => {
+  it('reports configured runtimes on inactive temporary ventilation points', () => {
+    const state = createState();
+
+    const remainingRapid = state.readPresentValue(OBJECT_TYPE.ANALOG_VALUE, 2031, PROPERTY_ID.PRESENT_VALUE);
+    const remainingFireplace = state.readPresentValue(OBJECT_TYPE.ANALOG_VALUE, 2038, PROPERTY_ID.PRESENT_VALUE);
+    const remainingTempVent = state.readPresentValue(OBJECT_TYPE.ANALOG_VALUE, 2005, PROPERTY_ID.PRESENT_VALUE);
+
+    if (!remainingRapid.ok || !remainingFireplace.ok || !remainingTempVent.ok) {
+      throw new Error('Expected temporary ventilation points to be readable');
+    }
+
+    expect(state.summary().mode).to.equal('home');
+    expect(state.summary().timers.rapidMinutes).to.equal(0);
+    expect(remainingRapid.value.value).to.equal(10);
+    expect(remainingFireplace.value.value).to.equal(10);
+    expect(remainingTempVent.value.value).to.equal(0);
+  });
+
+  it('tracks away delay and the observed rapid/fireplace trigger sequence', () => {
     const state = createState();
     const rapidRuntime = pointByName('runtime_rapid');
     const rapidTrigger = pointByName('trigger_rapid');
@@ -400,7 +418,102 @@ describe('fake-unit state', () => {
         13,
       ).ok,
     ).to.equal(true);
+    expect(state.summary().timers.rapidMinutes).to.equal(0);
+    expect(state.summary().mode).to.equal('fireplace');
     expect(state.summary().timers.fireplaceMinutes).to.be.greaterThan(0);
+  });
+
+  it('only enters fireplace after rapid ventilation has been cleared', () => {
+    const state = createState();
+    const rapidTrigger = pointByName('trigger_rapid');
+    const fireplaceRuntime = pointByName('runtime_fireplace');
+    const fireplaceTrigger = pointByName('trigger_fireplace');
+
+    expect(state.startRapid(10).ok).to.equal(true);
+    expect(state.summary().mode).to.equal('high');
+
+    expect(
+      state.writePresentValue(
+        fireplaceRuntime.type,
+        fireplaceRuntime.instance,
+        PROPERTY_ID.PRESENT_VALUE,
+        18,
+        16,
+      ).ok,
+    ).to.equal(true);
+    expect(
+      state.writePresentValue(
+        fireplaceTrigger.type,
+        fireplaceTrigger.instance,
+        PROPERTY_ID.PRESENT_VALUE,
+        2,
+        16,
+      ).ok,
+    ).to.equal(true);
+    expect(state.summary().mode).to.equal('high');
+    expect(state.summary().timers.fireplaceMinutes).to.equal(18);
+
+    expect(
+      state.writePresentValue(
+        rapidTrigger.type,
+        rapidTrigger.instance,
+        PROPERTY_ID.PRESENT_VALUE,
+        2,
+        16,
+      ).ok,
+    ).to.equal(true);
+    expect(state.summary().timers.rapidMinutes).to.equal(0);
+
+    expect(
+      state.writePresentValue(
+        fireplaceRuntime.type,
+        fireplaceRuntime.instance,
+        PROPERTY_ID.PRESENT_VALUE,
+        18,
+        16,
+      ).ok,
+    ).to.equal(true);
+    expect(
+      state.writePresentValue(
+        fireplaceTrigger.type,
+        fireplaceTrigger.instance,
+        PROPERTY_ID.PRESENT_VALUE,
+        2,
+        16,
+      ).ok,
+    ).to.equal(true);
+    expect(state.summary().mode).to.equal('fireplace');
+    expect(state.summary().timers.fireplaceMinutes).to.be.greaterThan(0);
+  });
+
+  it('does not enter fireplace on rapid/fireplace trigger sequence without a fresh fireplace runtime write', () => {
+    const state = createState();
+    const rapidTrigger = pointByName('trigger_rapid');
+    const fireplaceTrigger = pointByName('trigger_fireplace');
+
+    expect(
+      state.writePresentValue(
+        rapidTrigger.type,
+        rapidTrigger.instance,
+        PROPERTY_ID.PRESENT_VALUE,
+        2,
+        13,
+      ).ok,
+    ).to.equal(true);
+    expect(
+      state.writePresentValue(
+        fireplaceTrigger.type,
+        fireplaceTrigger.instance,
+        PROPERTY_ID.PRESENT_VALUE,
+        2,
+        13,
+      ).ok,
+    ).to.equal(true);
+
+    const summary = state.summary();
+    expect(summary.mode).to.equal('high');
+    expect(summary.timers.fireplaceMinutes).to.equal(10);
+    expect(summary.timers.rapidMinutes).to.be.greaterThan(0);
   });
 
   it('toggles fireplace ventilation off when re-triggered while already active', () => {
@@ -449,17 +562,32 @@ describe('fake-unit state', () => {
     expect(inactiveSummary.mode).to.equal('home');
     expect(inactiveSummary.timers.fireplaceMinutes).to.be.closeTo(18, 0.1);
 
+    const inactiveRemainingFireplace = state.readPresentValue(
+      OBJECT_TYPE.ANALOG_VALUE,
+      2038,
+      PROPERTY_ID.PRESENT_VALUE,
+    );
     const fireplaceActive = state.readPresentValue(OBJECT_TYPE.BINARY_VALUE, 400, PROPERTY_ID.PRESENT_VALUE);
     const operationMode = state.readPresentValue(OBJECT_TYPE.MULTI_STATE_VALUE, 361, PROPERTY_ID.PRESENT_VALUE);
-    if (!fireplaceActive.ok || !operationMode.ok) {
-      throw new Error('Expected fireplace active and operation mode points to be readable');
+    if (!inactiveRemainingFireplace.ok || !fireplaceActive.ok || !operationMode.ok) {
+      throw new Error('Expected fireplace runtime and mode points to be readable');
     }
+    expect(inactiveRemainingFireplace.value.value).to.equal(18);
     expect(fireplaceActive.value.value).to.equal(0);
     expect(operationMode.value.value).to.equal(OPERATION_MODE_VALUES.HOME);
 
     state.advanceSimulatedSeconds(60);
     expect(state.summary().timers.fireplaceMinutes).to.be.closeTo(inactiveSummary.timers.fireplaceMinutes, 0.05);
 
+    expect(
+      state.writePresentValue(
+        fireplaceRuntime.type,
+        fireplaceRuntime.instance,
+        PROPERTY_ID.PRESENT_VALUE,
+        18,
+        13,
+      ).ok,
+    ).to.equal(true);
     expect(
       state.writePresentValue(
         fireplaceTrigger.type,
@@ -500,13 +628,16 @@ describe('fake-unit state', () => {
 
   it('does not infer fireplace mode from stale remaining runtime on startup', () => {
     const remainingFireplaceKey = pointKey(OBJECT_TYPE.ANALOG_VALUE, 2038);
+    const runtimeFireplaceKey = pointKey(OBJECT_TYPE.POSITIVE_INTEGER_VALUE, 270);
     const fireplaceActiveKey = pointKey(OBJECT_TYPE.BINARY_VALUE, 400);
     const operationModeKey = pointKey(OBJECT_TYPE.MULTI_STATE_VALUE, 361);
     const originalRemainingFireplace = DEFAULT_POINT_VALUES[remainingFireplaceKey];
+    const originalRuntimeFireplace = DEFAULT_POINT_VALUES[runtimeFireplaceKey];
     const originalFireplaceActive = DEFAULT_POINT_VALUES[fireplaceActiveKey];
     const originalOperationMode = DEFAULT_POINT_VALUES[operationModeKey];
 
     DEFAULT_POINT_VALUES[remainingFireplaceKey] = 18;
+    DEFAULT_POINT_VALUES[runtimeFireplaceKey] = 18;
     DEFAULT_POINT_VALUES[fireplaceActiveKey] = 0;
     DEFAULT_POINT_VALUES[operationModeKey] = OPERATION_MODE_VALUES.HOME;
 
@@ -536,6 +667,7 @@ describe('fake-unit state', () => {
       expect(operationMode.value.value).to.equal(OPERATION_MODE_VALUES.HOME);
     } finally {
       DEFAULT_POINT_VALUES[remainingFireplaceKey] = originalRemainingFireplace;
+      DEFAULT_POINT_VALUES[runtimeFireplaceKey] = originalRuntimeFireplace;
       DEFAULT_POINT_VALUES[fireplaceActiveKey] = originalFireplaceActive;
       DEFAULT_POINT_VALUES[operationModeKey] = originalOperationMode;
     }

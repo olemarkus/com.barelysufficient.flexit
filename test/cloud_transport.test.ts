@@ -398,6 +398,94 @@ describe('Cloud transport – UnitRegistry integration', () => {
     expect(ventCall).to.not.equal(undefined);
   });
 
+  it('cancels fireplace before writing home mode via cloud', async () => {
+    const sensorValues = defaultSensorValues().map((entry) => ({ ...entry }));
+    const ventilationMode = sensorValues.find((entry) => entry.type === OBJ.MULTI_STATE_VALUE && entry.instance === 42);
+    const operationMode = sensorValues.find((entry) => entry.type === OBJ.MULTI_STATE_VALUE && entry.instance === 361);
+    const fireplaceState = sensorValues.find((entry) => entry.type === OBJ.BINARY_VALUE && entry.instance === 400);
+    const remainingTempVent = sensorValues.find((entry) => entry.type === OBJ.ANALOG_VALUE && entry.instance === 2005);
+    if (!ventilationMode || !operationMode || !fireplaceState || !remainingTempVent) {
+      throw new Error('Expected default sensor values for temp ventilation reset test');
+    }
+
+    ventilationMode.value = 4;
+    operationMode.value = 6;
+    fireplaceState.value = 1;
+    remainingTempVent.value = 12;
+
+    mockClient = makeMockCloudClient({ sensorValues });
+    registry.registerCloud(UNIT_ID, mock.device, {
+      plantId: PLANT_ID,
+      client: mockClient,
+    });
+    await sleep(50);
+
+    await registry.setFanMode(UNIT_ID, 'home');
+
+    const calls = mockClient.writeDatapoint.getCalls();
+    const ventCall = calls.find(
+      (c: any) => c.args[1] === bacnetObjectToCloudPath(19, 42) && c.args[2] === 3,
+    );
+    const rapidTriggerCall = calls.find(
+      (c: any) => c.args[1] === bacnetObjectToCloudPath(19, 357) && c.args[2] === 2,
+    );
+    const fireplaceTriggerCall = calls.find(
+      (c: any) => c.args[1] === bacnetObjectToCloudPath(19, 360) && c.args[2] === 2,
+    );
+    const resetTempVentCall = calls.find(
+      (c: any) => c.args[1] === bacnetObjectToCloudPath(5, 452),
+    );
+
+    expect(fireplaceTriggerCall).to.not.equal(undefined);
+    expect(ventCall).to.not.equal(undefined);
+    expect(rapidTriggerCall).to.equal(undefined);
+    expect(resetTempVentCall).to.equal(undefined);
+  });
+
+  it('cancels temporary high before writing home mode via cloud', async () => {
+    const sensorValues = defaultSensorValues().map((entry) => ({ ...entry }));
+    const ventilationMode = sensorValues.find((entry) => entry.type === OBJ.MULTI_STATE_VALUE && entry.instance === 42);
+    const operationMode = sensorValues.find((entry) => entry.type === OBJ.MULTI_STATE_VALUE && entry.instance === 361);
+    const rapidState = sensorValues.find((entry) => entry.type === OBJ.BINARY_VALUE && entry.instance === 15);
+    const remainingTempVent = sensorValues.find((entry) => entry.type === OBJ.ANALOG_VALUE && entry.instance === 2005);
+    if (!ventilationMode || !operationMode || !rapidState || !remainingTempVent) {
+      throw new Error('Expected default sensor values for rapid ventilation cancel test');
+    }
+
+    ventilationMode.value = 4;
+    operationMode.value = 7;
+    rapidState.value = 1;
+    remainingTempVent.value = 12;
+
+    mockClient = makeMockCloudClient({ sensorValues });
+    registry.registerCloud(UNIT_ID, mock.device, {
+      plantId: PLANT_ID,
+      client: mockClient,
+    });
+    await sleep(50);
+
+    await registry.setFanMode(UNIT_ID, 'home');
+
+    const calls = mockClient.writeDatapoint.getCalls();
+    const ventCall = calls.find(
+      (c: any) => c.args[1] === bacnetObjectToCloudPath(19, 42) && c.args[2] === 3,
+    );
+    const rapidTriggerCall = calls.find(
+      (c: any) => c.args[1] === bacnetObjectToCloudPath(19, 357) && c.args[2] === 2,
+    );
+    const fireplaceTriggerCall = calls.find(
+      (c: any) => c.args[1] === bacnetObjectToCloudPath(19, 360) && c.args[2] === 2,
+    );
+    const resetTempVentCall = calls.find(
+      (c: any) => c.args[1] === bacnetObjectToCloudPath(5, 452),
+    );
+
+    expect(ventCall).to.not.equal(undefined);
+    expect(rapidTriggerCall).to.not.equal(undefined);
+    expect(fireplaceTriggerCall).to.equal(undefined);
+    expect(resetTempVentCall).to.equal(undefined);
+  });
+
   it('writes fan mode fireplace via cloud', async () => {
     registry.registerCloud(UNIT_ID, mock.device, {
       plantId: PLANT_ID,
@@ -407,12 +495,56 @@ describe('Cloud transport – UnitRegistry integration', () => {
 
     await registry.setFanMode(UNIT_ID, 'fireplace');
 
-    // fireplace writes comfort button, runtime, then trigger (MSV:360) = 2
+    // fireplace writes the observed rapid/fireplace trigger sequence.
     const calls = mockClient.writeDatapoint.getCalls();
-    const triggerCall = calls.find(
+    const runtimeCall = calls.find(
+      (c: any) => c.args[1] === bacnetObjectToCloudPath(48, 270) && c.args[2] === 10,
+    );
+    const rapidTriggerCall = calls.find(
+      (c: any) => c.args[1] === bacnetObjectToCloudPath(19, 357) && c.args[2] === 2,
+    );
+    const fireplaceTriggerCall = calls.find(
       (c: any) => c.args[1] === bacnetObjectToCloudPath(19, 360) && c.args[2] === 2,
     );
-    expect(triggerCall).to.not.equal(undefined);
+    const resetTempVentCall = calls.find(
+      (c: any) => c.args[1] === bacnetObjectToCloudPath(5, 452),
+    );
+    expect(runtimeCall).to.not.equal(undefined);
+    expect(rapidTriggerCall).to.equal(undefined);
+    expect(fireplaceTriggerCall).to.not.equal(undefined);
+    expect(resetTempVentCall).to.equal(undefined);
+  });
+
+  it('writes rapid then fireplace when switching temporary high to fireplace via cloud', async () => {
+    const sensorValues = defaultSensorValues().map((entry) => ({ ...entry }));
+    const operationMode = sensorValues.find((entry) => entry.type === OBJ.MULTI_STATE_VALUE && entry.instance === 361);
+    const rapidState = sensorValues.find((entry) => entry.type === OBJ.BINARY_VALUE && entry.instance === 15);
+    if (!operationMode || !rapidState) {
+      throw new Error('Expected default sensor values for temporary high fireplace test');
+    }
+
+    operationMode.value = 7;
+    rapidState.value = 1;
+
+    mockClient = makeMockCloudClient({ sensorValues });
+    registry.registerCloud(UNIT_ID, mock.device, {
+      plantId: PLANT_ID,
+      client: mockClient,
+    });
+    await sleep(50);
+
+    await registry.setFanMode(UNIT_ID, 'fireplace');
+
+    const calls = mockClient.writeDatapoint.getCalls();
+    const rapidTriggerCall = calls.find(
+      (c: any) => c.args[1] === bacnetObjectToCloudPath(19, 357) && c.args[2] === 2,
+    );
+    const fireplaceTriggerCall = calls.find(
+      (c: any) => c.args[1] === bacnetObjectToCloudPath(19, 360) && c.args[2] === 2,
+    );
+
+    expect(rapidTriggerCall).to.not.equal(undefined);
+    expect(fireplaceTriggerCall).to.not.equal(undefined);
   });
 
   it('resets filter timer via cloud', async () => {
