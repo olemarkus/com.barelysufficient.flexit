@@ -490,7 +490,7 @@ describe('fake-unit bacnet server', () => {
     }]);
   });
 
-  it('covers direct property reads for documented, alias, overlay, and login objects', () => {
+  it('reads documented, alias, overlay, and login object properties directly', () => {
     const { server } = createHarness();
     const identity = (server as any).state.getIdentity();
 

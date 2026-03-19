@@ -283,7 +283,7 @@ describe('fake-unit state', () => {
     ).to.equal(false);
   });
 
-  it('covers missing-object and first-write failure paths for fan mode changes', () => {
+  it('fails fan mode changes when required points are missing or the first write fails', () => {
     const missingAwayState = createState();
     (missingAwayState as any).pointsByName.delete('comfort_button');
     expect(missingAwayState.setFanMode('away').ok).to.equal(false);
