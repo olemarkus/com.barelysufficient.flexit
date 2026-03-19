@@ -25,6 +25,7 @@ const MINUTES_PER_HOUR = 60;
 const SECONDS_PER_MINUTE = 60;
 const DEFAULT_BACNET_WRITE_PRIORITY = 13;
 const COOKER_HOOD_EXTERNAL_PRIORITY = 15;
+const FIREPLACE_TRIGGER_PRIME_WINDOW_MS = 5000;
 
 export interface FakeUnitIdentity {
   deviceId: number;
@@ -137,6 +138,10 @@ export class FakeNordicUnitState {
 
   private mode: FanMode = 'home';
 
+  private rapidTriggerPrimedUntilMs = 0;
+
+  private fireplaceRuntimePrimedUntilMs = 0;
+
   constructor(options: FakeUnitOptions) {
     this.identity = options.identity;
     this.timeScale = Math.max(0.1, options.timeScale);
@@ -160,12 +165,18 @@ export class FakeNordicUnitState {
       this.syncCookerHoodEffectiveValue();
     }
 
-    this.rapidRemainingMinutes = this.getByName('remaining_rapid');
-    this.fireplaceRemainingMinutes = this.getByName('remaining_fireplace');
     const fireplaceActive = asInteger(this.getByName('fireplace_active')) === 1;
+    const rapidActive = asInteger(this.getByName('rapid_active')) === 1;
     const operationMode = asInteger(this.getByName('operation_mode'));
     this.fireplaceVentilationActive = fireplaceActive
       || operationMode === OPERATION_MODE_VALUES.FIREPLACE;
+    this.rapidRemainingMinutes = rapidActive
+      || operationMode === OPERATION_MODE_VALUES.TEMPORARY_HIGH
+      ? clamp(this.getByName('remaining_temp_vent'), 0, 360)
+      : 0;
+    this.fireplaceRemainingMinutes = this.fireplaceVentilationActive
+      ? clamp(this.getByName('remaining_temp_vent'), 1, 360)
+      : clamp(this.getByName('runtime_fireplace'), 1, 360);
     this.mode = this.computeMode();
     this.recomputeDerivedValues(0);
   }
@@ -195,6 +206,7 @@ export class FakeNordicUnitState {
         this.fireplaceRemainingMinutes = Math.max(0, this.fireplaceRemainingMinutes - elapsedMinutes);
         if (this.fireplaceRemainingMinutes === 0) {
           this.fireplaceVentilationActive = false;
+          this.reloadFireplaceRuntime();
         }
       }
 
@@ -383,14 +395,23 @@ export class FakeNordicUnitState {
         );
       }
       case 'fireplace': {
+        const runtime = this.getPointByName('runtime_fireplace');
         const trigger = this.getPointByName('trigger_fireplace');
-        if (!trigger) {
+        if (!runtime || !trigger) {
           return this.failure(
             ERROR_CLASS.OBJECT,
             ERROR_CODE.UNKNOWN_OBJECT,
-            'Missing fireplace trigger object',
+            'Missing fireplace trigger objects',
           );
         }
+        const runtimeWrite = this.writePresentValue(
+          runtime.type,
+          runtime.instance,
+          PROPERTY_ID.PRESENT_VALUE,
+          this.getByName('runtime_fireplace'),
+          13,
+        );
+        if (!runtimeWrite.ok) return runtimeWrite;
         return this.writePresentValue(trigger.type, trigger.instance, PROPERTY_ID.PRESENT_VALUE, 2, 13);
       }
       default:
@@ -523,10 +544,14 @@ export class FakeNordicUnitState {
 
     this.mode = this.computeMode();
     const cookerHoodActive = asInteger(this.getByName('cooker_hood')) === 1;
+    const temporaryVentilationRemaining = Math.max(
+      this.rapidRemainingMinutes,
+      this.fireplaceVentilationActive ? this.fireplaceRemainingMinutes : 0,
+    );
 
     this.setByName('rapid_active', this.rapidRemainingMinutes > 0 ? 1 : 0);
     this.setByName('fireplace_active', this.fireplaceVentilationActive ? 1 : 0);
-    this.setByName('remaining_temp_vent', this.rapidRemainingMinutes);
+    this.setByName('remaining_temp_vent', temporaryVentilationRemaining);
     this.setByName(
       'away_delay_active',
       asInteger(this.getByName('comfort_button')) === 0 && this.awayDelayRemainingMinutes > 0 ? 1 : 0,
@@ -595,8 +620,14 @@ export class FakeNordicUnitState {
   }
 
   private syncTimerPoints() {
-    this.setByName('remaining_rapid', roundTo(this.rapidRemainingMinutes, 3));
-    this.setByName('remaining_fireplace', roundTo(this.fireplaceRemainingMinutes, 3));
+    const reportedRapidRemaining = this.rapidRemainingMinutes > 0
+      ? this.rapidRemainingMinutes
+      : clamp(this.getByName('runtime_rapid'), 1, 360);
+    const reportedFireplaceRemaining = this.fireplaceVentilationActive
+      ? this.fireplaceRemainingMinutes
+      : clamp(this.getByName('runtime_fireplace'), 1, 360);
+    this.setByName('remaining_rapid', roundTo(reportedRapidRemaining, 3));
+    this.setByName('remaining_fireplace', roundTo(reportedFireplaceRemaining, 3));
     this.setByName('trigger_rapid', 1);
     this.setByName('trigger_fireplace', 1);
   }
@@ -658,13 +689,37 @@ export class FakeNordicUnitState {
     }
 
     if (point.name === 'trigger_rapid' && asInteger(value) === 2) {
+      this.rapidTriggerPrimedUntilMs = Date.now() + FIREPLACE_TRIGGER_PRIME_WINDOW_MS;
+      if (this.rapidRemainingMinutes > 0) {
+        this.rapidRemainingMinutes = 0;
+        this.setByName('trigger_rapid', 1);
+        return;
+      }
       this.rapidRemainingMinutes = clamp(this.getByName('runtime_rapid'), 1, 360);
       this.setByName('trigger_rapid', 1);
       return;
     }
 
     if (point.name === 'trigger_fireplace' && asInteger(value) === 2) {
+      const rapidTriggerPrimed = this.rapidTriggerPrimedUntilMs >= Date.now();
+      const fireplaceRuntimePrimed = this.fireplaceRuntimePrimedUntilMs >= Date.now();
+      this.rapidTriggerPrimedUntilMs = 0;
+      this.fireplaceRuntimePrimedUntilMs = 0;
+      if (this.rapidRemainingMinutes > 0 && !this.fireplaceVentilationActive && !rapidTriggerPrimed) {
+        this.setByName('trigger_fireplace', 1);
+        return;
+      }
+      if (!this.fireplaceVentilationActive && !fireplaceRuntimePrimed) {
+        this.setByName('trigger_fireplace', 1);
+        return;
+      }
+      if (rapidTriggerPrimed) this.rapidRemainingMinutes = 0;
       this.toggleFireplaceVentilation();
+      return;
+    }
+
+    if (point.name === 'reset_temporary_ventilation_operation' && asInteger(value) === 1) {
+      this.resetTemporaryVentilation();
       return;
     }
 
@@ -683,7 +738,12 @@ export class FakeNordicUnitState {
     }
 
     if (point.name === 'runtime_fireplace') {
-      this.setByName('runtime_fireplace', clamp(asInteger(value), point.min, point.max));
+      const runtime = clamp(asInteger(value), point.min, point.max);
+      this.setByName('runtime_fireplace', runtime);
+      if (!this.fireplaceVentilationActive) {
+        this.fireplaceRemainingMinutes = runtime;
+      }
+      this.fireplaceRuntimePrimedUntilMs = Date.now() + FIREPLACE_TRIGGER_PRIME_WINDOW_MS;
     }
   }
 
@@ -696,11 +756,21 @@ export class FakeNordicUnitState {
   private startFireplaceVentilation() {
     this.reloadFireplaceRuntime();
     this.fireplaceVentilationActive = true;
+    this.fireplaceRuntimePrimedUntilMs = 0;
     this.setByName('trigger_fireplace', 1);
   }
 
   private reloadFireplaceRuntime() {
     this.fireplaceRemainingMinutes = clamp(this.getByName('runtime_fireplace'), 1, 360);
+  }
+
+  private resetTemporaryVentilation() {
+    this.rapidRemainingMinutes = 0;
+    this.fireplaceVentilationActive = false;
+    this.reloadFireplaceRuntime();
+    this.rapidTriggerPrimedUntilMs = 0;
+    this.fireplaceRuntimePrimedUntilMs = 0;
+    this.setByName('reset_temporary_ventilation_operation', 0);
   }
 
   private setCookerHoodPriority(priority: number, value: number | null) {

@@ -707,6 +707,415 @@ describe('UnitRegistry fake-unit e2e', function unitRegistryFakeUdpE2e() {
     expect(operationMode.value.value).to.equal(OPERATION_MODE_VALUES.FIREPLACE);
   });
 
+  it('returns to home from fireplace without re-triggering high ventilation', async () => {
+    const device = makeMockDevice(SERVER_BIND_ADDRESS, serverPort, 4380);
+    registry.register('test_unit', device);
+
+    await registry.setFireplaceVentilationDuration('test_unit', 12);
+    await registry.setFanMode('test_unit', 'fireplace');
+    await waitFor(() => {
+      const fireplaceActive = state.readPresentValue(OBJECT_TYPE.BINARY_VALUE, 400, PROPERTY_ID.PRESENT_VALUE);
+      const operationMode = state.readPresentValue(OBJECT_TYPE.MULTI_STATE_VALUE, 361, PROPERTY_ID.PRESENT_VALUE);
+      const remainingTempVent = state.readPresentValue(OBJECT_TYPE.ANALOG_VALUE, 2005, PROPERTY_ID.PRESENT_VALUE);
+      return fireplaceActive.ok
+        && operationMode.ok
+        && remainingTempVent.ok
+        && fireplaceActive.value.value === 1
+        && operationMode.value.value === OPERATION_MODE_VALUES.FIREPLACE
+        && remainingTempVent.value.value > 0;
+    });
+
+    (registry as any).pollUnit('test_unit');
+    await waitFor(() => device.setCapabilityValue.getCalls().some((call: any) => (
+      call.args[0] === 'fan_mode' && call.args[1] === 'fireplace'
+    )));
+
+    writePresentValueSpy.resetHistory();
+    device.setCapabilityValue.resetHistory();
+
+    await registry.setFanMode('test_unit', 'home');
+    await waitFor(() => {
+      const fireplaceActive = state.readPresentValue(OBJECT_TYPE.BINARY_VALUE, 400, PROPERTY_ID.PRESENT_VALUE);
+      const rapidActive = state.readPresentValue(OBJECT_TYPE.BINARY_VALUE, 15, PROPERTY_ID.PRESENT_VALUE);
+      const operationMode = state.readPresentValue(OBJECT_TYPE.MULTI_STATE_VALUE, 361, PROPERTY_ID.PRESENT_VALUE);
+      const remainingTempVent = state.readPresentValue(OBJECT_TYPE.ANALOG_VALUE, 2005, PROPERTY_ID.PRESENT_VALUE);
+      return fireplaceActive.ok
+        && rapidActive.ok
+        && operationMode.ok
+        && remainingTempVent.ok
+        && fireplaceActive.value.value === 0
+        && rapidActive.value.value === 0
+        && operationMode.value.value === OPERATION_MODE_VALUES.HOME
+        && remainingTempVent.value.value === 0;
+    });
+
+    const fireplaceTriggerWrite = writePresentValueSpy.getCalls().find((call: any) => (
+      call.args[0] === OBJECT_TYPE.MULTI_STATE_VALUE
+      && call.args[1] === 360
+      && call.args[2] === PROPERTY_ID.PRESENT_VALUE
+      && call.args[3] === 2
+      && call.args[4] === 13
+    ));
+    const rapidTriggerWrite = writePresentValueSpy.getCalls().find((call: any) => (
+      call.args[0] === OBJECT_TYPE.MULTI_STATE_VALUE
+      && call.args[1] === 357
+      && call.args[2] === PROPERTY_ID.PRESENT_VALUE
+      && call.args[3] === 2
+    ));
+    const resetTempVentWrite = writePresentValueSpy.getCalls().find((call: any) => (
+      call.args[0] === OBJECT_TYPE.BINARY_VALUE
+      && call.args[1] === 452
+      && call.args[2] === PROPERTY_ID.PRESENT_VALUE
+    ));
+    expect(fireplaceTriggerWrite).to.not.equal(undefined);
+    expect(rapidTriggerWrite).to.equal(undefined);
+    expect(resetTempVentWrite).to.equal(undefined);
+
+    (registry as any).pollUnit('test_unit');
+    await waitFor(() => device.setCapabilityValue.getCalls().some((call: any) => (
+      call.args[0] === 'fan_mode' && call.args[1] === 'home'
+    )));
+  });
+
+  it('returns to home from temporary high without re-triggering rapid ventilation', async () => {
+    const device = makeMockDevice(SERVER_BIND_ADDRESS, serverPort, 4380);
+    registry.register('test_unit', device);
+
+    expect(state.startRapid(12).ok).to.equal(true);
+
+    (registry as any).pollUnit('test_unit');
+    await waitFor(() => device.setCapabilityValue.getCalls().some((call: any) => (
+      call.args[0] === 'fan_mode' && call.args[1] === 'high'
+    )));
+
+    writePresentValueSpy.resetHistory();
+    device.setCapabilityValue.resetHistory();
+
+    await registry.setFanMode('test_unit', 'home');
+    await waitFor(() => {
+      const rapidActive = state.readPresentValue(OBJECT_TYPE.BINARY_VALUE, 15, PROPERTY_ID.PRESENT_VALUE);
+      const operationMode = state.readPresentValue(OBJECT_TYPE.MULTI_STATE_VALUE, 361, PROPERTY_ID.PRESENT_VALUE);
+      const remainingTempVent = state.readPresentValue(OBJECT_TYPE.ANALOG_VALUE, 2005, PROPERTY_ID.PRESENT_VALUE);
+      return rapidActive.ok
+        && operationMode.ok
+        && remainingTempVent.ok
+        && rapidActive.value.value === 0
+        && operationMode.value.value === OPERATION_MODE_VALUES.HOME
+        && remainingTempVent.value.value === 0;
+    });
+
+    const rapidTriggerWrite = writePresentValueSpy.getCalls().find((call: any) => (
+      call.args[0] === OBJECT_TYPE.MULTI_STATE_VALUE
+      && call.args[1] === 357
+      && call.args[2] === PROPERTY_ID.PRESENT_VALUE
+      && call.args[3] === 2
+      && call.args[4] === 13
+    ));
+    const fireplaceTriggerWrite = writePresentValueSpy.getCalls().find((call: any) => (
+      call.args[0] === OBJECT_TYPE.MULTI_STATE_VALUE
+      && call.args[1] === 360
+      && call.args[2] === PROPERTY_ID.PRESENT_VALUE
+      && call.args[3] === 2
+    ));
+    const resetTempVentWrite = writePresentValueSpy.getCalls().find((call: any) => (
+      call.args[0] === OBJECT_TYPE.BINARY_VALUE
+      && call.args[1] === 452
+      && call.args[2] === PROPERTY_ID.PRESENT_VALUE
+    ));
+    expect(rapidTriggerWrite).to.not.equal(undefined);
+    expect(fireplaceTriggerWrite).to.equal(undefined);
+    expect(resetTempVentWrite).to.equal(undefined);
+
+    (registry as any).pollUnit('test_unit');
+    await waitFor(() => device.setCapabilityValue.getCalls().some((call: any) => (
+      call.args[0] === 'fan_mode' && call.args[1] === 'home'
+    )));
+  });
+
+  it('writes the observed rapid/fireplace trigger sequence from temporary high', async () => {
+    const device = makeMockDevice(SERVER_BIND_ADDRESS, serverPort, 4380);
+    registry.register('test_unit', device);
+
+    expect(state.startRapid(12).ok).to.equal(true);
+
+    (registry as any).pollUnit('test_unit');
+    await waitFor(() => device.setCapabilityValue.getCalls().some((call: any) => (
+      call.args[0] === 'fan_mode' && call.args[1] === 'high'
+    )));
+
+    writePresentValueSpy.resetHistory();
+    device.setCapabilityValue.resetHistory();
+
+    await registry.setFanMode('test_unit', 'fireplace');
+
+    const runtimeWrite = writePresentValueSpy.getCalls().find((call: any) => (
+      call.args[0] === OBJECT_TYPE.POSITIVE_INTEGER_VALUE
+      && call.args[1] === 270
+      && call.args[2] === PROPERTY_ID.PRESENT_VALUE
+      && call.args[3] === 10
+      && call.args[4] === 13
+    ));
+    const rapidTriggerWrite = writePresentValueSpy.getCalls().find((call: any) => (
+      call.args[0] === OBJECT_TYPE.MULTI_STATE_VALUE
+      && call.args[1] === 357
+      && call.args[2] === PROPERTY_ID.PRESENT_VALUE
+      && call.args[3] === 2
+    ));
+    const fireplaceTriggerWrite = writePresentValueSpy.getCalls().find((call: any) => (
+      call.args[0] === OBJECT_TYPE.MULTI_STATE_VALUE
+      && call.args[1] === 360
+      && call.args[2] === PROPERTY_ID.PRESENT_VALUE
+      && call.args[3] === 2
+    ));
+    expect(runtimeWrite).to.not.equal(undefined);
+    expect(rapidTriggerWrite).to.not.equal(undefined);
+    expect(fireplaceTriggerWrite).to.not.equal(undefined);
+
+    await waitFor(() => {
+      const rapidActive = state.readPresentValue(OBJECT_TYPE.BINARY_VALUE, 15, PROPERTY_ID.PRESENT_VALUE);
+      const fireplaceActive = state.readPresentValue(OBJECT_TYPE.BINARY_VALUE, 400, PROPERTY_ID.PRESENT_VALUE);
+      const operationMode = state.readPresentValue(OBJECT_TYPE.MULTI_STATE_VALUE, 361, PROPERTY_ID.PRESENT_VALUE);
+      return rapidActive.ok
+        && fireplaceActive.ok
+        && operationMode.ok
+        && rapidActive.value.value === 0
+        && fireplaceActive.value.value === 1
+        && operationMode.value.value === OPERATION_MODE_VALUES.FIREPLACE;
+    });
+
+    (registry as any).pollUnit('test_unit');
+    await waitFor(() => device.setCapabilityValue.getCalls().some((call: any) => (
+      call.args[0] === 'fan_mode' && call.args[1] === 'fireplace'
+    )));
+  });
+
+  it('writes fireplace trigger without rapid trigger when switching from home', async () => {
+    const device = makeMockDevice(SERVER_BIND_ADDRESS, serverPort, 4380);
+    registry.register('test_unit', device);
+
+    (registry as any).pollUnit('test_unit');
+    await waitFor(() => device.setCapabilityValue.getCalls().some((call: any) => (
+      call.args[0] === 'fan_mode' && call.args[1] === 'home'
+    )));
+
+    writePresentValueSpy.resetHistory();
+    device.setCapabilityValue.resetHistory();
+
+    await registry.setFanMode('test_unit', 'fireplace');
+
+    const runtimeWrite = writePresentValueSpy.getCalls().find((call: any) => (
+      call.args[0] === OBJECT_TYPE.POSITIVE_INTEGER_VALUE
+      && call.args[1] === 270
+      && call.args[2] === PROPERTY_ID.PRESENT_VALUE
+      && call.args[4] === 13
+    ));
+    const rapidTriggerWrite = writePresentValueSpy.getCalls().find((call: any) => (
+      call.args[0] === OBJECT_TYPE.MULTI_STATE_VALUE
+      && call.args[1] === 357
+      && call.args[2] === PROPERTY_ID.PRESENT_VALUE
+      && call.args[3] === 2
+    ));
+    const fireplaceTriggerWrite = writePresentValueSpy.getCalls().find((call: any) => (
+      call.args[0] === OBJECT_TYPE.MULTI_STATE_VALUE
+      && call.args[1] === 360
+      && call.args[2] === PROPERTY_ID.PRESENT_VALUE
+      && call.args[3] === 2
+    ));
+    const resetTempVentWrite = writePresentValueSpy.getCalls().find((call: any) => (
+      call.args[0] === OBJECT_TYPE.BINARY_VALUE
+      && call.args[1] === 452
+      && call.args[2] === PROPERTY_ID.PRESENT_VALUE
+    ));
+
+    expect(runtimeWrite).to.not.equal(undefined);
+    expect(rapidTriggerWrite).to.equal(undefined);
+    expect(fireplaceTriggerWrite).to.not.equal(undefined);
+    expect(resetTempVentWrite).to.equal(undefined);
+
+    await waitFor(() => {
+      const fireplaceActive = state.readPresentValue(OBJECT_TYPE.BINARY_VALUE, 400, PROPERTY_ID.PRESENT_VALUE);
+      const operationMode = state.readPresentValue(OBJECT_TYPE.MULTI_STATE_VALUE, 361, PROPERTY_ID.PRESENT_VALUE);
+      return fireplaceActive.ok
+        && operationMode.ok
+        && fireplaceActive.value.value === 1
+        && operationMode.value.value === OPERATION_MODE_VALUES.FIREPLACE;
+    });
+  });
+
+  it('transitions between all user-facing fan modes against the fake unit', async function testFanModeMatrix() {
+    this.timeout(30000);
+
+    const modes = ['home', 'away', 'high', 'fireplace', 'cooker'] as const;
+    type TestFanMode = typeof modes[number];
+
+    const waitForStateMode = async (mode: TestFanMode) => {
+      await waitFor(() => {
+        const comfort = state.readPresentValue(OBJECT_TYPE.BINARY_VALUE, 50, PROPERTY_ID.PRESENT_VALUE);
+        const awayDelayActive = state.readPresentValue(OBJECT_TYPE.BINARY_VALUE, 574, PROPERTY_ID.PRESENT_VALUE);
+        const rapidActive = state.readPresentValue(OBJECT_TYPE.BINARY_VALUE, 15, PROPERTY_ID.PRESENT_VALUE);
+        const fireplaceActive = state.readPresentValue(OBJECT_TYPE.BINARY_VALUE, 400, PROPERTY_ID.PRESENT_VALUE);
+        const cookerHood = state.readPresentValue(OBJECT_TYPE.BINARY_VALUE, 402, PROPERTY_ID.PRESENT_VALUE);
+        const operationMode = state.readPresentValue(
+          OBJECT_TYPE.MULTI_STATE_VALUE,
+          361,
+          PROPERTY_ID.PRESENT_VALUE,
+        );
+        if (
+          !comfort.ok
+          || !awayDelayActive.ok
+          || !rapidActive.ok
+          || !fireplaceActive.ok
+          || !cookerHood.ok
+          || !operationMode.ok
+        ) {
+          return false;
+        }
+
+        switch (mode) {
+          case 'home':
+            return comfort.value.value === 1
+              && awayDelayActive.value.value === 0
+              && rapidActive.value.value === 0
+              && fireplaceActive.value.value === 0
+              && cookerHood.value.value === 0
+              && operationMode.value.value === OPERATION_MODE_VALUES.HOME;
+          case 'away':
+            return comfort.value.value === 0
+              && awayDelayActive.value.value === 0
+              && rapidActive.value.value === 0
+              && fireplaceActive.value.value === 0
+              && cookerHood.value.value === 0
+              && operationMode.value.value === OPERATION_MODE_VALUES.AWAY;
+          case 'high':
+            return fireplaceActive.value.value === 0
+              && cookerHood.value.value === 0
+              && (
+                operationMode.value.value === OPERATION_MODE_VALUES.HIGH
+                || operationMode.value.value === OPERATION_MODE_VALUES.TEMPORARY_HIGH
+              );
+          case 'fireplace':
+            return rapidActive.value.value === 0
+              && fireplaceActive.value.value === 1
+              && cookerHood.value.value === 0
+              && operationMode.value.value === OPERATION_MODE_VALUES.FIREPLACE;
+          case 'cooker':
+            return rapidActive.value.value === 0
+              && fireplaceActive.value.value === 0
+              && cookerHood.value.value === 1
+              && operationMode.value.value === OPERATION_MODE_VALUES.COOKER_HOOD;
+          default:
+            return false;
+        }
+      });
+    };
+
+    const pollUntilReportedMode = async (device: any, mode: TestFanMode) => {
+      device.setCapabilityValue.resetHistory();
+      (registry as any).pollUnit('test_unit');
+      await waitFor(() => device.setCapabilityValue.getCalls().some((call: any) => (
+        call.args[0] === 'fan_mode' && call.args[1] === mode
+      )));
+    };
+
+    const resetFakeUnitToHome = () => {
+      expect(
+        state.writePresentValue(
+          OBJECT_TYPE.POSITIVE_INTEGER_VALUE,
+          318,
+          PROPERTY_ID.PRESENT_VALUE,
+          0,
+          13,
+        ).ok,
+      ).to.equal(true);
+      expect(
+        state.writePresentValue(
+          OBJECT_TYPE.BINARY_VALUE,
+          452,
+          PROPERTY_ID.PRESENT_VALUE,
+          1,
+          13,
+        ).ok,
+      ).to.equal(true);
+      expect(
+        state.writePresentValue(
+          OBJECT_TYPE.BINARY_VALUE,
+          402,
+          PROPERTY_ID.PRESENT_VALUE,
+          null,
+          13,
+        ).ok,
+      ).to.equal(true);
+      expect((state as any).setSimulatedPoint('cooker_hood', 0).ok).to.equal(true);
+      expect(
+        state.writePresentValue(
+          OBJECT_TYPE.BINARY_VALUE,
+          50,
+          PROPERTY_ID.PRESENT_VALUE,
+          1,
+          13,
+        ).ok,
+      ).to.equal(true);
+      expect(
+        state.writePresentValue(
+          OBJECT_TYPE.MULTI_STATE_VALUE,
+          42,
+          PROPERTY_ID.PRESENT_VALUE,
+          3,
+          13,
+        ).ok,
+      ).to.equal(true);
+    };
+
+    const createRegisteredDevice = async () => {
+      registry?.destroy();
+      registry = new UnitRegistry({
+        getBacnetClient: sinon.stub().returns(client),
+        discoverFlexitUnits: sinon.stub().resolves([]),
+      });
+      const device = makeMockDevice(SERVER_BIND_ADDRESS, serverPort, 4380);
+      registry.register('test_unit', device);
+      await pollUntilReportedMode(device, 'home');
+      return device;
+    };
+
+    const setSourceMode = async (device: any, mode: TestFanMode) => {
+      if (mode === 'high') {
+        expect(state.startRapid(12).ok).to.equal(true);
+        await waitForStateMode('high');
+        await pollUntilReportedMode(device, 'high');
+        return;
+      }
+
+      if (mode !== 'home') {
+        await registry.setFanMode('test_unit', mode);
+      }
+      await waitForStateMode(mode);
+      await pollUntilReportedMode(device, mode);
+    };
+
+    for (const fromMode of modes) {
+      for (const toMode of modes) {
+        if (fromMode === toMode) continue;
+
+        resetFakeUnitToHome();
+        const device = await createRegisteredDevice();
+        await setSourceMode(device, fromMode);
+
+        writePresentValueSpy.resetHistory();
+        device.setCapabilityValue.resetHistory();
+
+        await registry.setFanMode('test_unit', toMode);
+        await waitForStateMode(toMode);
+        await pollUntilReportedMode(device, toMode);
+
+        expect(
+          writePresentValueSpy.callCount,
+          `Expected BACnet writes for ${fromMode} -> ${toMode}`,
+        ).to.be.greaterThan(0);
+      }
+    }
+  });
+
   it('treats away as active when comfort button is away but operation mode still reports home', async () => {
     const device = makeMockDevice(SERVER_BIND_ADDRESS, serverPort, 4380);
     const logger = {

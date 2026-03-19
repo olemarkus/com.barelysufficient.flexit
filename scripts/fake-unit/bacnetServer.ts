@@ -88,6 +88,14 @@ function propertyIdName(propertyId: number): string {
   return PROPERTY_ID_NAME_BY_ID.get(propertyId) ?? String(propertyId);
 }
 
+function applicationTagName(tag: number): string {
+  const entries = Object.entries(APPLICATION_TAG).filter(([, value]) => typeof value === 'number');
+  for (const [name, value] of entries) {
+    if (value === tag) return name;
+  }
+  return String(tag);
+}
+
 function objectKey(type: number, instance: number): string {
   return `${type}:${instance}`;
 }
@@ -313,6 +321,36 @@ export class FakeBacnetServer {
   private log(message: string) {
     if (this.options.logTraffic === false) return;
     console.log(message);
+  }
+
+  private formatLogValue(value: unknown): string {
+    if (typeof value === 'number') return String(value);
+    if (typeof value === 'string') return JSON.stringify(value);
+    if (value === null || value === undefined) return String(value);
+    return JSON.stringify(value);
+  }
+
+  private logReadAccessResults(prefix: string, results: any[]) {
+    for (const object of results) {
+      const objectId = object?.objectId;
+      const objectText = objectId
+        ? `${objectTypeName(objectId.type)}:${objectId.instance}`
+        : '?';
+      for (const entry of object?.values ?? []) {
+        const propId = entry?.property?.id;
+        const propertyText = `${propertyIdName(propId)}(${propId ?? '-'})`;
+        const valueNode = entry?.value?.[0];
+        if (!valueNode) {
+          this.log(`${prefix} obj=${objectText} prop=${propertyText} value=-`);
+          continue;
+        }
+        this.log(
+          `${prefix} obj=${objectText} prop=${propertyText}`
+          + ` tag=${applicationTagName(valueNode.type)}(${valueNode.type})`
+          + ` value=${this.formatLogValue(valueNode.value)}`,
+        );
+      }
+    }
   }
 
   private getTransportSocket(): dgram.Socket | null {
@@ -726,6 +764,7 @@ export class FakeBacnetServer {
       for (const line of errors.slice(0, 10)) this.log(`[FakeBacnet]   ${line}`);
       if (errors.length > 10) this.log(`[FakeBacnet]   ... (${errors.length - 10} more)`);
     }
+    this.logReadAccessResults('[FakeBacnet]  RPM resp', responseValues);
 
     this.client.readPropertyMultipleResponse(request.address, request.invokeId, responseValues);
     this.log(`[FakeBacnet] TX readPropertyMultipleResponse to ${remote} invokeId=${request.invokeId}`);

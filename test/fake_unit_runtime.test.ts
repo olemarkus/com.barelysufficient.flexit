@@ -80,6 +80,7 @@ describe('fake-unit runtime script', () => {
     expect(options.networkMask).to.equal('255.255.255.0');
     expect(options.mac).to.equal('00:11:22:33:44:55');
     expect(options.deviceId).to.equal(fakeUnit.deriveDeviceIdFromSerial(options.serial));
+    expect(options.timeScale).to.equal(1);
   });
 
   it('rejects missing values for value flags', () => {

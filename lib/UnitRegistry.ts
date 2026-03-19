@@ -153,6 +153,7 @@ export const MAX_FILTER_CHANGE_INTERVAL_HOURS = (
 const POLL_INTERVAL_MS = 10_000;
 const CLOUD_POLL_INTERVAL_MS = 60_000;
 const POLL_WATCHDOG_TIMEOUT_MS = 12_000;
+const MODE_MISMATCH_GRACE_MS = 1000;
 const REDISCOVERY_INTERVAL_MS = 60_000;
 const MAX_CONSECUTIVE_FAILURES = 3;
 const DEFAULT_WRITE_TIMEOUT_MS = 5_000;
@@ -341,6 +342,11 @@ function mapVentilationMode(value: number): 'home' | 'away' | 'high' {
     default:
       return 'away';
   }
+}
+
+function formatModeSignalValue(value: number | undefined) {
+  if (value === undefined || !Number.isFinite(value)) return '?';
+  return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(3)));
 }
 
 function valuesMatch(actual: number, expected: number) {
@@ -1977,9 +1983,21 @@ export class UnitRegistry {
     ): 'home' | 'away' | 'high' | 'fireplace' | 'cooker' | undefined {
       if (!MODE_SIGNAL_KEYS.some((key) => data[key] !== undefined)) return undefined;
 
+      const operationMode = Math.round(data.operation_mode ?? NaN);
+      const operationModeMapped = data.operation_mode !== undefined
+        ? mapOperationMode(operationMode)
+        : undefined;
+      const rfMode = MODE_RF_INPUT_MAP[Math.round(data.mode_rf_input ?? NaN)];
+      if (
+        data.fireplace_active === 1
+        || operationModeMapped === 'fireplace'
+        || rfMode === 'fireplace'
+      ) {
+        return 'fireplace';
+      }
+
       let mode = this.resolveBaseMode(data, tempOpActive);
-      if (data.fireplace_active === 1) mode = 'fireplace';
-      else if (data.rapid_active === 1) mode = 'high';
+      if (data.rapid_active === 1) mode = 'high';
       return mode;
     }
 
@@ -2021,11 +2039,15 @@ export class UnitRegistry {
     }
 
     private logModeMismatch(unit: UnitState, mode: string, data: Record<string, number>) {
-      const { expectedMode } = unit;
+      const { expectedMode, expectedModeAt } = unit;
       if (!expectedMode) return;
 
       if (expectedMode === mode) {
         unit.lastMismatchKey = undefined;
+        return;
+      }
+
+      if (expectedModeAt !== undefined && (Date.now() - expectedModeAt) < MODE_MISMATCH_GRACE_MS) {
         return;
       }
 
@@ -2043,7 +2065,18 @@ export class UnitRegistry {
       const mismatchKey = `${expectedMode}->${mode}`;
       if (unit.lastMismatchKey === mismatchKey) return;
       unit.lastMismatchKey = mismatchKey;
-      this.warn(`[UnitRegistry] Mode mismatch for ${unit.unitId}: expected '${expectedMode}' got '${mode}'`);
+      this.warn(
+        `[UnitRegistry] Mode mismatch for ${unit.unitId}: expected '${expectedMode}' got '${mode}'`
+        + ` (comfort=${formatModeSignalValue(data.comfort_button)}`
+        + ` vent=${formatModeSignalValue(data.ventilation_mode)}`
+        + ` op=${formatModeSignalValue(data.operation_mode)}`
+        + ` rapid=${formatModeSignalValue(data.rapid_active)}`
+        + ` fireplace=${formatModeSignalValue(data.fireplace_active)}`
+        + ` tempRem=${formatModeSignalValue(data.remaining_temp_vent_op)}`
+        + ` rapidRem=${formatModeSignalValue(data.remaining_rapid_vent)}`
+        + ` fireplaceRem=${formatModeSignalValue(data.remaining_fireplace_vent)}`
+        + ` rf=${formatModeSignalValue(data.mode_rf_input)})`,
+      );
     }
 
     private hasPendingWriteValue(unit: UnitState, key: string, value: number) {
@@ -2228,11 +2261,10 @@ export class UnitRegistry {
         comfortButtonKey: COMFORT_BUTTON_KEY,
       };
 
-      const rapidActive = (unit.probeValues.get(RAPID_ACTIVE_KEY) ?? 0) === 1;
-      const tempVentActive = (unit.probeValues.get(TEMP_VENT_REMAINING_KEY) ?? 0) > 0;
-      const temporaryRapidActive = rapidActive || tempVentActive;
-      const fireplaceActive = (unit.probeValues.get(FIREPLACE_ACTIVE_KEY) ?? 0) === 1;
       const operationMode = Math.round(unit.probeValues.get(OPERATION_MODE_KEY) ?? NaN);
+      const rapidActive = (unit.probeValues.get(RAPID_ACTIVE_KEY) ?? 0) === 1;
+      const temporaryRapidActive = rapidActive || operationMode === OPERATION_MODE_VALUES.TEMPORARY_HIGH;
+      const fireplaceActive = (unit.probeValues.get(FIREPLACE_ACTIVE_KEY) ?? 0) === 1;
       const fireplaceModeReported = operationMode === OPERATION_MODE_VALUES.FIREPLACE;
       const fireplaceAlreadyActive = fireplaceActive || fireplaceModeReported;
       const cookerModeReported = operationMode === OPERATION_MODE_VALUES.COOKER_HOOD;
@@ -2248,12 +2280,6 @@ export class UnitRegistry {
         unit.deferredMode = undefined;
         unit.deferredSince = undefined;
       }
-      if (mode === 'fireplace' && temporaryRapidActive && !fireplaceAlreadyActive) {
-        this.warn(
-          '[UnitRegistry] Fireplace requested while temporary ventilation is active'
-          + ` (rapid=${rapidActive} temp=${tempVentActive}); proceeding anyway.`,
-        );
-      }
       if (mode === 'fireplace' && fireplaceAlreadyActive) {
         this.log(`[UnitRegistry] Fireplace already active for ${unit.unitId}, skipping trigger.`);
         return;
@@ -2263,8 +2289,11 @@ export class UnitRegistry {
       unit.expectedModeAt = Date.now();
       unit.lastMismatchKey = undefined;
 
-      if (mode !== 'fireplace' && fireplaceActive) {
+      if (mode !== 'fireplace' && fireplaceAlreadyActive) {
         await this.writeFireplaceTrigger(context, TRIGGER_VALUE);
+      }
+      if (mode !== 'fireplace' && mode !== 'high' && temporaryRapidActive) {
+        await this.writeRapidTrigger(context, TRIGGER_VALUE);
       }
       if (mode !== 'cooker' && cookerAlreadyActive) {
         await this.relinquishCookerHood(context);
@@ -2272,19 +2301,19 @@ export class UnitRegistry {
 
       switch (mode) {
         case 'home':
-          await this.applyHomeMode(context, temporaryRapidActive);
+          await this.applyHomeMode(context);
           return;
         case 'away':
-          await this.applyAwayMode(context, fireplaceActive, temporaryRapidActive);
+          await this.applyAwayMode(context);
           return;
         case 'high':
           await this.applyHighMode(context);
           return;
         case 'cooker':
-          await this.applyCookerMode(context, temporaryRapidActive, cookerAlreadyActive);
+          await this.applyCookerMode(context, cookerAlreadyActive);
           return;
         case 'fireplace':
-          await this.applyFireplaceMode(context, fireplaceRuntime);
+          await this.applyFireplaceMode(context, fireplaceRuntime, temporaryRapidActive);
           return;
         default:
           this.warn(`[UnitRegistry] Unsupported fan mode '${mode}' for ${unit.unitId}`);
@@ -2514,25 +2543,15 @@ export class UnitRegistry {
       });
     }
 
-    private async applyHomeMode(context: FanModeWriteContext, temporaryRapidActive: boolean) {
+    private async applyHomeMode(context: FanModeWriteContext) {
       const comfortOk = await this.writeComfort(context, 1);
       if (comfortOk && !context.unit.blockedWrites.has(context.ventilationModeKey)) {
         await this.writeVentMode(context, VENTILATION_MODE_VALUES.HOME, { force: true });
       }
-      if (temporaryRapidActive) {
-        await this.writeRapidTrigger(context, TRIGGER_VALUE);
-      }
     }
 
-    private async applyAwayMode(
-      context: FanModeWriteContext,
-      fireplaceActive: boolean,
-      temporaryRapidActive: boolean,
-    ) {
-      await this.writeComfort(context, 0, { force: fireplaceActive });
-      if (temporaryRapidActive) {
-        await this.writeRapidTrigger(context, TRIGGER_VALUE);
-      }
+    private async applyAwayMode(context: FanModeWriteContext) {
+      await this.writeComfort(context, 0);
     }
 
     private async applyHighMode(context: FanModeWriteContext) {
@@ -2548,18 +2567,18 @@ export class UnitRegistry {
 
     private async applyCookerMode(
       context: FanModeWriteContext,
-      temporaryRapidActive: boolean,
       cookerAlreadyActive: boolean,
     ) {
-      if (temporaryRapidActive) {
-        await this.writeRapidTrigger(context, TRIGGER_VALUE);
-      }
       if (!cookerAlreadyActive) {
         await this.writeCookerHood(context, 1);
       }
     }
 
-    private async applyFireplaceMode(context: FanModeWriteContext, fireplaceRuntime: number) {
+    private async applyFireplaceMode(
+      context: FanModeWriteContext,
+      fireplaceRuntime: number,
+      temporaryRapidActive: boolean,
+    ) {
       const comfortState = context.unit.probeValues.get(context.comfortButtonKey);
       if (comfortState !== 1) {
         await this.writeComfort(context, 1);
@@ -2569,6 +2588,9 @@ export class UnitRegistry {
         tag: BacnetEnums.ApplicationTags.UNSIGNED_INTEGER,
         value: fireplaceRuntime,
       });
+      if (temporaryRapidActive) {
+        await this.writeRapidTrigger(context, TRIGGER_VALUE);
+      }
       await this.writeFireplaceTrigger(context, TRIGGER_VALUE);
     }
 
@@ -2910,6 +2932,31 @@ export class UnitRegistry {
       await this.cloudPollUnit(unit);
     }
 
+    private async cloudWriteFireplaceMode(unit: UnitState, temporaryRapidActive: boolean) {
+      const comfortState = unit.probeValues.get(COMFORT_BUTTON_KEY);
+      if (comfortState !== 1) {
+        await this.cloudWriteDatapoint(unit, BACNET_OBJECTS.comfortButton, 1);
+      }
+      const runtime = clamp(
+        Math.round(
+          unit.probeValues.get(FIREPLACE_RUNTIME_KEY)
+          ?? DEFAULT_FIREPLACE_VENTILATION_MINUTES,
+        ),
+        1, 360,
+      );
+      await this.cloudWriteDatapoint(
+        unit, BACNET_OBJECTS.fireplaceVentilationRuntime, runtime,
+      );
+      if (temporaryRapidActive) {
+        await this.cloudWriteDatapoint(
+          unit, BACNET_OBJECTS.rapidVentilationTrigger, TRIGGER_VALUE,
+        );
+      }
+      await this.cloudWriteDatapoint(
+        unit, BACNET_OBJECTS.fireplaceVentilationTrigger, TRIGGER_VALUE,
+      );
+    }
+
     private async cloudSetFanMode(unit: UnitState, mode: string) {
       this.log(`[UnitRegistry] Cloud: setting fan mode to '${mode}' for ${unit.unitId}`);
 
@@ -2919,8 +2966,7 @@ export class UnitRegistry {
         || operationMode === OPERATION_MODE_VALUES.FIREPLACE;
       const cookerAlreadyActive = operationMode === OPERATION_MODE_VALUES.COOKER_HOOD;
       const rapidActive = (unit.probeValues.get(RAPID_ACTIVE_KEY) ?? 0) === 1;
-      const tempVentActive = (unit.probeValues.get(TEMP_VENT_REMAINING_KEY) ?? 0) > 0;
-      const temporaryRapidActive = rapidActive || tempVentActive;
+      const temporaryRapidActive = rapidActive || operationMode === OPERATION_MODE_VALUES.TEMPORARY_HIGH;
 
       if (mode !== 'fireplace') {
         unit.deferredMode = undefined;
@@ -2937,10 +2983,14 @@ export class UnitRegistry {
       unit.expectedModeAt = Date.now();
       unit.lastMismatchKey = undefined;
 
-      // Deactivate fireplace/cooker when switching to a different mode
-      if (mode !== 'fireplace' && fireplaceActive) {
+      if (mode !== 'fireplace' && fireplaceAlreadyActive) {
         await this.cloudWriteDatapoint(
           unit, BACNET_OBJECTS.fireplaceVentilationTrigger, TRIGGER_VALUE,
+        );
+      }
+      if (mode !== 'fireplace' && mode !== 'high' && temporaryRapidActive) {
+        await this.cloudWriteDatapoint(
+          unit, BACNET_OBJECTS.rapidVentilationTrigger, TRIGGER_VALUE,
         );
       }
       if (mode !== 'cooker' && cookerAlreadyActive) {
@@ -2953,19 +3003,9 @@ export class UnitRegistry {
           await this.cloudWriteDatapoint(
             unit, BACNET_OBJECTS.ventilationMode, VENTILATION_MODE_VALUES.HOME,
           );
-          if (temporaryRapidActive) {
-            await this.cloudWriteDatapoint(
-              unit, BACNET_OBJECTS.rapidVentilationTrigger, TRIGGER_VALUE,
-            );
-          }
           break;
         case 'away':
           await this.cloudWriteDatapoint(unit, BACNET_OBJECTS.comfortButton, 0);
-          if (temporaryRapidActive) {
-            await this.cloudWriteDatapoint(
-              unit, BACNET_OBJECTS.rapidVentilationTrigger, TRIGGER_VALUE,
-            );
-          }
           break;
         case 'high':
           await this.cloudWriteDatapoint(unit, BACNET_OBJECTS.comfortButton, 1);
@@ -2973,32 +3013,10 @@ export class UnitRegistry {
             unit, BACNET_OBJECTS.ventilationMode, VENTILATION_MODE_VALUES.HIGH,
           );
           break;
-        case 'fireplace': {
-          const comfortState = unit.probeValues.get(COMFORT_BUTTON_KEY);
-          if (comfortState !== 1) {
-            await this.cloudWriteDatapoint(unit, BACNET_OBJECTS.comfortButton, 1);
-          }
-          const runtime = clamp(
-            Math.round(
-              unit.probeValues.get(FIREPLACE_RUNTIME_KEY)
-              ?? DEFAULT_FIREPLACE_VENTILATION_MINUTES,
-            ),
-            1, 360,
-          );
-          await this.cloudWriteDatapoint(
-            unit, BACNET_OBJECTS.fireplaceVentilationRuntime, runtime,
-          );
-          await this.cloudWriteDatapoint(
-            unit, BACNET_OBJECTS.fireplaceVentilationTrigger, TRIGGER_VALUE,
-          );
+        case 'fireplace':
+          await this.cloudWriteFireplaceMode(unit, temporaryRapidActive);
           break;
-        }
         case 'cooker':
-          if (temporaryRapidActive) {
-            await this.cloudWriteDatapoint(
-              unit, BACNET_OBJECTS.rapidVentilationTrigger, TRIGGER_VALUE,
-            );
-          }
           if (!cookerAlreadyActive) {
             await this.cloudWriteDatapoint(
               unit, BACNET_OBJECTS.cookerHood, COOKER_HOOD_ON,

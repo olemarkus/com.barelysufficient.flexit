@@ -869,34 +869,116 @@ describe('UnitRegistry', () => {
     expect(ventilation[3][0].value).to.equal(3);
   });
 
-  it('writes fireplace mode with runtime and trigger', async () => {
+  it('cancels fireplace ventilation before switching fireplace back to home', async () => {
     const mockDevice = makeMockDevice();
     registry.register('test_unit', mockDevice);
 
-    await registry.setFanMode('test_unit', 'fireplace');
+    const unit = (registry as any).units.get('test_unit');
+    unit.probeValues.set('5:50', 1); // comfort_button home
+    unit.probeValues.set('19:42', 4); // ventilation_mode high
+    unit.probeValues.set('19:361', 6); // operation_mode fireplace
+    unit.probeValues.set('5:400', 1); // fireplace_active
+    unit.probeValues.set('2:2005', 8); // remaining_temp_vent_op
+
+    await registry.setFanMode('test_unit', 'home');
 
     const calls = mockClient.writeProperty.getCalls().map((call: any) => call.args);
     const callsByObject = new Map<string, any[]>(calls.map((args: any) => [JSON.stringify(args[1]), args]));
 
-    const comfort = callsByObject.get(JSON.stringify({ type: 5, instance: 50 })) as any[] | undefined;
-    const runtime = callsByObject.get(JSON.stringify({ type: 48, instance: 270 })) as any[] | undefined;
-    const trigger = callsByObject.get(JSON.stringify({ type: 19, instance: 360 })) as any[] | undefined;
+    const ventilation = callsByObject.get(JSON.stringify({ type: 19, instance: 42 })) as any[] | undefined;
+    const fireplaceTrigger = callsByObject.get(JSON.stringify({ type: 19, instance: 360 })) as any[] | undefined;
+    const rapidTrigger = callsByObject.get(JSON.stringify({ type: 19, instance: 357 })) as any[] | undefined;
+    const resetTempVentOp = callsByObject.get(JSON.stringify({ type: 5, instance: 452 })) as any[] | undefined;
 
-    expect(comfort).to.not.equal(undefined);
-    expect(runtime).to.not.equal(undefined);
-    expect(trigger).to.not.equal(undefined);
+    expect(ventilation).to.not.equal(undefined);
+    expect(fireplaceTrigger).to.not.equal(undefined);
+    expect(rapidTrigger).to.equal(undefined);
+    expect(resetTempVentOp).to.equal(undefined);
 
-    if (!runtime || !trigger || !comfort) throw new Error('Expected comfort, runtime, and trigger writes');
+    if (!fireplaceTrigger || !ventilation) {
+      throw new Error('Expected fireplace trigger cancel and home mode writes');
+    }
 
-    expect(comfort[3][0].value).to.equal(1);
-    expect(comfort[4].priority).to.equal(13);
-    expect(runtime[3][0].type).to.equal(2); // UNSIGNED_INTEGER
-    expect(runtime[3][0].value).to.equal(10);
-    expect(runtime[4].priority).to.equal(13);
-    expect(trigger[3][0].type).to.equal(2); // UNSIGNED_INTEGER
-    expect(trigger[3][0].value).to.equal(2);
-    expect(trigger[4].priority).to.equal(13);
+    expect(fireplaceTrigger[3][0].type).to.equal(BACNET_ENUMS.ApplicationTags.UNSIGNED_INTEGER);
+    expect(fireplaceTrigger[3][0].value).to.equal(2);
+    expect(fireplaceTrigger[4].priority).to.equal(13);
+    expect(ventilation[3][0].value).to.equal(3);
   });
+
+  it('cancels temporary high before switching back to home', async () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    const unit = (registry as any).units.get('test_unit');
+    unit.probeValues.set('5:50', 1); // comfort_button home
+    unit.probeValues.set('19:42', 4); // ventilation_mode high
+    unit.probeValues.set('19:361', 7); // operation_mode temporary high
+    unit.probeValues.set('5:15', 1); // rapid_active
+    unit.probeValues.set('2:2005', 8); // remaining_temp_vent_op
+
+    await registry.setFanMode('test_unit', 'home');
+
+    const calls = mockClient.writeProperty.getCalls().map((call: any) => call.args);
+    const callsByObject = new Map<string, any[]>(calls.map((args: any) => [JSON.stringify(args[1]), args]));
+
+    const ventilation = callsByObject.get(JSON.stringify({ type: 19, instance: 42 })) as any[] | undefined;
+    const rapidTrigger = callsByObject.get(JSON.stringify({ type: 19, instance: 357 })) as any[] | undefined;
+    const resetTempVentOp = callsByObject.get(JSON.stringify({ type: 5, instance: 452 })) as any[] | undefined;
+
+    expect(ventilation).to.not.equal(undefined);
+    expect(rapidTrigger).to.not.equal(undefined);
+    expect(resetTempVentOp).to.equal(undefined);
+
+    if (!rapidTrigger || !ventilation) {
+      throw new Error('Expected rapid trigger cancel and home mode writes');
+    }
+
+    expect(rapidTrigger[3][0].type).to.equal(BACNET_ENUMS.ApplicationTags.UNSIGNED_INTEGER);
+    expect(rapidTrigger[3][0].value).to.equal(2);
+    expect(rapidTrigger[4].priority).to.equal(13);
+    expect(ventilation[3][0].value).to.equal(3);
+  });
+
+  it(
+    'writes fireplace mode with runtime and fireplace trigger'
+      + ' when no temporary high ventilation is active',
+    async () => {
+      const mockDevice = makeMockDevice();
+      registry.register('test_unit', mockDevice);
+      const unit = (registry as any).units.get('test_unit');
+      unit.probeValues.set('48:270', 10);
+
+      await registry.setFanMode('test_unit', 'fireplace');
+
+      const calls = mockClient.writeProperty.getCalls().map((call: any) => call.args);
+      const callsByObject = new Map<string, any[]>(calls.map((args: any) => [JSON.stringify(args[1]), args]));
+
+      const comfort = callsByObject.get(JSON.stringify({ type: 5, instance: 50 })) as any[] | undefined;
+      const runtime = callsByObject.get(JSON.stringify({ type: 48, instance: 270 })) as any[] | undefined;
+      const rapidTrigger = callsByObject.get(JSON.stringify({ type: 19, instance: 357 })) as any[] | undefined;
+      const fireplaceTrigger = callsByObject.get(JSON.stringify({ type: 19, instance: 360 })) as any[] | undefined;
+      const resetTempVentOp = callsByObject.get(JSON.stringify({ type: 5, instance: 452 })) as any[] | undefined;
+
+      expect(comfort).to.not.equal(undefined);
+      expect(runtime).to.not.equal(undefined);
+      expect(rapidTrigger).to.equal(undefined);
+      expect(fireplaceTrigger).to.not.equal(undefined);
+      expect(resetTempVentOp).to.equal(undefined);
+
+      if (!runtime || !fireplaceTrigger || !comfort) {
+        throw new Error('Expected comfort, runtime, and fireplace trigger writes');
+      }
+
+      expect(comfort[3][0].value).to.equal(1);
+      expect(comfort[4].priority).to.equal(13);
+      expect(runtime[3][0].type).to.equal(2); // UNSIGNED_INTEGER
+      expect(runtime[3][0].value).to.equal(10);
+      expect(runtime[4].priority).to.equal(13);
+      expect(fireplaceTrigger[3][0].type).to.equal(2); // UNSIGNED_INTEGER
+      expect(fireplaceTrigger[3][0].value).to.equal(2);
+      expect(fireplaceTrigger[4].priority).to.equal(13);
+    },
+  );
 
   it('does not re-trigger fireplace mode when the unit already reports fireplace active', async () => {
     const mockDevice = makeMockDevice();
@@ -938,13 +1020,86 @@ describe('UnitRegistry', () => {
       .to.equal(false);
   });
 
-  it('uses priority 13 for all writes when clearing active fireplace/rapid on away', async () => {
+  it('suppresses stale mode mismatch logs briefly after a mode write', () => {
+    const clock = sinon.useFakeTimers();
+    try {
+      const mockDevice = makeMockDevice();
+      const logger = {
+        log: sinon.stub(),
+        warn: sinon.stub(),
+        error: sinon.stub(),
+      };
+      registry.setLogger(logger);
+      registry.register('test_unit', mockDevice);
+
+      const unit = (registry as any).units.get('test_unit');
+      unit.expectedMode = 'fireplace';
+      unit.expectedModeAt = Date.now();
+
+      (registry as any).distributeData(unit, {
+        comfort_button: 1,
+        ventilation_mode: 3,
+        operation_mode: 3,
+        rapid_active: 0,
+        fireplace_active: 0,
+        remaining_temp_vent_op: 0,
+        remaining_rapid_vent: 354,
+        remaining_fireplace_vent: 15,
+        mode_rf_input: 24,
+      });
+
+      expect(logger.warn.calledWithMatch('[UnitRegistry] Mode mismatch')).to.equal(false);
+
+      clock.tick(1001);
+      (registry as any).distributeData(unit, {
+        comfort_button: 1,
+        ventilation_mode: 3,
+        operation_mode: 3,
+        rapid_active: 0,
+        fireplace_active: 0,
+        remaining_temp_vent_op: 0,
+        remaining_rapid_vent: 354,
+        remaining_fireplace_vent: 15,
+        mode_rf_input: 24,
+      });
+
+      expect(logger.warn.calledWithMatch('[UnitRegistry] Mode mismatch')).to.equal(true);
+    } finally {
+      clock.restore();
+    }
+  });
+
+  it('writes rapid then fireplace when switching temporary high to fireplace', async () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    const unit = (registry as any).units.get('test_unit');
+    unit.probeValues.set('19:361', 7); // operation_mode temporary high
+    unit.probeValues.set('5:15', 1); // rapid_active
+    unit.probeValues.set('2:2005', 9); // remaining_temp_vent_op
+
+    await registry.setFanMode('test_unit', 'fireplace');
+
+    const calls = mockClient.writeProperty.getCalls().map((call: any) => call.args);
+    const callsByObject = new Map<string, any[]>(calls.map((args: any) => [JSON.stringify(args[1]), args]));
+
+    const rapidTrigger = callsByObject.get(JSON.stringify({ type: 19, instance: 357 })) as any[] | undefined;
+    const fireplaceTrigger = callsByObject.get(JSON.stringify({ type: 19, instance: 360 })) as any[] | undefined;
+
+    expect(rapidTrigger).to.not.equal(undefined);
+    expect(fireplaceTrigger).to.not.equal(undefined);
+    expect(unit.deferredMode).to.equal(undefined);
+    expect(unit.expectedMode).to.equal('fireplace');
+  });
+
+  it('uses priority 13 for fireplace cancel and away writes', async () => {
     const mockDevice = makeMockDevice();
     registry.register('test_unit', mockDevice);
 
     const unit = (registry as any).units.get('test_unit');
     unit.probeValues.set('5:400', 1); // fireplace_active
-    unit.probeValues.set('5:15', 1); // rapid_active
+    unit.probeValues.set('19:361', 6); // operation_mode fireplace
+    unit.probeValues.set('2:2005', 8); // remaining_temp_vent_op
 
     await registry.setFanMode('test_unit', 'away');
 
@@ -956,10 +1111,10 @@ describe('UnitRegistry', () => {
     }
 
     const callsByObject = new Map<string, any[]>(calls.map((args: any) => [JSON.stringify(args[1]), args]));
-    const fireplaceTrigger = callsByObject.get(JSON.stringify({ type: 19, instance: 360 })) as any[] | undefined;
     const rapidTrigger = callsByObject.get(JSON.stringify({ type: 19, instance: 357 })) as any[] | undefined;
+    const fireplaceTrigger = callsByObject.get(JSON.stringify({ type: 19, instance: 360 })) as any[] | undefined;
     expect(fireplaceTrigger).to.not.equal(undefined);
-    expect(rapidTrigger).to.not.equal(undefined);
+    expect(rapidTrigger).to.equal(undefined);
   });
 
   it('prefers active fireplace flag over operation mode', () => {
@@ -976,6 +1131,46 @@ describe('UnitRegistry', () => {
     const call = mockDevice.setCapabilityValue.lastCall;
     expect(call.args[0]).to.equal('fan_mode');
     expect(call.args[1]).to.equal('fireplace');
+  });
+
+  it('prefers fireplace operation mode over rapid-active signal', () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    const unit = { unitId: 'test_unit', devices: new Set([mockDevice]) };
+    (registry as any).distributeData(unit, {
+      comfort_button: 1,
+      ventilation_mode: 3,
+      operation_mode: 6,
+      rapid_active: 1,
+      fireplace_active: 0,
+      remaining_temp_vent_op: 10,
+    });
+
+    const call = mockDevice.setCapabilityValue.lastCall;
+    expect(call.args[0]).to.equal('fan_mode');
+    expect(call.args[1]).to.equal('fireplace');
+  });
+
+  it('does not let stale fireplace countdown override temporary high', () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    const unit = { unitId: 'test_unit', devices: new Set([mockDevice]) };
+    (registry as any).distributeData(unit, {
+      comfort_button: 1,
+      ventilation_mode: 3,
+      operation_mode: 7,
+      rapid_active: 1,
+      fireplace_active: 0,
+      remaining_temp_vent_op: 10,
+      remaining_rapid_vent: 9,
+      remaining_fireplace_vent: 9,
+    });
+
+    const call = mockDevice.setCapabilityValue.lastCall;
+    expect(call.args[0]).to.equal('fan_mode');
+    expect(call.args[1]).to.equal('high');
   });
 
   it('prefers away comfort-button state over stale home operation mode', () => {
