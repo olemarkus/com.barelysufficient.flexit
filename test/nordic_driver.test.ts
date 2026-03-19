@@ -1,6 +1,10 @@
 import { expect } from 'chai';
+import { createRequire } from 'module';
 import sinon from 'sinon';
-import proxyquire from 'proxyquire';
+
+const require = createRequire(import.meta.url);
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const proxyquire = require('proxyquire');
 
 const proxyquireStrict = proxyquire.noCallThru().noPreserveCache();
 
@@ -9,6 +13,7 @@ class MockHomeyDriver {
   manifest = { id: 'nordic' };
   log = sinon.stub();
   error = sinon.stub();
+  getDevices = sinon.stub().returns([]);
 }
 
 describe('Nordic driver', () => {
@@ -47,15 +52,21 @@ describe('Nordic driver', () => {
     const driver = new DriverClass();
 
     const devices = await driver.onPairListDevices();
+    const discoverArgs = discoverStub.firstCall.args[0];
 
-    expect(discoverStub.calledOnceWithExactly({
-      timeoutMs: 5000,
-      burstCount: 10,
-      burstIntervalMs: 300,
-    })).to.equal(true);
+    expect(discoverStub.calledOnce).to.equal(true);
+    expect(discoverArgs.timeoutMs).to.equal(5000);
+    expect(discoverArgs.burstCount).to.equal(10);
+    expect(discoverArgs.burstIntervalMs).to.equal(300);
+    expect(discoverArgs.log).to.be.a('function');
+    expect(discoverArgs.error).to.be.a('function');
+    discoverArgs.log('[Discovery] test log');
+    discoverArgs.error('[Discovery] test error');
     expect(driver.log.calledWithMatch('[Pair] Discovery start')).to.equal(true);
+    expect(driver.log.calledWithExactly('[Discovery] test log')).to.equal(true);
+    expect(driver.error.calledWithExactly('[Discovery] test error')).to.equal(true);
     expect(driver.log.calledWithMatch('[Pair] Discovery complete: 1 unit(s) found in')).to.equal(true);
-    expect(driver.log.calledWithMatch('[Pair] Units: 800131-000001@192.0.2.10:47808')).to.equal(true);
+    expect(driver.log.calledWithExactly('[Pair] Unit 800131-000001@192.0.2.10:47808 (new)')).to.equal(true);
     expect(devices).to.deep.equal([
       {
         name: 'Nordic S4 REL',
@@ -91,10 +102,10 @@ describe('Nordic driver', () => {
 
     expect(devices).to.deep.equal([]);
     expect(driver.log.calledWithMatch('[Pair] Discovery complete: 0 unit(s) found in')).to.equal(true);
-    expect(driver.log.calledWithMatch('[Pair] Units:')).to.equal(false);
+    expect(driver.log.calledWithMatch('[Pair] Unit ')).to.equal(false);
   });
 
-  it('truncates pairing summary when more than five units are discovered', async () => {
+  it('logs every discovered unit without truncation', async () => {
     discoverStub.resolves(Array.from({ length: 6 }, (_value, index) => ({
       name: `Unit ${index + 1}`,
       serialNormalized: `80013100000${index + 1}`,
@@ -107,7 +118,40 @@ describe('Nordic driver', () => {
 
     await driver.onPairListDevices();
 
-    expect(driver.log.calledWithMatch(/\[Pair\] Units: .*?, \.\.\.$/)).to.equal(true);
+    expect(driver.log.getCalls().filter((call) => /^\[Pair\] Unit /.test(call.args[0])).length).to.equal(6);
+    expect(driver.log.calledWithExactly('[Pair] Unit 800131-000006@192.0.2.15:47813 (new)')).to.equal(true);
+  });
+
+  it('logs already added units distinctly', async () => {
+    discoverStub.resolves([
+      {
+        name: 'Nordic S4 REL',
+        serialNormalized: '800131000001',
+        ip: '192.0.2.10',
+        bacnetPort: 47808,
+        serial: '800131-000001',
+        mac: '02:00:00:00:00:01',
+      },
+      {
+        name: 'Nordic S4 REL',
+        serialNormalized: '800131000002',
+        ip: '192.0.2.11',
+        bacnetPort: 47808,
+        serial: '800131-000002',
+        mac: '02:00:00:00:00:02',
+      },
+    ]);
+    const driver = new DriverClass();
+    driver.getDevices.returns([
+      {
+        getData: () => ({ unitId: '800131000001' }),
+      },
+    ]);
+
+    await driver.onPairListDevices();
+
+    expect(driver.log.calledWithExactly('[Pair] Unit 800131-000001@192.0.2.10:47808 (already added)')).to.equal(true);
+    expect(driver.log.calledWithExactly('[Pair] Unit 800131-000002@192.0.2.11:47808 (new)')).to.equal(true);
   });
 
   it('logs discovery failure and rethrows', async () => {
