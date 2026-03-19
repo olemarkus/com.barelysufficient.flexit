@@ -22,6 +22,8 @@ export = class FlexitNordicDriver extends Homey.Driver {
         timeoutMs,
         burstCount,
         burstIntervalMs,
+        log: (...args: any[]) => this.log(...args),
+        error: (...args: any[]) => this.error(...args),
       });
     } catch (err) {
       const elapsedMs = Date.now() - startedAt;
@@ -33,11 +35,16 @@ export = class FlexitNordicDriver extends Homey.Driver {
     this.log(`[Pair] Discovery complete: ${units.length} unit(s) found in ${elapsedMs}ms`);
 
     if (units.length > 0) {
-      const summary = units
-        .slice(0, 5)
-        .map((u) => `${u.serial}@${u.ip}:${u.bacnetPort}`)
-        .join(', ');
-      this.log(`[Pair] Units: ${summary}${units.length > 5 ? ', ...' : ''}`);
+      const existingUnitIds = new Set(
+        this.getDevices()
+          .map((device: any) => device?.getData?.()?.unitId ?? device?.getData?.()?.id)
+          .filter((unitId: unknown): unitId is string => typeof unitId === 'string' && unitId.length > 0),
+      );
+
+      for (const unit of units) {
+        const status = existingUnitIds.has(unit.serialNormalized) ? 'already added' : 'new';
+        this.log(`[Pair] Unit ${unit.serial}@${unit.ip}:${unit.bacnetPort} (${status})`);
+      }
     }
 
     return units.map((u) => ({

@@ -62,6 +62,7 @@ describe('flexitDiscovery', () => {
 
   it('returns no discovered units when the requested interface is unavailable', async () => {
     const createSocket = sinon.stub();
+    const log = sinon.stub();
     const flexitDiscovery = loadDiscoveryModule({
       networkInterfaces: {
         eth0: [{ family: 'IPv4', internal: false, address: '192.0.2.10' }],
@@ -72,16 +73,23 @@ describe('flexitDiscovery', () => {
     const units = await flexitDiscovery.discoverFlexitUnits({
       interfaceAddress: '198.51.100.9',
       timeoutMs: 0,
+      log,
     });
 
     expect(units).to.deep.equal([]);
     expect(createSocket.called).to.equal(false);
+    expect(log.calledWithExactly('[Discovery] Available IPv4 interfaces: eth0=192.0.2.10')).to.equal(true);
+    expect(log.calledWithExactly('[Discovery] Requested interface address: 198.51.100.9')).to.equal(true);
+    expect(log.calledWithExactly('[Discovery] Selected interfaces: none')).to.equal(true);
+    expect(log.calledWithExactly('[Discovery] No candidate interfaces available for discovery')).to.equal(true);
   });
 
-  it('discovers unique replies, ignores per-interface multicast failures, and always closes sockets', async () => {
+  it('logs interface selection, reply parsing, and per-interface failures while discovering', async () => {
     const rxSocket = createMockSocket();
     const txSocket = createMockSocket();
     txSocket.close = sinon.stub().throws(new Error('close failed'));
+    const log = sinon.stub();
+    const error = sinon.stub();
 
     rxSocket.addMembership.callsFake((_group: string, address?: string) => {
       if (address === '192.0.2.11') {
@@ -127,6 +135,7 @@ describe('flexitDiscovery', () => {
       rxSocket.emit('message', Buffer.from('reply-one', 'ascii'), { address: '198.51.100.20' });
       rxSocket.emit('message', Buffer.from('reply-one-duplicate', 'ascii'), { address: '198.51.100.20' });
       rxSocket.emit('message', Buffer.from('reply-two', 'ascii'), { address: '198.51.100.21' });
+      rxSocket.emit('message', Buffer.from('unparsed-reply', 'ascii'), { address: '198.51.100.99', port: 30001 });
     });
 
     const createSocket = sinon.stub()
@@ -151,6 +160,8 @@ describe('flexitDiscovery', () => {
       timeoutMs: 0,
       burstCount: 1,
       burstIntervalMs: 0,
+      log,
+      error,
     });
 
     expect(units).to.deep.equal([
@@ -165,5 +176,37 @@ describe('flexitDiscovery', () => {
     expect(txSocket.send.calledOnce).to.equal(true);
     expect(rxSocket.close.calledOnce).to.equal(true);
     expect(txSocket.close.calledOnce).to.equal(true);
+
+    const availableInterfacesLog = '[Discovery] Available IPv4 interfaces: eth0=192.0.2.10, eth1=192.0.2.11';
+    const selectedInterfacesLog = '[Discovery] Selected interfaces: eth0=192.0.2.10, eth1=192.0.2.11';
+    const joinedReplyLog = '[Discovery] Joined reply multicast 224.0.0.181 on eth0=192.0.2.10';
+    const discoveryTargetLog = '[Discovery] Discovery request target 224.0.0.180:30000 (multicast loopback disabled)';
+    const sendSuccessLog = '[Discovery] Sending discover via eth0=192.0.2.10 to 224.0.0.180:30000';
+    const parsedReplyOneLog = '[Discovery] Parsed reply from 198.51.100.20:? len=9: 800131-000001@198.51.100.20:47808';
+    const parsedReplyDuplicateLog = '[Discovery] Parsed reply from 198.51.100.20:? len=19:'
+      + ' 800131-000001@198.51.100.20:47808 (duplicate)';
+    const parsedReplyTwoLog = '[Discovery] Parsed reply from 198.51.100.21:? len=9: 800131-000002@198.51.100.21:47808';
+    const ignoredReplyLog = '[Discovery] Ignored reply from 198.51.100.99:30001 len=14;'
+      + ' parser returned null; ascii="unparsed-reply"';
+
+    expect(log.calledWithExactly(availableInterfacesLog)).to.equal(true);
+    expect(log.calledWithExactly(selectedInterfacesLog)).to.equal(true);
+    expect(log.calledWithExactly('[Discovery] Bound RX socket on 0.0.0.0:30001')).to.equal(true);
+    expect(log.calledWithExactly(joinedReplyLog)).to.equal(true);
+    expect(error.calledWithExactly(
+      '[Discovery] Failed to join reply multicast 224.0.0.181 on eth1=192.0.2.11:',
+      sinon.match.instanceOf(Error),
+    )).to.equal(true);
+    expect(log.calledWithExactly('[Discovery] Bound TX socket on 0.0.0.0:30000')).to.equal(true);
+    expect(log.calledWithExactly(discoveryTargetLog)).to.equal(true);
+    expect(log.calledWithExactly(sendSuccessLog)).to.equal(true);
+    expect(error.calledWithExactly(
+      '[Discovery] Failed to send discover via eth1=192.0.2.11 to 224.0.0.180:30000:',
+      sinon.match.instanceOf(Error),
+    )).to.equal(true);
+    expect(log.calledWithExactly(parsedReplyOneLog)).to.equal(true);
+    expect(log.calledWithExactly(parsedReplyDuplicateLog)).to.equal(true);
+    expect(log.calledWithExactly(parsedReplyTwoLog)).to.equal(true);
+    expect(log.calledWithExactly(ignoredReplyLog)).to.equal(true);
   });
 });
