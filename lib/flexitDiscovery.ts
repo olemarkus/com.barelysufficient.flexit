@@ -89,8 +89,8 @@ export async function discoverFlexitUnits(opts: DiscoveryOptions): Promise<Disco
 
     return [...found.values()];
   } finally {
-    safeClose(rx);
-    safeClose(tx);
+    safeClose(rx, 'RX', error);
+    safeClose(tx, 'TX', error);
   }
 }
 
@@ -289,10 +289,11 @@ function bindSocket(sock: dgram.Socket, port: number) {
   });
 }
 
-function safeClose(sock: dgram.Socket) {
+function safeClose(sock: dgram.Socket, label: string, error: DiscoveryLogger) {
   try {
     sock.close();
-  } catch (_err) {
+  } catch (err) {
+    error(`[Discovery] Failed to close ${label} socket:`, err);
   }
 }
 
