@@ -7,27 +7,44 @@ const MIN_FILTER_CHANGE_INTERVAL_HOURS = 3 * FILTER_CHANGE_INTERVAL_HOURS_PER_MO
 const MAX_FILTER_CHANGE_INTERVAL_HOURS = 12 * FILTER_CHANGE_INTERVAL_HOURS_PER_MONTH;
 const TEST_WRITE_TIMEOUT_MS = 5000;
 
-function makeMockDevice() {
-  const device: any = {
-    getSetting: sinon.stub(),
-    getData: sinon.stub().returns({ unitId: 'test_unit' }),
+function makeMockDevice(opts: {
+  unitId?: string;
+  settings?: Record<string, unknown>;
+} = {}) {
+  const settings: Record<string, unknown> = {
+    ip: '127.0.0.1',
+    bacnetPort: 47808,
+    serial: '800199-000001',
+    filter_change_interval_months: 6,
+    filter_change_interval_hours: 4380,
+    target_temperature_home: 20,
+    target_temperature_away: 18,
+    fireplace_duration_minutes: 10,
+    ...(opts.settings ?? {}),
+  };
+
+  const applySettings = async (updates: Record<string, unknown>) => {
+    Object.assign(settings, updates ?? {});
+  };
+
+  return {
+    settings,
+    getSetting: sinon.stub().callsFake((key: string) => settings[key]),
+    getData: sinon.stub().returns({ unitId: opts.unitId ?? 'test_unit' }),
     setCapabilityValue: sinon.stub().resolves(),
-    setSettings: sinon.stub().resolves(),
-    setSetting: sinon.stub().resolves(),
+    setSettings: sinon.stub().callsFake(applySettings),
+    setSetting: sinon.stub().callsFake(applySettings),
     setAvailable: sinon.stub().resolves(),
     setUnavailable: sinon.stub().resolves(),
     log: sinon.stub(),
     error: sinon.stub(),
   };
-  device.getSetting.withArgs('ip').returns('127.0.0.1');
-  device.getSetting.withArgs('bacnetPort').returns(47808);
-  device.getSetting.withArgs('serial').returns('800199-000001');
-  device.getSetting.withArgs('filter_change_interval_months').returns(6);
-  device.getSetting.withArgs('filter_change_interval_hours').returns(4380);
-  device.getSetting.withArgs('target_temperature_home').returns(20);
-  device.getSetting.withArgs('target_temperature_away').returns(18);
-  device.getSetting.withArgs('fireplace_duration_minutes').returns(10);
-  return device;
+}
+
+async function flushAsyncWork() {
+  await Promise.resolve();
+  await Promise.resolve();
+  await new Promise((resolve) => setImmediate(resolve));
 }
 
 const BACNET_ENUMS = {
@@ -451,8 +468,8 @@ describe('UnitRegistry', () => {
 
   it('writes mode fan profile with priority 16 and verifies values', async () => {
     const mockDevice = makeMockDevice();
-    mockDevice.getSetting.withArgs('fan_profile_home_supply').returns(80);
-    mockDevice.getSetting.withArgs('fan_profile_home_exhaust').returns(79);
+    mockDevice.settings.fan_profile_home_supply = 80;
+    mockDevice.settings.fan_profile_home_exhaust = 79;
     mockClient.readPropertyMultiple.resetBehavior();
     mockClient.readPropertyMultiple.callsFake((_ip: string, req: any[], cb: any) => {
       const requestedObjects = req
@@ -1457,6 +1474,116 @@ describe('UnitRegistry', () => {
     expect(mockDevice.error.calledWithExactly(
       '[UnitRegistry] Failed to set device available for test_unit:',
       failure,
+    )).to.equal(true);
+  });
+
+  it('falls back to the default BACnet port when the stored setting is invalid', () => {
+    const mockDevice = makeMockDevice({
+      settings: {
+        bacnetPort: 'not-a-port',
+      },
+    });
+
+    registry.register('test_unit', mockDevice);
+
+    const unit = (registry as any).units.get('test_unit');
+    expect(unit.bacnetPort).to.equal(47808);
+    expect(getBacnetClientStub.calledWithExactly(47808)).to.equal(true);
+  });
+
+  it('persists rediscovered BACnet endpoint and reuses it on restart', async () => {
+    const unitId = '800199000001';
+    const mockDevice = makeMockDevice({
+      unitId,
+      settings: {
+        serial: '800199-000001',
+      },
+    });
+    registry.register(unitId, mockDevice);
+
+    const unit = (registry as any).units.get(unitId);
+    unit.available = false;
+    mockClient.readPropertyMultiple.resetHistory();
+    getBacnetClientStub.resetHistory();
+
+    discoverStub.resolves([{
+      name: 'Nordic Mock',
+      serial: '800199-000001',
+      serialNormalized: unitId,
+      ip: '192.0.2.10',
+      bacnetPort: 47809,
+    }]);
+
+    (registry as any).startRediscovery(unit);
+    await flushAsyncWork();
+
+    expect(unit.ip).to.equal('192.0.2.10');
+    expect(unit.bacnetPort).to.equal(47809);
+    expect(mockDevice.setSettings.calledWithMatch({
+      ip: '192.0.2.10',
+      bacnetPort: '47809',
+    })).to.equal(true);
+    expect(mockDevice.getSetting('ip')).to.equal('192.0.2.10');
+    expect(mockDevice.getSetting('bacnetPort')).to.equal('47809');
+    expect(getBacnetClientStub.calledWithExactly(47809)).to.equal(true);
+    expect(mockClient.readPropertyMultiple.lastCall.args[0]).to.equal('192.0.2.10');
+    expect(mockDevice.setAvailable.called).to.equal(true);
+
+    const restartedRegistry = new UnitRegistryClass({
+      getBacnetClient: getBacnetClientStub,
+      discoverFlexitUnits: discoverStub,
+      writeTimeoutMs: TEST_WRITE_TIMEOUT_MS,
+    });
+
+    try {
+      mockClient.readPropertyMultiple.resetHistory();
+      getBacnetClientStub.resetHistory();
+      restartedRegistry.register(unitId, mockDevice);
+
+      expect(getBacnetClientStub.calledWithExactly(47809)).to.equal(true);
+      expect(mockClient.readPropertyMultiple.firstCall.args[0]).to.equal('192.0.2.10');
+    } finally {
+      restartedRegistry.destroy();
+    }
+  });
+
+  it('ignores invalid rediscovered BACnet endpoints', async () => {
+    const unitId = '800199000001';
+    const mockDevice = makeMockDevice({
+      unitId,
+      settings: {
+        serial: '800199-000001',
+      },
+    });
+    const logger = {
+      log: sinon.stub(),
+      warn: sinon.stub(),
+      error: sinon.stub(),
+    };
+    registry.setLogger(logger);
+    registry.register(unitId, mockDevice);
+
+    const unit = (registry as any).units.get(unitId);
+    unit.available = false;
+    mockDevice.setSettings.resetHistory();
+    mockClient.readPropertyMultiple.resetHistory();
+    discoverStub.resolves([{
+      name: 'Nordic Mock',
+      serial: '800199-000001',
+      serialNormalized: unitId,
+      ip: '',
+      bacnetPort: 'nope',
+    }]);
+
+    (registry as any).startRediscovery(unit);
+    await flushAsyncWork();
+
+    expect(unit.ip).to.equal('127.0.0.1');
+    expect(unit.bacnetPort).to.equal(47808);
+    expect(mockDevice.setSettings.called).to.equal(false);
+    expect(mockClient.readPropertyMultiple.called).to.equal(false);
+    expect(logger.warn.calledWithMatch(
+      `[UnitRegistry] Ignoring invalid rediscovered endpoint for ${unitId}: <empty>:nope`,
     )).to.equal(true);
   });
 

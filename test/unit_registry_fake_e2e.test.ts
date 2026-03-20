@@ -28,6 +28,7 @@ const {
 
 const CLIENT_BIND_ADDRESS = '127.0.0.1';
 const SERVER_BIND_ADDRESS = '127.0.0.2';
+const MOVED_SERVER_BIND_ADDRESS = '127.0.0.3';
 const SOCKET_LISTEN_TIMEOUT_MS = 2000;
 const SHORT_WRITE_TIMEOUT_MS = 300;
 const FILTER_CHANGE_INTERVAL_HOURS_PER_MONTH = 732;
@@ -64,35 +65,26 @@ function createState() {
 }
 
 function makeMockDevice(serverIp: string, serverPort: number, filterIntervalHours: number) {
-  let currentFilterIntervalHours = filterIntervalHours;
-  let currentFilterIntervalMonths = Math.max(
-    1,
-    Math.round(filterIntervalHours / FILTER_CHANGE_INTERVAL_HOURS_PER_MONTH),
-  );
-  let currentFireplaceDurationMinutes = 10;
-  const currentFanSettings = { ...DEFAULT_FAN_SETTINGS };
-  const currentTargetTemperatureSettings = { ...DEFAULT_TARGET_TEMPERATURE_SETTINGS };
-  const getSetting = sinon.stub();
-  getSetting.withArgs('ip').returns(serverIp);
-  getSetting.withArgs('bacnetPort').returns(serverPort);
-  getSetting.withArgs('serial').returns('800131-123456');
-  getSetting.withArgs('filter_change_interval_hours').callsFake(() => currentFilterIntervalHours);
-  getSetting.withArgs('filter_change_interval_months').callsFake(() => currentFilterIntervalMonths);
-  getSetting.withArgs('fireplace_duration_minutes').callsFake(() => currentFireplaceDurationMinutes);
-  getSetting.callsFake((key: string) => {
-    if (Object.prototype.hasOwnProperty.call(currentFanSettings, key)) return currentFanSettings[key];
-    if (Object.prototype.hasOwnProperty.call(currentTargetTemperatureSettings, key)) {
-      return currentTargetTemperatureSettings[key];
-    }
-    return undefined;
-  });
+  const currentSettings: Record<string, any> = {
+    ip: serverIp,
+    bacnetPort: serverPort,
+    serial: '800131-123456',
+    filter_change_interval_hours: filterIntervalHours,
+    filter_change_interval_months: Math.max(
+      1,
+      Math.round(filterIntervalHours / FILTER_CHANGE_INTERVAL_HOURS_PER_MONTH),
+    ),
+    fireplace_duration_minutes: 10,
+    ...DEFAULT_FAN_SETTINGS,
+    ...DEFAULT_TARGET_TEMPERATURE_SETTINGS,
+  };
 
-  const setSettings = sinon.stub().callsFake(async (settings: Record<string, any>) => {
+  const applySettings = async (settings: Record<string, any>) => {
     const nextHours = settings?.filter_change_interval_hours;
     const nextMonths = settings?.filter_change_interval_months;
     if (typeof nextHours === 'number' && Number.isFinite(nextHours)) {
-      currentFilterIntervalHours = nextHours;
-      currentFilterIntervalMonths = Math.max(
+      currentSettings.filter_change_interval_hours = nextHours;
+      currentSettings.filter_change_interval_months = Math.max(
         1,
         Math.round(nextHours / FILTER_CHANGE_INTERVAL_HOURS_PER_MONTH),
       );
@@ -102,64 +94,29 @@ function makeMockDevice(serverIp: string, serverPort: number, filterIntervalHour
       && Number.isFinite(nextMonths)
       && !(typeof nextHours === 'number' && Number.isFinite(nextHours))
     ) {
-      currentFilterIntervalMonths = nextMonths;
-      currentFilterIntervalHours = Math.round(nextMonths * FILTER_CHANGE_INTERVAL_HOURS_PER_MONTH);
-    }
-    for (const [key, value] of Object.entries(settings ?? {})) {
-      if (!Object.prototype.hasOwnProperty.call(currentFanSettings, key)) continue;
-      if (typeof value === 'number' && Number.isFinite(value)) {
-        currentFanSettings[key] = value;
-      }
-    }
-    for (const [key, value] of Object.entries(settings ?? {})) {
-      if (!Object.prototype.hasOwnProperty.call(currentTargetTemperatureSettings, key)) continue;
-      if (typeof value === 'number' && Number.isFinite(value)) {
-        currentTargetTemperatureSettings[key] = value;
-      }
+      currentSettings.filter_change_interval_months = nextMonths;
+      currentSettings.filter_change_interval_hours = Math.round(
+        nextMonths * FILTER_CHANGE_INTERVAL_HOURS_PER_MONTH,
+      );
     }
     const nextFireplaceDuration = settings?.fireplace_duration_minutes;
     if (typeof nextFireplaceDuration === 'number' && Number.isFinite(nextFireplaceDuration)) {
-      currentFireplaceDurationMinutes = Math.round(nextFireplaceDuration);
+      currentSettings.fireplace_duration_minutes = Math.round(nextFireplaceDuration);
     }
-  });
-  const setSetting = sinon.stub().callsFake(async (settings: Record<string, any>) => {
-    const nextHours = settings?.filter_change_interval_hours;
-    const nextMonths = settings?.filter_change_interval_months;
-    if (typeof nextHours === 'number' && Number.isFinite(nextHours)) {
-      currentFilterIntervalHours = nextHours;
-      currentFilterIntervalMonths = Math.max(1, Math.round(nextHours / FILTER_CHANGE_INTERVAL_HOURS_PER_MONTH));
-    }
-    if (
-      typeof nextMonths === 'number'
-      && Number.isFinite(nextMonths)
-      && !(typeof nextHours === 'number' && Number.isFinite(nextHours))
-    ) {
-      currentFilterIntervalMonths = nextMonths;
-      currentFilterIntervalHours = Math.round(nextMonths * FILTER_CHANGE_INTERVAL_HOURS_PER_MONTH);
-    }
+
     for (const [key, value] of Object.entries(settings ?? {})) {
-      if (!Object.prototype.hasOwnProperty.call(currentFanSettings, key)) continue;
-      if (typeof value === 'number' && Number.isFinite(value)) {
-        currentFanSettings[key] = value;
-      }
+      if (key === 'filter_change_interval_hours') continue;
+      if (key === 'filter_change_interval_months') continue;
+      if (key === 'fireplace_duration_minutes' && typeof value === 'number' && Number.isFinite(value)) continue;
+      currentSettings[key] = value;
     }
-    for (const [key, value] of Object.entries(settings ?? {})) {
-      if (!Object.prototype.hasOwnProperty.call(currentTargetTemperatureSettings, key)) continue;
-      if (typeof value === 'number' && Number.isFinite(value)) {
-        currentTargetTemperatureSettings[key] = value;
-      }
-    }
-    const nextFireplaceDuration = settings?.fireplace_duration_minutes;
-    if (typeof nextFireplaceDuration === 'number' && Number.isFinite(nextFireplaceDuration)) {
-      currentFireplaceDurationMinutes = Math.round(nextFireplaceDuration);
-    }
-  });
+  };
 
   return {
     getData: sinon.stub().returns({ unitId: 'test_unit' }),
-    getSetting,
-    setSettings,
-    setSetting,
+    getSetting: sinon.stub().callsFake((key: string) => currentSettings[key]),
+    setSettings: sinon.stub().callsFake(applySettings),
+    setSetting: sinon.stub().callsFake(applySettings),
     setCapabilityValue: sinon.stub().resolves(),
     setAvailable: sinon.stub().resolves(),
     setUnavailable: sinon.stub().resolves(),
@@ -299,6 +256,20 @@ async function createHarnessOnPort(serverPort: number) {
   }
 }
 
+async function createServerOnAddress(state: any, serverPort: number, bindAddress: string) {
+  const server = new FakeBacnetServer(state, {
+    port: serverPort,
+    bindAddress,
+    advertiseAddress: bindAddress,
+    logTraffic: false,
+    periodicIAmMs: 0,
+  });
+  server.start();
+  await waitForSocketListening(transportSocketFromClient((server as any).client));
+  await sleep(25);
+  return server;
+}
+
 async function createBacnetHarness() {
   let lastError: unknown;
 
@@ -324,6 +295,8 @@ describe('UnitRegistry fake-unit e2e', function unitRegistryFakeUdpE2e() {
   let client: any;
   let server: any;
   let writePresentValueSpy: sinon.SinonSpy;
+  let discoverFlexitUnitsStub: sinon.SinonStub;
+  let getBacnetClientStub: sinon.SinonStub;
   let serverPort = 47808;
 
   beforeEach(async () => {
@@ -333,10 +306,12 @@ describe('UnitRegistry fake-unit e2e', function unitRegistryFakeUdpE2e() {
     server = harness.server;
     serverPort = harness.serverPort;
     writePresentValueSpy = sinon.spy(state, 'writePresentValue');
+    discoverFlexitUnitsStub = sinon.stub().resolves([]);
+    getBacnetClientStub = sinon.stub().returns(client);
 
     registry = new UnitRegistry({
-      getBacnetClient: sinon.stub().returns(client),
-      discoverFlexitUnits: sinon.stub().resolves([]),
+      getBacnetClient: getBacnetClientStub,
+      discoverFlexitUnits: discoverFlexitUnitsStub,
     });
   });
 
@@ -411,6 +386,56 @@ describe('UnitRegistry fake-unit e2e', function unitRegistryFakeUdpE2e() {
       && call.args[0]?.filter_change_interval_months === 6
     ));
     expect(synced).to.not.equal(undefined);
+  });
+
+  it('persists a rediscovered BACnet endpoint and reuses it after restart', async () => {
+    const device = makeMockDevice(SERVER_BIND_ADDRESS, serverPort, 4380);
+    registry.register('test_unit', device);
+    await waitFor(() => device.setCapabilityValue.called);
+
+    server.stop();
+    await sleep(25);
+    server = await createServerOnAddress(state, serverPort, MOVED_SERVER_BIND_ADDRESS);
+
+    device.setSettings.resetHistory();
+    device.setAvailable.resetHistory();
+    discoverFlexitUnitsStub.resolves([{
+      name: 'Nordic Fake',
+      serial: '800131-123456',
+      serialNormalized: 'test_unit',
+      ip: MOVED_SERVER_BIND_ADDRESS,
+      bacnetPort: serverPort,
+    }]);
+
+    const unit = (registry as any).units.get('test_unit');
+    unit.available = false;
+
+    (registry as any).startRediscovery(unit);
+
+    await waitFor(() => device.setSettings.calledWithMatch({
+      ip: MOVED_SERVER_BIND_ADDRESS,
+      bacnetPort: String(serverPort),
+    }));
+    await waitFor(() => device.setAvailable.calledOnce);
+
+    expect(device.getSetting('ip')).to.equal(MOVED_SERVER_BIND_ADDRESS);
+    expect(device.getSetting('bacnetPort')).to.equal(String(serverPort));
+
+    registry.destroy();
+    device.setCapabilityValue.resetHistory();
+    device.setUnavailable.resetHistory();
+    discoverFlexitUnitsStub.resetHistory();
+
+    registry = new UnitRegistry({
+      getBacnetClient: getBacnetClientStub,
+      discoverFlexitUnits: discoverFlexitUnitsStub,
+    });
+    registry.register('test_unit', device);
+
+    await waitFor(() => device.setCapabilityValue.called);
+
+    expect(discoverFlexitUnitsStub.notCalled).to.equal(true);
+    expect(device.setUnavailable.notCalled).to.equal(true);
   });
 
   it('writes filter change interval to the unit and verifies it', async () => {
@@ -1231,9 +1256,22 @@ describe('UnitRegistry fake-unit e2e', function unitRegistryFakeUdpE2e() {
       return cookerHood.ok && cookerHood.value.value === 1;
     });
 
+    device.setCapabilityValue.resetHistory();
+    (registry as any).pollUnit('test_unit');
+    await waitFor(() => device.setCapabilityValue.getCalls().some((call: any) => (
+      call.args[0] === 'fan_mode' && call.args[1] === 'cooker'
+    )));
+
     writePresentValueSpy.resetHistory();
     await registry.setFanMode('test_unit', 'away');
 
+    await waitFor(() => writePresentValueSpy.getCalls().some((call: any) => (
+      call.args[0] === OBJECT_TYPE.BINARY_VALUE
+      && call.args[1] === 402
+      && call.args[2] === PROPERTY_ID.PRESENT_VALUE
+      && call.args[3] === null
+      && call.args[4] === 13
+    )));
     const relinquishWrite = writePresentValueSpy.getCalls().find((call: any) => (
       call.args[0] === OBJECT_TYPE.BINARY_VALUE
       && call.args[1] === 402
