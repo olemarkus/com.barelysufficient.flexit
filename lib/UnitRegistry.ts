@@ -12,6 +12,13 @@ function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
 
+function normalizeBacnetPort(value: unknown): number | undefined {
+  const numeric = Number(value);
+  if (!Number.isInteger(numeric)) return undefined;
+  if (numeric < 1 || numeric > 65535) return undefined;
+  return numeric;
+}
+
 export interface FlexitDevice {
     getData(): { unitId: string };
     getSetting(key: string): string | number | boolean | null;
@@ -36,6 +43,8 @@ const TARGET_TEMPERATURE_STEP_C = 0.5;
 export const TARGET_TEMPERATURE_HOME_SETTING = 'target_temperature_home';
 export const TARGET_TEMPERATURE_AWAY_SETTING = 'target_temperature_away';
 export const FIREPLACE_DURATION_SETTING = 'fireplace_duration_minutes';
+const BACNET_IP_SETTING = 'ip';
+const BACNET_PORT_SETTING = 'bacnetPort';
 export const MIN_FIREPLACE_DURATION_MINUTES = 1;
 export const MAX_FIREPLACE_DURATION_MINUTES = 360;
 type TargetTemperatureMode = 'home' | 'away';
@@ -826,8 +835,8 @@ export class UnitRegistry {
     register(unitId: string, device: FlexitDevice) {
       let unit = this.units.get(unitId);
       if (!unit) {
-        const ip = String(device.getSetting('ip') || '').trim();
-        const bacnetPort = Number(device.getSetting('bacnetPort') || 47808);
+        const ip = String(device.getSetting(BACNET_IP_SETTING) || '').trim();
+        const bacnetPort = normalizeBacnetPort(device.getSetting(BACNET_PORT_SETTING)) ?? 47808;
         const serial = String(device.getSetting('serial') || '');
 
         unit = {
@@ -1591,18 +1600,27 @@ export class UnitRegistry {
         const match = found.find((u) => u.serialNormalized === unit.unitId);
         if (!match) return;
 
-        const ipChanged = match.ip !== unit.ip;
-        const portChanged = match.bacnetPort !== unit.bacnetPort;
+        const rediscoveredIp = String(match.ip || '').trim();
+        const rediscoveredPort = normalizeBacnetPort(match.bacnetPort);
+        if (!rediscoveredIp || rediscoveredPort === undefined) {
+          this.warn(
+            `[UnitRegistry] Ignoring invalid rediscovered endpoint for ${unit.unitId}:`
+            + ` ${rediscoveredIp || '<empty>'}:${String(match.bacnetPort)}`,
+          );
+          return;
+        }
+
+        const ipChanged = rediscoveredIp !== unit.ip;
+        const portChanged = rediscoveredPort !== unit.bacnetPort;
 
         if (ipChanged || portChanged) {
           this.log(
-            `[UnitRegistry] Rediscovered ${unit.unitId} at ${match.ip}:${match.bacnetPort}`
+            `[UnitRegistry] Rediscovered ${unit.unitId} at ${rediscoveredIp}:${rediscoveredPort}`
             + ` (was ${unit.ip}:${unit.bacnetPort})`,
           );
-          unit.ip = match.ip;
-          unit.bacnetPort = match.bacnetPort;
-
-          // Connection settings are labels (read-only), keep runtime values in memory.
+          unit.ip = rediscoveredIp;
+          unit.bacnetPort = rediscoveredPort;
+          await this.persistConnectionSettings(unit);
         } else {
           this.log(`[UnitRegistry] Rediscovered ${unit.unitId} at same address, retrying poll`);
         }
@@ -1885,6 +1903,37 @@ export class UnitRegistry {
       if (typeof device.setSettings === 'function') return device.setSettings(settings);
       if (typeof device.setSetting === 'function') return device.setSetting(settings);
       return Promise.resolve();
+    }
+
+    private async persistConnectionSettings(unit: UnitState) {
+      const normalizedIp = String(unit.ip || '').trim();
+      const normalizedPort = normalizeBacnetPort(unit.bacnetPort);
+      if (!normalizedIp || normalizedPort === undefined) {
+        this.warn(
+          `[UnitRegistry] Skipping connection settings sync for ${unit.unitId};`
+          + ` invalid endpoint ${normalizedIp || '<empty>'}:${String(unit.bacnetPort)}`,
+        );
+        return;
+      }
+
+      const pendingUpdates: Array<Promise<void>> = [];
+      for (const device of unit.devices) {
+        const currentIp = String(device.getSetting(BACNET_IP_SETTING) || '').trim();
+        const currentPort = normalizeBacnetPort(device.getSetting(BACNET_PORT_SETTING));
+        if (currentIp === normalizedIp && currentPort === normalizedPort) continue;
+
+        pendingUpdates.push(this.updateDeviceSettings(device, {
+          [BACNET_IP_SETTING]: normalizedIp,
+          [BACNET_PORT_SETTING]: String(normalizedPort),
+        }).catch((err) => {
+          this.warn(
+            `[UnitRegistry] Failed to sync connection settings for ${device.getData().unitId}:`,
+            err,
+          );
+        }));
+      }
+
+      await Promise.allSettled(pendingUpdates);
     }
 
     private syncTargetTemperatureSettings(device: FlexitDevice, data: Record<string, number>) {
