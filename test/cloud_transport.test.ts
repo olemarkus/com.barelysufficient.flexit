@@ -610,7 +610,7 @@ describe('Cloud transport – UnitRegistry integration', () => {
     await sleep(50);
     expect(mock.device.setUnavailable.called).to.equal(false);
 
-    // Trigger additional poll failures to reach MAX_CONSECUTIVE_FAILURES (3)
+    // Trigger additional poll failures to reach the cloud unavailability threshold (3)
     (registry as any).pollUnit(UNIT_ID);
     await sleep(50);
     (registry as any).pollUnit(UNIT_ID);

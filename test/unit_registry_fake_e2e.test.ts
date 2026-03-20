@@ -510,6 +510,30 @@ describe('UnitRegistry fake-unit e2e', function unitRegistryFakeUdpE2e() {
     }
   });
 
+  it('marks BACnet devices unavailable when the unit stops responding', async function testBacnetUnavailable() {
+    this.timeout(15000);
+
+    const device = makeMockDevice(SERVER_BIND_ADDRESS, serverPort, 4380);
+    registry.register('test_unit', device);
+
+    const unit = (registry as any).units.get('test_unit');
+    await waitFor(() => Boolean(unit?.lastPollAt));
+    clearInterval(unit.pollInterval);
+    unit.pollInterval = null;
+
+    device.setUnavailable.resetHistory();
+    server.stop();
+    await sleep(50);
+
+    (registry as any).pollUnit('test_unit');
+
+    await waitFor(() => device.setUnavailable.calledOnce, 12000, 50);
+    expect(device.setUnavailable.firstCall.args[0]).to.equal(
+      'Device unreachable — will auto-reconnect when found',
+    );
+    expect(unit.available).to.equal(false);
+  });
+
   it('reads and toggles heating coil state via BV:445', async () => {
     const device = makeMockDevice(SERVER_BIND_ADDRESS, serverPort, 4380);
     registry.register('test_unit', device);

@@ -1398,18 +1398,33 @@ describe('UnitRegistry', () => {
     expect(thrown?.message).to.equal('Dehumidification state unavailable');
   });
 
-  it('marks device unavailable after consecutive poll failures', () => {
+  it('marks BACnet device unavailable after the first failed poll cycle', () => {
     const mockDevice = makeMockDevice();
     registry.register('test_unit', mockDevice);
 
-    // Simulate 3 consecutive poll failures
     const unit = (registry as any).units.get('test_unit');
-    (registry as any).handlePollFailure(unit);
-    (registry as any).handlePollFailure(unit);
     (registry as any).handlePollFailure(unit);
 
     expect(mockDevice.setUnavailable.calledOnce).to.equal(true);
     expect(unit.available).to.equal(false);
+  });
+
+  it('logs setUnavailable failures instead of swallowing them', async () => {
+    const mockDevice = makeMockDevice();
+    const failure = new Error('setUnavailable failed');
+    mockDevice.setUnavailable.rejects(failure);
+    registry.register('test_unit', mockDevice);
+
+    const unit = (registry as any).units.get('test_unit');
+    unit.consecutiveFailures = 2;
+
+    (registry as any).handlePollFailure(unit);
+    await Promise.resolve();
+
+    expect(mockDevice.error.calledWithExactly(
+      '[UnitRegistry] Failed to set device unavailable for test_unit:',
+      failure,
+    )).to.equal(true);
   });
 
   it('marks device available again after poll success', () => {
@@ -1425,6 +1440,24 @@ describe('UnitRegistry', () => {
     expect(mockDevice.setAvailable.called).to.equal(true);
     expect(unit.available).to.equal(true);
     expect(unit.consecutiveFailures).to.equal(0);
+  });
+
+  it('logs setAvailable failures instead of swallowing them', async () => {
+    const mockDevice = makeMockDevice();
+    const failure = new Error('setAvailable failed');
+    mockDevice.setAvailable.rejects(failure);
+    registry.register('test_unit', mockDevice);
+
+    const unit = (registry as any).units.get('test_unit');
+    unit.available = false;
+
+    (registry as any).handlePollSuccess(unit);
+    await Promise.resolve();
+
+    expect(mockDevice.error.calledWithExactly(
+      '[UnitRegistry] Failed to set device available for test_unit:',
+      failure,
+    )).to.equal(true);
   });
 
   it('does not start overlapping polls while a poll is already in flight', () => {
@@ -1445,6 +1478,77 @@ describe('UnitRegistry', () => {
     pendingCallback?.(null, { values: [] });
     (registry as any).pollUnit('test_unit');
     expect(mockClient.readPropertyMultiple.callCount).to.equal(2);
+  });
+
+  it('marks BACnet device unavailable when the timeout retry also fails', async () => {
+    const clock = sinon.useFakeTimers();
+    const mockDevice = makeMockDevice();
+
+    try {
+      registry.register('test_unit', mockDevice);
+      const unit = (registry as any).units.get('test_unit');
+      clearInterval(unit.pollInterval);
+      unit.pollInterval = null;
+
+      mockClient.readPropertyMultiple.resetHistory();
+      mockClient.readPropertyMultiple.resetBehavior();
+      mockClient.readPropertyMultiple.callsFake((_ip: string, _requestArray: any[], cb: any) => {
+        cb({ code: 'ERR_TIMEOUT', message: 'ERR_TIMEOUT' });
+      });
+      mockDevice.setUnavailable.resetHistory();
+
+      (registry as any).pollUnit('test_unit');
+      await clock.tickAsync(1000);
+      await clock.tickAsync(0);
+
+      expect(mockClient.readPropertyMultiple.callCount).to.equal(2);
+      expect(mockDevice.setUnavailable.calledOnce).to.equal(true);
+      expect(unit.available).to.equal(false);
+    } finally {
+      clock.restore();
+    }
+  });
+
+  it('retries when poll values are missing on the first attempt', async () => {
+    const clock = sinon.useFakeTimers();
+    const mockDevice = makeMockDevice();
+    const pollAttemptStub = sinon.stub(registry as any, 'pollAttempt');
+
+    try {
+      registry.register('test_unit', mockDevice);
+      const unit = (registry as any).units.get('test_unit');
+      clearInterval(unit.pollInterval);
+      unit.pollInterval = null;
+      pollAttemptStub.resetHistory();
+
+      (registry as any).handlePollResponse(unit, 0, {});
+      await clock.tickAsync(1000);
+
+      expect(mockDevice.error.calledWithExactly(
+        '[UnitRegistry] Poll response missing values for test_unit:',
+        {},
+      )).to.equal(true);
+      expect(
+        mockDevice.log.calledWithExactly(
+          '[UnitRegistry] Poll response missing values for test_unit, retrying once...',
+        ),
+      ).to.equal(true);
+      expect(pollAttemptStub.calledOnceWithExactly(unit, 1)).to.equal(true);
+    } finally {
+      pollAttemptStub.restore();
+      clock.restore();
+    }
+  });
+
+  it('marks BACnet device unavailable when retry poll values are still missing', () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    const unit = (registry as any).units.get('test_unit');
+    (registry as any).handlePollResponse(unit, 1, {});
+
+    expect(mockDevice.setUnavailable.calledOnce).to.equal(true);
+    expect(unit.available).to.equal(false);
   });
 
   it('logs when a timeout retry poll succeeds', async () => {
@@ -1672,5 +1776,63 @@ describe('UnitRegistry', () => {
     expect(extractTempCalls.length).to.be.greaterThan(0);
     const lastCall = extractTempCalls[extractTempCalls.length - 1];
     expect(lastCall.args[1]).to.equal(20.8);
+  });
+
+  it('logs capability update failures instead of swallowing them', async () => {
+    const mockDevice = makeMockDevice();
+    const failure = new Error('setCapabilityValue failed');
+    mockDevice.setCapabilityValue.rejects(failure);
+    registry.register('test_unit', mockDevice);
+
+    (registry as any).setCapability(mockDevice, 'measure_temperature', 21.5);
+    await Promise.resolve();
+
+    expect(mockDevice.error.calledWithExactly(
+      "[UnitRegistry] Failed to set capability 'measure_temperature' for test_unit:",
+      failure,
+    )).to.equal(true);
+  });
+
+  it('does not read device data on successful capability updates', async () => {
+    const mockDevice = makeMockDevice();
+    mockDevice.getData.resetHistory();
+
+    (registry as any).setCapability(mockDevice, 'measure_temperature', 21.5);
+    await Promise.resolve();
+
+    expect(mockDevice.getData.called).to.equal(false);
+  });
+
+  it('logs deferred fireplace retry failures instead of swallowing them', async () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    const unit = (registry as any).units.get('test_unit');
+    unit.deferredMode = 'fireplace';
+    unit.deferredSince = Date.now();
+    const failure = new Error('retry failed');
+    const setFanModeStub = sinon.stub(registry, 'setFanMode').rejects(failure);
+
+    try {
+      (registry as any).resolveFanMode(unit, {
+        comfort_button: 1,
+        ventilation_mode: 3,
+        operation_mode: 3,
+        rapid_active: 0,
+        fireplace_active: 0,
+        remaining_temp_vent_op: 0,
+        remaining_rapid_vent: 0,
+        remaining_fireplace_vent: 0,
+        mode_rf_input: 24,
+      });
+      await Promise.resolve();
+    } finally {
+      setFanModeStub.restore();
+    }
+
+    expect(mockDevice.error.calledWithExactly(
+      '[UnitRegistry] Deferred fireplace retry failed for test_unit:',
+      failure,
+    )).to.equal(true);
   });
 });

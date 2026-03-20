@@ -204,6 +204,10 @@ describe('flexitDiscovery', () => {
       '[Discovery] Failed to send discover via eth1=192.0.2.11 to 224.0.0.180:30000:',
       sinon.match.instanceOf(Error),
     )).to.equal(true);
+    expect(error.calledWithExactly(
+      '[Discovery] Failed to close TX socket:',
+      sinon.match.instanceOf(Error),
+    )).to.equal(true);
     expect(log.calledWithExactly(parsedReplyOneLog)).to.equal(true);
     expect(log.calledWithExactly(parsedReplyDuplicateLog)).to.equal(true);
     expect(log.calledWithExactly(parsedReplyTwoLog)).to.equal(true);

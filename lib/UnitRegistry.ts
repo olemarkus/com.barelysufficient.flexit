@@ -155,7 +155,8 @@ const CLOUD_POLL_INTERVAL_MS = 60_000;
 const POLL_WATCHDOG_TIMEOUT_MS = 12_000;
 const MODE_MISMATCH_GRACE_MS = 1000;
 const REDISCOVERY_INTERVAL_MS = 60_000;
-const MAX_CONSECUTIVE_FAILURES = 3;
+const MAX_BACNET_CONSECUTIVE_FAILURES = 1;
+const MAX_CLOUD_CONSECUTIVE_FAILURES = 3;
 const DEFAULT_WRITE_TIMEOUT_MS = 5_000;
 const EXTRACT_AIR_TEMPERATURE_PRIMARY_INSTANCE = 59;
 const EXTRACT_AIR_TEMPERATURE_ALT_INSTANCE = 95;
@@ -813,6 +814,15 @@ export class UnitRegistry {
       this.getAnyDevice()?.error(...args);
     }
 
+    private logDetachedPromiseError(
+      promise: Promise<unknown>,
+      message: string | (() => string),
+    ) {
+      promise.catch((error) => {
+        this.error(typeof message === 'function' ? message() : message, error);
+      });
+    }
+
     register(unitId: string, device: FlexitDevice) {
       let unit = this.units.get(unitId);
       if (!unit) {
@@ -952,9 +962,10 @@ export class UnitRegistry {
       unit.consecutiveFailures = 0;
 
       for (const device of unit.devices) {
-        device.setAvailable().catch((e) => {
-          this.warn(`[UnitRegistry] Failed to set device available for ${unitId}:`, e);
-        });
+        this.logDetachedPromiseError(
+          device.setAvailable(),
+          `[UnitRegistry] Failed to set device available for ${unitId}:`,
+        );
       }
 
       if (!unit.pollInterval) {
@@ -1427,20 +1438,24 @@ export class UnitRegistry {
       }
     }
 
+    private schedulePollRetry(unit: UnitState, message: string) {
+      this.warn(message);
+      if (unit.pollRetryTimer) {
+        clearTimeout(unit.pollRetryTimer);
+        unit.pollRetryTimer = null;
+      }
+      unit.pollRetryTimer = setTimeout(() => {
+        unit.pollRetryTimer = null;
+        if (!this.isTrackedUnit(unit)) return;
+        this.pollAttempt(unit, 1);
+      }, 1000);
+    }
+
     private handlePollError(unit: UnitState, attempt: number, err: any) {
       if (!this.isTrackedUnit(unit)) return;
       const isTimeout = err?.code === 'ERR_TIMEOUT' || String(err?.message || '').includes('ERR_TIMEOUT');
       if (isTimeout && attempt === 0) {
-        this.warn(`[UnitRegistry] Poll timeout for ${unit.unitId}, retrying once...`);
-        if (unit.pollRetryTimer) {
-          clearTimeout(unit.pollRetryTimer);
-          unit.pollRetryTimer = null;
-        }
-        unit.pollRetryTimer = setTimeout(() => {
-          unit.pollRetryTimer = null;
-          if (!this.isTrackedUnit(unit)) return;
-          this.pollAttempt(unit, 1);
-        }, 1000);
+        this.schedulePollRetry(unit, `[UnitRegistry] Poll timeout for ${unit.unitId}, retrying once...`);
         return;
       }
       this.error(`[UnitRegistry] Poll error for ${unit.unitId}:`, err);
@@ -1448,7 +1463,18 @@ export class UnitRegistry {
     }
 
     private handlePollResponse(unit: UnitState, attempt: number, value: any) {
-      if (!value?.values) return;
+      if (!value?.values) {
+        this.error(`[UnitRegistry] Poll response missing values for ${unit.unitId}:`, value);
+        if (attempt === 0) {
+          this.schedulePollRetry(
+            unit,
+            `[UnitRegistry] Poll response missing values for ${unit.unitId}, retrying once...`,
+          );
+          return;
+        }
+        this.handlePollFailure(unit);
+        return;
+      }
       try {
         this.handlePollSuccess(unit);
         if (attempt > 0) {
@@ -1514,16 +1540,17 @@ export class UnitRegistry {
 
     private handlePollFailure(unit: UnitState) {
       unit.consecutiveFailures++;
-      if (unit.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES && unit.available) {
+      if (unit.consecutiveFailures >= MAX_BACNET_CONSECUTIVE_FAILURES && unit.available) {
         unit.available = false;
         this.warn(
           `[UnitRegistry] Unit ${unit.unitId} marked unavailable after`
           + ` ${unit.consecutiveFailures} consecutive failures`,
         );
         for (const device of unit.devices) {
-          device
-            .setUnavailable('Device unreachable — will auto-reconnect when found')
-            .catch(() => { });
+          this.logDetachedPromiseError(
+            device.setUnavailable('Device unreachable — will auto-reconnect when found'),
+            `[UnitRegistry] Failed to set device unavailable for ${unit.unitId}:`,
+          );
         }
         this.startRediscovery(unit);
       }
@@ -1538,7 +1565,10 @@ export class UnitRegistry {
           `[UnitRegistry] Unit ${unit.unitId} is available again (${location})`,
         );
         for (const device of unit.devices) {
-          device.setAvailable().catch(() => { });
+          this.logDetachedPromiseError(
+            device.setAvailable(),
+            `[UnitRegistry] Failed to set device available for ${unit.unitId}:`,
+          );
         }
         if (unit.transport !== 'cloud') {
           this.stopRediscovery(unit);
@@ -1553,42 +1583,44 @@ export class UnitRegistry {
       );
 
       const doRediscovery = async () => {
-        try {
-          const found = await this.dependencies.discoverFlexitUnits({
-            timeoutMs: 5000,
-            burstCount: 3,
-            burstIntervalMs: 300,
-          });
-          const match = found.find((u) => u.serialNormalized === unit.unitId);
-          if (!match) return;
+        const found = await this.dependencies.discoverFlexitUnits({
+          timeoutMs: 5000,
+          burstCount: 3,
+          burstIntervalMs: 300,
+        });
+        const match = found.find((u) => u.serialNormalized === unit.unitId);
+        if (!match) return;
 
-          const ipChanged = match.ip !== unit.ip;
-          const portChanged = match.bacnetPort !== unit.bacnetPort;
+        const ipChanged = match.ip !== unit.ip;
+        const portChanged = match.bacnetPort !== unit.bacnetPort;
 
-          if (ipChanged || portChanged) {
-            this.log(
-              `[UnitRegistry] Rediscovered ${unit.unitId} at ${match.ip}:${match.bacnetPort}`
-              + ` (was ${unit.ip}:${unit.bacnetPort})`,
-            );
-            unit.ip = match.ip;
-            unit.bacnetPort = match.bacnetPort;
+        if (ipChanged || portChanged) {
+          this.log(
+            `[UnitRegistry] Rediscovered ${unit.unitId} at ${match.ip}:${match.bacnetPort}`
+            + ` (was ${unit.ip}:${unit.bacnetPort})`,
+          );
+          unit.ip = match.ip;
+          unit.bacnetPort = match.bacnetPort;
 
-            // Connection settings are labels (read-only), keep runtime values in memory.
-          } else {
-            this.log(`[UnitRegistry] Rediscovered ${unit.unitId} at same address, retrying poll`);
-          }
-
-          // Trigger an immediate poll to verify connectivity
-          this.pollUnit(unit.unitId);
-        } catch (e) {
-          this.error(`[UnitRegistry] Rediscovery error for ${unit.unitId}:`, e);
+          // Connection settings are labels (read-only), keep runtime values in memory.
+        } else {
+          this.log(`[UnitRegistry] Rediscovered ${unit.unitId} at same address, retrying poll`);
         }
+
+        // Trigger an immediate poll to verify connectivity
+        this.pollUnit(unit.unitId);
       };
 
       // Run immediately, then on interval
-      doRediscovery().catch(() => { });
+      this.logDetachedPromiseError(
+        doRediscovery(),
+        `[UnitRegistry] Rediscovery error for ${unit.unitId}:`,
+      );
       unit.rediscoverInterval = setInterval(() => {
-        doRediscovery().catch(() => { });
+        this.logDetachedPromiseError(
+          doRediscovery(),
+          `[UnitRegistry] Rediscovery error for ${unit.unitId}:`,
+        );
       }, REDISCOVERY_INTERVAL_MS);
     }
 
@@ -1967,7 +1999,10 @@ export class UnitRegistry {
         unit.deferredMode = undefined;
         unit.deferredSince = undefined;
         this.warn(`[UnitRegistry] Retrying deferred fireplace for ${unit.unitId}`);
-        this.setFanMode(unit.unitId, 'fireplace').catch(() => { });
+        this.logDetachedPromiseError(
+          this.setFanMode(unit.unitId, 'fireplace'),
+          `[UnitRegistry] Deferred fireplace retry failed for ${unit.unitId}:`,
+        );
       }
 
       const mode = this.resolveFanModeFromSignals(data, tempOpActive);
@@ -2095,7 +2130,10 @@ export class UnitRegistry {
     }
 
     private setCapability(device: FlexitDevice, capability: string, value: number | string | boolean) {
-      device.setCapabilityValue(capability, value).catch(() => { });
+      this.logDetachedPromiseError(
+        device.setCapabilityValue(capability, value),
+        () => `[UnitRegistry] Failed to set capability '${capability}' for ${device.getData().unitId}:`,
+      );
     }
 
     async getDehumidificationActive(unitId: string): Promise<boolean> {
@@ -2677,12 +2715,8 @@ export class UnitRegistry {
     }
 
     private extractValue(obj: any): number | undefined {
-      try {
-        if (obj.values && obj.values[0] && obj.values[0].value && obj.values[0].value[0]) {
-          return obj.values[0].value[0].value;
-        }
-      } catch (_e) { /* ignore */ }
-      return undefined;
+      const value = obj?.values?.[0]?.value?.[0]?.value;
+      return typeof value === 'number' && !Number.isNaN(value) ? value : undefined;
     }
 
     // -------------------------------------------------------------------
@@ -2721,10 +2755,10 @@ export class UnitRegistry {
             unit.pollInterval = null;
           }
           for (const device of unit.devices) {
-            device.setUnavailable('Cloud authentication failed. Please repair the device.')
-              .catch((e) => {
-                this.warn(`[UnitRegistry] Failed to set device unavailable for ${unit.unitId}:`, e);
-              });
+            this.logDetachedPromiseError(
+              device.setUnavailable('Cloud authentication failed. Please repair the device.'),
+              `[UnitRegistry] Failed to set device unavailable for ${unit.unitId}:`,
+            );
           }
           return;
         }
@@ -2746,18 +2780,17 @@ export class UnitRegistry {
 
     private handleCloudPollFailure(unit: UnitState) {
       unit.consecutiveFailures++;
-      if (unit.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES && unit.available) {
+      if (unit.consecutiveFailures >= MAX_CLOUD_CONSECUTIVE_FAILURES && unit.available) {
         unit.available = false;
         this.warn(
           `[UnitRegistry] Cloud unit ${unit.unitId} marked unavailable after`
           + ` ${unit.consecutiveFailures} consecutive failures`,
         );
         for (const device of unit.devices) {
-          device
-            .setUnavailable('Cloud connection lost. Will retry automatically.')
-            .catch((e) => {
-              this.warn(`[UnitRegistry] Failed to set device unavailable for ${unit.unitId}:`, e);
-            });
+          this.logDetachedPromiseError(
+            device.setUnavailable('Cloud connection lost. Will retry automatically.'),
+            `[UnitRegistry] Failed to set device unavailable for ${unit.unitId}:`,
+          );
         }
       }
     }
