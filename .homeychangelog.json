@@ -67,5 +67,8 @@
   },
   "1.7.3": {
     "en": "Fixes bugs around mode transitions. Also improves hardening around unit IP address change."
+  },
+  "1.7.4": {
+    "en": "Minor performance fix."
   }
 }
