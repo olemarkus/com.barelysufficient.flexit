@@ -33,12 +33,12 @@ describe('bacnetClient', () => {
     expect(customPortClient).to.equal(secondClient);
     expect(BacnetStub.firstCall.args[0]).to.deep.equal({
       port: 47808,
-      apduTimeout: 10000,
+      apduTimeout: 15000,
       apduSize: 1476,
     });
     expect(BacnetStub.secondCall.args[0]).to.deep.equal({
       port: 47809,
-      apduTimeout: 10000,
+      apduTimeout: 15000,
       apduSize: 1476,
     });
     expect(bacnetClient.BacnetEnums).to.equal(BacnetStub.enum);
