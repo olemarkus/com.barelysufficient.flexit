@@ -1741,7 +1741,7 @@ describe('UnitRegistry', () => {
       expect(unit.pollInFlight).to.equal(true);
       expect(mockClient.readPropertyMultiple.callCount).to.equal(1);
 
-      await clock.tickAsync(11_999);
+      await clock.tickAsync(19_999);
       (registry as any).pollUnit('test_unit');
       expect(mockClient.readPropertyMultiple.callCount).to.equal(1);
 
