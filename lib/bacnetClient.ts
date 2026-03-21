@@ -24,7 +24,7 @@ export function getBacnetClient(port: number): BacnetClient {
 
   const client = new Bacnet({
     port: p,
-    apduTimeout: 10000,
+    apduTimeout: 15000,
     apduSize: 1476, // typical max ethernet APDU
   });
 
