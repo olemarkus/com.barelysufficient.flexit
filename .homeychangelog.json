@@ -70,5 +70,8 @@
   },
   "1.7.4": {
     "en": "Minor performance fix."
+  },
+  "1.7.5": {
+    "en": "Minor stability fixes."
   }
 }
