@@ -14,6 +14,7 @@ class MockHomeyDevice {
   setSettings = sinon.stub().resolves();
   getSetting = sinon.stub().returns(undefined);
   registerCapabilityListener = sinon.stub();
+  getCapabilityValue = sinon.stub().returns(undefined);
   getData = sinon.stub().returns({ unitId: 'test_unit' });
   getName = sinon.stub().returns('Test Nordic');
   log = sinon.stub();

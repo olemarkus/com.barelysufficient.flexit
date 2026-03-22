@@ -314,6 +314,19 @@ describe('UnitRegistry', () => {
     expect(args[4].priority).to.equal(13);
   });
 
+  it('skips setpoint write when probe value already matches', async () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    const unit = (registry as any).units.get('test_unit');
+    // Seed probe value for home setpoint (AV:1994) — key is "type:instance"
+    unit.probeValues.set(`${BACNET_ENUMS.ObjectType.ANALOG_VALUE}:1994`, 21.5);
+
+    await registry.writeSetpoint('test_unit', 21.5);
+
+    expect(mockClient.writeProperty.called).to.equal(false);
+  });
+
   it('writes setpoint to away object when unit is in away mode', async () => {
     const mockDevice = makeMockDevice();
     registry.register('test_unit', mockDevice);
@@ -1415,13 +1428,16 @@ describe('UnitRegistry', () => {
     expect(thrown?.message).to.equal('Dehumidification state unavailable');
   });
 
-  it('marks BACnet device unavailable after the first failed poll cycle', () => {
+  it('marks BACnet device unavailable after 3 consecutive poll failures', () => {
     const mockDevice = makeMockDevice();
     registry.register('test_unit', mockDevice);
 
     const unit = (registry as any).units.get('test_unit');
     (registry as any).handlePollFailure(unit);
+    (registry as any).handlePollFailure(unit);
+    expect(unit.available).to.equal(true);
 
+    (registry as any).handlePollFailure(unit);
     expect(mockDevice.setUnavailable.calledOnce).to.equal(true);
     expect(unit.available).to.equal(false);
   });
@@ -1587,216 +1603,110 @@ describe('UnitRegistry', () => {
     )).to.equal(true);
   });
 
-  it('does not start overlapping polls while a poll is already in flight', () => {
+  it('abandons stale poll and starts fresh when next interval fires', () => {
     const mockDevice = makeMockDevice();
-    let pendingCallback: ((err: any, value: any) => void) | undefined;
+    const callbacks: Array<(err: any, value: any) => void> = [];
     mockClient.readPropertyMultiple.resetBehavior();
     mockClient.readPropertyMultiple.callsFake((_ip: string, _requestArray: any[], cb: any) => {
-      pendingCallback = cb;
+      callbacks.push(cb);
     });
 
     registry.register('test_unit', mockDevice);
     expect(mockClient.readPropertyMultiple.callCount).to.equal(1);
 
-    (registry as any).pollUnit('test_unit');
-    (registry as any).pollUnit('test_unit');
-    expect(mockClient.readPropertyMultiple.callCount).to.equal(1);
-
-    pendingCallback?.(null, { values: [] });
-    (registry as any).pollUnit('test_unit');
+    // Next interval fires while first poll is still in flight — abandons and starts new
+    (registry as any).pollUnit('test_unit', true);
     expect(mockClient.readPropertyMultiple.callCount).to.equal(2);
-  });
 
-  it('marks BACnet device unavailable when the timeout retry also fails', async () => {
-    const clock = sinon.useFakeTimers();
-    const mockDevice = makeMockDevice();
-
-    try {
-      registry.register('test_unit', mockDevice);
-      const unit = (registry as any).units.get('test_unit');
-      clearInterval(unit.pollInterval);
-      unit.pollInterval = null;
-
-      mockClient.readPropertyMultiple.resetHistory();
-      mockClient.readPropertyMultiple.resetBehavior();
-      mockClient.readPropertyMultiple.callsFake((_ip: string, _requestArray: any[], cb: any) => {
-        cb({ code: 'ERR_TIMEOUT', message: 'ERR_TIMEOUT' });
-      });
-      mockDevice.setUnavailable.resetHistory();
-
-      (registry as any).pollUnit('test_unit');
-      await clock.tickAsync(1000);
-      await clock.tickAsync(0);
-
-      expect(mockClient.readPropertyMultiple.callCount).to.equal(2);
-      expect(mockDevice.setUnavailable.calledOnce).to.equal(true);
-      expect(unit.available).to.equal(false);
-    } finally {
-      clock.restore();
-    }
-  });
-
-  it('retries when poll values are missing on the first attempt', async () => {
-    const clock = sinon.useFakeTimers();
-    const mockDevice = makeMockDevice();
-    const pollAttemptStub = sinon.stub(registry as any, 'pollAttempt');
-
-    try {
-      registry.register('test_unit', mockDevice);
-      const unit = (registry as any).units.get('test_unit');
-      clearInterval(unit.pollInterval);
-      unit.pollInterval = null;
-      pollAttemptStub.resetHistory();
-
-      (registry as any).handlePollResponse(unit, 0, {});
-      await clock.tickAsync(1000);
-
-      expect(mockDevice.error.calledWithExactly(
-        '[UnitRegistry] Poll response missing values for test_unit:',
-        {},
-      )).to.equal(true);
-      expect(
-        mockDevice.log.calledWithExactly(
-          '[UnitRegistry] Poll response missing values for test_unit, retrying once...',
-        ),
-      ).to.equal(true);
-      expect(pollAttemptStub.calledOnceWithExactly(unit, 1)).to.equal(true);
-    } finally {
-      pollAttemptStub.restore();
-      clock.restore();
-    }
-  });
-
-  it('marks BACnet device unavailable when retry poll values are still missing', () => {
-    const mockDevice = makeMockDevice();
-    registry.register('test_unit', mockDevice);
-
+    // Stale callback from first poll is ignored
     const unit = (registry as any).units.get('test_unit');
-    (registry as any).handlePollResponse(unit, 1, {});
+    callbacks[0](null, { values: [] });
+    expect(unit.consecutiveFailures).to.equal(1);
+  });
 
+  it('marks BACnet device unavailable after consecutive poll failures', () => {
+    const mockDevice = makeMockDevice();
+
+    mockClient.readPropertyMultiple.resetBehavior();
+    mockClient.readPropertyMultiple.callsFake(() => { /* never calls back */ });
+
+    registry.register('test_unit', mockDevice);
+    const unit = (registry as any).units.get('test_unit');
+    mockDevice.setUnavailable.resetHistory();
+
+    // register() started a poll that hangs. Each interval-driven pollUnit call
+    // while in-flight abandons the old poll and counts a failure.
+    (registry as any).pollUnit('test_unit', true); // failure 1
+    (registry as any).pollUnit('test_unit', true); // failure 2
+    (registry as any).pollUnit('test_unit', true); // failure 3 → unavailable
+
+    expect(unit.consecutiveFailures).to.equal(3);
     expect(mockDevice.setUnavailable.calledOnce).to.equal(true);
     expect(unit.available).to.equal(false);
   });
 
-  it('logs when a timeout retry poll succeeds', async () => {
-    const clock = sinon.useFakeTimers();
+  it('counts poll with missing values as a failure', () => {
     const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+    const unit = (registry as any).units.get('test_unit');
 
-    try {
-      registry.register('test_unit', mockDevice);
-      mockClient.readPropertyMultiple.resetHistory();
-      mockClient.readPropertyMultiple.resetBehavior();
-      let callCount = 0;
-      mockClient.readPropertyMultiple.callsFake((_ip: string, _requestArray: any[], cb: any) => {
-        callCount += 1;
-        if (callCount === 1) {
-          cb({ code: 'ERR_TIMEOUT', message: 'ERR_TIMEOUT' });
-          return;
-        }
-        cb(null, { values: [] });
-      });
-      mockDevice.log.resetHistory();
+    (registry as any).handlePollResponse(unit, {});
 
-      (registry as any).pollUnit('test_unit');
-      await clock.tickAsync(1000);
-      await clock.tickAsync(0);
-
-      expect(mockClient.readPropertyMultiple.callCount).to.equal(2);
-      expect(
-        mockDevice.log.getCalls().some((call: any) => (
-          String(call.args[0]).includes('Poll timeout for test_unit, retrying once...')
-        )),
-      ).to.equal(true);
-      expect(
-        mockDevice.log.getCalls().some((call: any) => (
-          String(call.args[0]).includes('Poll retry succeeded for test_unit')
-        )),
-      ).to.equal(true);
-    } finally {
-      clock.restore();
-    }
+    expect(mockDevice.error.calledWithExactly(
+      '[UnitRegistry] Poll response missing values for test_unit:',
+      {},
+    )).to.equal(true);
+    expect(unit.consecutiveFailures).to.equal(1);
   });
 
-  it('recovers polling when a poll callback never returns', async () => {
-    const clock = sinon.useFakeTimers();
+  it('recovers polling when a poll callback never returns', () => {
     const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+    const unit = (registry as any).units.get('test_unit');
 
-    try {
-      registry.register('test_unit', mockDevice);
-      const unit = (registry as any).units.get('test_unit');
-      clearInterval(unit.pollInterval);
-      unit.pollInterval = null;
+    mockClient.readPropertyMultiple.resetHistory();
+    mockClient.readPropertyMultiple.resetBehavior();
+    let callCount = 0;
+    mockClient.readPropertyMultiple.callsFake((_ip: string, _requestArray: any[], cb: any) => {
+      callCount += 1;
+      if (callCount === 1) return; // Simulate a hung BACnet client callback.
+      cb(null, { values: [] });
+    });
 
-      mockClient.readPropertyMultiple.resetHistory();
-      mockClient.readPropertyMultiple.resetBehavior();
-      let callCount = 0;
-      mockClient.readPropertyMultiple.callsFake((_ip: string, _requestArray: any[], cb: any) => {
-        callCount += 1;
-        if (callCount === 1) return; // Simulate a hung BACnet client callback.
-        cb(null, { values: [] });
-      });
-      mockDevice.log.resetHistory();
+    (registry as any).pollUnit('test_unit', true);
+    expect(unit.pollInFlight).to.equal(true);
+    expect(mockClient.readPropertyMultiple.callCount).to.equal(1);
 
-      (registry as any).pollUnit('test_unit');
-      expect(unit.pollInFlight).to.equal(true);
-      expect(mockClient.readPropertyMultiple.callCount).to.equal(1);
-
-      await clock.tickAsync(19_999);
-      (registry as any).pollUnit('test_unit');
-      expect(mockClient.readPropertyMultiple.callCount).to.equal(1);
-
-      await clock.tickAsync(1_001);
-      await clock.tickAsync(0);
-
-      expect(mockClient.readPropertyMultiple.callCount).to.equal(2);
-      expect(unit.pollInFlight).to.equal(false);
-      expect(
-        mockDevice.log.getCalls().some((call: any) => (
-          String(call.args[0]).includes('Poll timeout for test_unit, retrying once...')
-        )),
-      ).to.equal(true);
-      expect(
-        mockDevice.log.getCalls().some((call: any) => (
-          String(call.args[0]).includes('Poll retry succeeded for test_unit')
-        )),
-      ).to.equal(true);
-    } finally {
-      clock.restore();
-    }
+    // Next interval abandons the hung poll and starts a new one
+    (registry as any).pollUnit('test_unit', true);
+    expect(mockClient.readPropertyMultiple.callCount).to.equal(2);
+    expect(unit.pollInFlight).to.equal(false);
+    expect(unit.consecutiveFailures).to.equal(0); // success resets counter
   });
 
-  it('does not retry polling after unit teardown while a poll is in flight', async () => {
-    const clock = sinon.useFakeTimers();
+  it('ignores stale callback after poll generation advances', () => {
     const mockDevice = makeMockDevice();
+    const callbacks: Array<(err: any, value: any) => void> = [];
+    mockClient.readPropertyMultiple.resetBehavior();
+    mockClient.readPropertyMultiple.callsFake((_ip: string, _requestArray: any[], cb: any) => {
+      callbacks.push(cb);
+    });
 
-    try {
-      registry.register('test_unit', mockDevice);
-      const unit = (registry as any).units.get('test_unit');
-      clearInterval(unit.pollInterval);
-      unit.pollInterval = null;
+    registry.register('test_unit', mockDevice);
+    const unit = (registry as any).units.get('test_unit');
 
-      mockClient.readPropertyMultiple.resetHistory();
-      mockClient.readPropertyMultiple.resetBehavior();
-      mockClient.readPropertyMultiple.callsFake(() => { });
-      mockDevice.log.resetHistory();
+    // Abandon first poll via next interval
+    (registry as any).pollUnit('test_unit', true);
+    expect(callbacks.length).to.equal(2);
 
-      (registry as any).pollUnit('test_unit');
-      expect(mockClient.readPropertyMultiple.callCount).to.equal(1);
+    // Complete second poll successfully
+    callbacks[1](null, { values: [] });
+    expect(unit.consecutiveFailures).to.equal(0);
 
-      registry.unregister('test_unit', mockDevice);
-      expect((registry as any).units.has('test_unit')).to.equal(false);
-
-      await clock.tickAsync(15_000);
-
-      expect(mockClient.readPropertyMultiple.callCount).to.equal(1);
-      expect(
-        mockDevice.log.getCalls().some((call: any) => (
-          String(call.args[0]).includes('Poll timeout for test_unit, retrying once...')
-        )),
-      ).to.equal(false);
-    } finally {
-      clock.restore();
-    }
+    // Stale first callback should be ignored
+    mockDevice.setCapabilityValue.resetHistory();
+    callbacks[0](null, { values: [] });
+    expect(mockDevice.setCapabilityValue.called).to.equal(false);
   });
 
   it('clamps and rounds setpoint writes to valid 0.5C range', async () => {
@@ -1850,7 +1760,7 @@ describe('UnitRegistry', () => {
     const mockDevice = makeMockDevice();
     registry.register('test_unit', mockDevice);
     const unit = (registry as any).units.get('test_unit');
-    (registry as any).handlePollResponse(unit, 0, {
+    (registry as any).handlePollResponse(unit, {
       values: [
         makeReadObject(BACNET_ENUMS.ObjectType.ANALOG_INPUT, 11, 2.1),
       ],
@@ -1869,7 +1779,7 @@ describe('UnitRegistry', () => {
     const mockDevice = makeMockDevice();
     registry.register('test_unit', mockDevice);
     const unit = (registry as any).units.get('test_unit');
-    (registry as any).handlePollResponse(unit, 0, {
+    (registry as any).handlePollResponse(unit, {
       values: [
         makeReadObject(BACNET_ENUMS.ObjectType.ANALOG_INPUT, 59, 21.4),
         makeReadObject(BACNET_ENUMS.ObjectType.ANALOG_INPUT, 95, 0),
@@ -1889,7 +1799,7 @@ describe('UnitRegistry', () => {
     const mockDevice = makeMockDevice();
     registry.register('test_unit', mockDevice);
     const unit = (registry as any).units.get('test_unit');
-    (registry as any).handlePollResponse(unit, 0, {
+    (registry as any).handlePollResponse(unit, {
       values: [
         makeReadObject(BACNET_ENUMS.ObjectType.ANALOG_INPUT, 59, 0),
         makeReadObject(BACNET_ENUMS.ObjectType.ANALOG_INPUT, 95, 20.8),

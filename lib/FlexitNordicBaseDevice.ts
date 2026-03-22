@@ -65,6 +65,13 @@ export abstract class FlexitNordicBaseDevice extends Homey.Device {
 
   protected registerSharedCapabilityListeners(unitId: string) {
     this.registerCapabilityListener('target_temperature', async (value: number) => {
+      const current = this.getCapabilityValue('target_temperature');
+      if (normalizeTargetTemperature(current) === normalizeTargetTemperature(value)) {
+        this.log(
+          `Skipping setpoint write — already ${normalizeTargetTemperature(value)} for unit ${unitId}`,
+        );
+        return;
+      }
       await this.runCapabilityAction(
         'target_temperature',
         unitId,
