@@ -662,7 +662,7 @@ describe('Cloud transport – UnitRegistry integration', () => {
     // Trigger another poll by calling the internal cloud poll via a write
     // We need to wait for the next poll cycle or trigger manually
     // For testing, let's call writeSetpoint which triggers a poll after write
-    await registry.writeSetpoint(UNIT_ID, 20);
+    await registry.writeSetpoint(UNIT_ID, 21);
     await sleep(100);
 
     // The dehumidification state change handler must have been called
@@ -705,7 +705,7 @@ describe('Cloud transport – UnitRegistry integration', () => {
     );
 
     // Trigger another poll via a write
-    await registry.writeSetpoint(UNIT_ID, 20);
+    await registry.writeSetpoint(UNIT_ID, 21);
     await sleep(100);
 
     // Check that setSettings was called with the new fan profile value

@@ -161,10 +161,9 @@ export const MAX_FILTER_CHANGE_INTERVAL_HOURS = (
 
 const POLL_INTERVAL_MS = 10_000;
 const CLOUD_POLL_INTERVAL_MS = 60_000;
-const POLL_WATCHDOG_TIMEOUT_MS = 20_000;
 const MODE_MISMATCH_GRACE_MS = 1000;
 const REDISCOVERY_INTERVAL_MS = 60_000;
-const MAX_BACNET_CONSECUTIVE_FAILURES = 1;
+const MAX_BACNET_CONSECUTIVE_FAILURES = 3;
 const MAX_CLOUD_CONSECUTIVE_FAILURES = 3;
 const DEFAULT_WRITE_TIMEOUT_MS = 5_000;
 const EXTRACT_AIR_TEMPERATURE_PRIMARY_INSTANCE = 59;
@@ -485,9 +484,8 @@ interface UnitState {
   pollInterval: ReturnType<typeof setInterval> | null;
   rediscoverInterval: ReturnType<typeof setInterval> | null;
   pollInFlight: boolean;
+  pollGeneration: number;
   cloudPollPromise?: Promise<void>;
-  pollRetryTimer: ReturnType<typeof setTimeout> | null;
-  pollWatchdogTimer: ReturnType<typeof setTimeout> | null;
   ip: string;
   bacnetPort: number;
   writeQueue: Promise<void>;
@@ -847,8 +845,7 @@ export class UnitRegistry {
           pollInterval: null,
           rediscoverInterval: null,
           pollInFlight: false,
-          pollRetryTimer: null,
-          pollWatchdogTimer: null,
+          pollGeneration: 0,
           ip,
           bacnetPort,
           writeQueue: Promise.resolve(),
@@ -877,7 +874,7 @@ export class UnitRegistry {
 
         // Start polling immediately
         this.pollUnit(unitId);
-        unit.pollInterval = setInterval(() => this.pollUnit(unitId), POLL_INTERVAL_MS);
+        unit.pollInterval = setInterval(() => this.pollUnit(unitId, true), POLL_INTERVAL_MS);
       }
       unit.devices.add(device);
       if (!this.logger) this.syncBacnetLogger();
@@ -914,8 +911,7 @@ export class UnitRegistry {
           pollInterval: null,
           rediscoverInterval: null,
           pollInFlight: false,
-          pollRetryTimer: null,
-          pollWatchdogTimer: null,
+          pollGeneration: 0,
           ip: '',
           bacnetPort: 0,
           writeQueue: Promise.resolve(),
@@ -1001,7 +997,7 @@ export class UnitRegistry {
         if (unit.devices.size === 0) {
           if (unit.pollInterval) clearInterval(unit.pollInterval);
           if (unit.rediscoverInterval) clearInterval(unit.rediscoverInterval);
-          this.clearUnitPollTimers(unit);
+          this.cancelInFlightPoll(unit);
           if (unit.transport === 'cloud' && unit.cloud) {
             unit.cloud.client.destroy();
           }
@@ -1018,7 +1014,7 @@ export class UnitRegistry {
       for (const unit of this.units.values()) {
         if (unit.pollInterval) clearInterval(unit.pollInterval);
         if (unit.rediscoverInterval) clearInterval(unit.rediscoverInterval);
-        this.clearUnitPollTimers(unit);
+        this.cancelInFlightPoll(unit);
         if (unit.transport === 'cloud' && unit.cloud) {
           unit.cloud.client.destroy();
         }
@@ -1026,15 +1022,8 @@ export class UnitRegistry {
       this.units.clear();
     }
 
-    private clearUnitPollTimers(unit: UnitState) {
-      if (unit.pollRetryTimer) {
-        clearTimeout(unit.pollRetryTimer);
-        unit.pollRetryTimer = null;
-      }
-      if (unit.pollWatchdogTimer) {
-        clearTimeout(unit.pollWatchdogTimer);
-        unit.pollWatchdogTimer = null;
-      }
+    private cancelInFlightPoll(unit: UnitState) {
+      unit.pollGeneration++;
       unit.pollInFlight = false;
     }
 
@@ -1072,24 +1061,38 @@ export class UnitRegistry {
       mode: TargetTemperatureMode,
       setpoint: number,
     ) {
+      const normalizedSetpoint = normalizeTargetTemperature(setpoint);
+      const objectId = TARGET_TEMPERATURE_OBJECTS[mode];
+      const probeKey = objectKey(objectId.type, objectId.instance);
+      const currentValue = unit.probeValues.get(probeKey);
+      const normalizedCurrentValue = currentValue !== undefined
+        ? normalizeTargetTemperature(currentValue)
+        : undefined;
+      if (normalizedCurrentValue !== undefined && normalizedCurrentValue === normalizedSetpoint) {
+        this.log(
+          `[UnitRegistry] Skipping ${mode} setpoint write — already`
+          + ` ${normalizedSetpoint} on ${unit.unitId}`,
+        );
+        return;
+      }
+
       if (unit.transport === 'cloud') {
-        return this.cloudWriteTemperatureSetpoint(unit, mode, setpoint);
+        await this.cloudWriteTemperatureSetpoint(unit, mode, setpoint);
+        return;
       }
       const client = this.dependencies.getBacnetClient(unit.bacnetPort);
-      const normalizedSetpoint = normalizeTargetTemperature(setpoint);
       const writeOptions = {
         maxSegments: BacnetEnums.MaxSegmentsAccepted.SEGMENTS_0,
         maxApdu: BacnetEnums.MaxApduLengthAccepted.OCTETS_1476,
         priority: DEFAULT_WRITE_PRIORITY,
       };
-      const objectId = TARGET_TEMPERATURE_OBJECTS[mode];
 
       this.log(
         `[UnitRegistry] Writing ${mode} setpoint ${normalizedSetpoint} to`
         + ` ${unit.unitId} (${unit.ip})`,
       );
 
-      return this.enqueueWrite(unit, async () => new Promise<void>((resolve, reject) => {
+      await this.enqueueWrite(unit, async () => new Promise<void>((resolve, reject) => {
         let handled = false;
         const tm = setTimeout(() => {
           if (!handled) {
@@ -1374,7 +1377,7 @@ export class UnitRegistry {
       });
     }
 
-    private pollUnit(unitId: string) {
+    private pollUnit(unitId: string, fromInterval = false) {
       const unit = this.units.get(unitId);
       if (!unit) return;
       if (unit.transport === 'cloud') {
@@ -1383,112 +1386,54 @@ export class UnitRegistry {
         });
         return;
       }
-      this.pollAttempt(unit, 0);
+      if (unit.pollInFlight) {
+        if (!fromInterval) return;
+        // Previous interval poll never responded — likely a lost UDP packet.
+        // Abandon it and count a failure; the new poll starts immediately.
+        unit.pollGeneration++;
+        unit.pollInFlight = false;
+        this.handlePollFailure(unit);
+      }
+      this.pollAttempt(unit);
     }
 
-    private pollAttempt(unit: UnitState, attempt: number) {
+    private pollAttempt(unit: UnitState) {
       if (!this.isTrackedUnit(unit)) return;
-      if (unit.pollInFlight) return;
 
       const client = this.dependencies.getBacnetClient(unit.bacnetPort);
+      const generation = ++unit.pollGeneration;
       unit.pollInFlight = true;
-      let finalized = false;
-      let handled = false;
-      const finalize = () => {
-        if (finalized) return;
-        finalized = true;
-        unit.pollInFlight = false;
-        if (unit.pollWatchdogTimer) {
-          clearTimeout(unit.pollWatchdogTimer);
-          unit.pollWatchdogTimer = null;
-        }
-      };
-      unit.pollWatchdogTimer = setTimeout(() => {
-        if (handled) return;
-        if (!this.isTrackedUnit(unit)) {
-          handled = true;
-          finalize();
-          return;
-        }
-        handled = true;
-        finalize();
-        this.handlePollError(unit, attempt, {
-          code: 'ERR_TIMEOUT',
-          message: `Poll watchdog timeout after ${POLL_WATCHDOG_TIMEOUT_MS}ms`,
-        });
-      }, POLL_WATCHDOG_TIMEOUT_MS);
       try {
         client.readPropertyMultiple(unit.ip, POLL_REQUEST, (err: any, value: any) => {
-          if (handled) return;
+          if (unit.pollGeneration !== generation) return;
           if (!this.isTrackedUnit(unit)) {
-            handled = true;
-            finalize();
+            unit.pollInFlight = false;
             return;
           }
-          handled = true;
-          finalize();
+          unit.pollInFlight = false;
           if (err) {
-            this.handlePollError(unit, attempt, err);
+            this.warn(`[UnitRegistry] Poll failed for ${unit.unitId}:`, err);
+            this.handlePollFailure(unit);
             return;
           }
-          this.handlePollResponse(unit, attempt, value);
+          this.handlePollResponse(unit, value);
         });
       } catch (error) {
-        if (handled) return;
-        if (!this.isTrackedUnit(unit)) {
-          handled = true;
-          finalize();
-          return;
-        }
-        handled = true;
-        finalize();
+        if (unit.pollGeneration !== generation) return;
+        unit.pollInFlight = false;
         this.error(`[UnitRegistry] Synchronous internal error checking ${unit.unitId}:`, error);
         this.handlePollFailure(unit);
       }
     }
 
-    private schedulePollRetry(unit: UnitState, message: string) {
-      this.warn(message);
-      if (unit.pollRetryTimer) {
-        clearTimeout(unit.pollRetryTimer);
-        unit.pollRetryTimer = null;
-      }
-      unit.pollRetryTimer = setTimeout(() => {
-        unit.pollRetryTimer = null;
-        if (!this.isTrackedUnit(unit)) return;
-        this.pollAttempt(unit, 1);
-      }, 1000);
-    }
-
-    private handlePollError(unit: UnitState, attempt: number, err: any) {
-      if (!this.isTrackedUnit(unit)) return;
-      const isTimeout = err?.code === 'ERR_TIMEOUT' || String(err?.message || '').includes('ERR_TIMEOUT');
-      if (isTimeout && attempt === 0) {
-        this.schedulePollRetry(unit, `[UnitRegistry] Poll timeout for ${unit.unitId}, retrying once...`);
-        return;
-      }
-      this.error(`[UnitRegistry] Poll error for ${unit.unitId}:`, err);
-      this.handlePollFailure(unit);
-    }
-
-    private handlePollResponse(unit: UnitState, attempt: number, value: any) {
+    private handlePollResponse(unit: UnitState, value: any) {
       if (!value?.values) {
         this.error(`[UnitRegistry] Poll response missing values for ${unit.unitId}:`, value);
-        if (attempt === 0) {
-          this.schedulePollRetry(
-            unit,
-            `[UnitRegistry] Poll response missing values for ${unit.unitId}, retrying once...`,
-          );
-          return;
-        }
         this.handlePollFailure(unit);
         return;
       }
       try {
         this.handlePollSuccess(unit);
-        if (attempt > 0) {
-          this.log(`[UnitRegistry] Poll retry succeeded for ${unit.unitId}`);
-        }
         unit.lastPollAt = Date.now();
         const data = this.parsePollValues(unit, value.values, unit.lastPollAt);
         this.distributeData(unit, data);

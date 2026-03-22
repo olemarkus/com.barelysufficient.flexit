@@ -550,9 +550,15 @@ describe('UnitRegistry fake-unit e2e', function unitRegistryFakeUdpE2e() {
     server.stop();
     await sleep(50);
 
-    (registry as any).pollUnit('test_unit');
+    // Manually simulate interval-driven polls to trigger failure threshold.
+    // The first call starts a poll that hangs (server stopped). Each subsequent
+    // call with fromInterval=true abandons the stale poll and counts a failure.
+    (registry as any).pollUnit('test_unit', true); // starts poll that hangs
+    (registry as any).pollUnit('test_unit', true); // failure 1, starts new hang
+    (registry as any).pollUnit('test_unit', true); // failure 2, starts new hang
+    (registry as any).pollUnit('test_unit', true); // failure 3 → unavailable
 
-    await waitFor(() => device.setUnavailable.calledOnce, 12000, 50);
+    await waitFor(() => device.setUnavailable.calledOnce, 5000);
     expect(device.setUnavailable.firstCall.args[0]).to.equal(
       'Device unreachable — will auto-reconnect when found',
     );
