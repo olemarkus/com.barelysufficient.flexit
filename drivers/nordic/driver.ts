@@ -1,10 +1,23 @@
 import Homey from 'homey';
 import { discoverFlexitUnits } from '../../lib/flexitDiscovery';
+import { createRuntimeLogger, RuntimeLogger, runWithLogContext } from '../../lib/logging';
 
 export = class FlexitNordicDriver extends Homey.Driver {
+  private runtimeLogger?: RuntimeLogger;
+
+  private getLogger() {
+    if (!this.runtimeLogger) {
+      this.runtimeLogger = createRuntimeLogger(this, {
+        component: 'driver',
+        transport: 'bacnet',
+      });
+    }
+    return this.runtimeLogger;
+  }
+
   async onInit() {
     const appVersion = this.homey?.manifest?.version ?? this.manifest?.version ?? 'unknown';
-    this.log(`Flexit Nordic driver init (app v${appVersion})`);
+    this.getLogger().info('driver.init', 'Flexit Nordic BACnet driver initialized', { appVersion });
   }
 
   async onPairListDevices() {
@@ -12,40 +25,49 @@ export = class FlexitNordicDriver extends Homey.Driver {
     const burstCount = 10;
     const burstIntervalMs = 300;
     const startedAt = Date.now();
-    this.log(
-      `[Pair] Discovery start (timeout=${timeoutMs}ms, burstCount=${burstCount}, burstIntervalMs=${burstIntervalMs})`,
-    );
+    const logger = this.getLogger().child({ pairing: true });
+    logger.info('driver.pair.discovery.start', 'Starting BACnet pairing discovery', {
+      timeoutMs,
+      burstCount,
+      burstIntervalMs,
+    });
 
     let units;
     try {
-      units = await discoverFlexitUnits({
+      units = await runWithLogContext({
+        operation: 'pair-discovery',
+        transport: 'bacnet',
+      }, () => discoverFlexitUnits({
         timeoutMs,
         burstCount,
         burstIntervalMs,
-        log: (...args: any[]) => this.log(...args),
-        error: (...args: any[]) => this.error(...args),
-      });
+        logger: logger.child({ component: 'discovery' }),
+      }));
     } catch (err) {
       const elapsedMs = Date.now() - startedAt;
-      this.error(`[Pair] Discovery failed after ${elapsedMs}ms:`, err);
+      logger.error('driver.pair.discovery.failed', 'BACnet pairing discovery failed', err, {
+        elapsedMs,
+      });
       throw err;
     }
 
     const elapsedMs = Date.now() - startedAt;
-    this.log(`[Pair] Discovery complete: ${units.length} unit(s) found in ${elapsedMs}ms`);
-
-    if (units.length > 0) {
-      const existingUnitIds = new Set(
-        this.getDevices()
-          .map((device: any) => device?.getData?.()?.unitId ?? device?.getData?.()?.id)
-          .filter((unitId: unknown): unitId is string => typeof unitId === 'string' && unitId.length > 0),
-      );
-
-      for (const unit of units) {
-        const status = existingUnitIds.has(unit.serialNormalized) ? 'already added' : 'new';
-        this.log(`[Pair] Unit ${unit.serial}@${unit.ip}:${unit.bacnetPort} (${status})`);
-      }
-    }
+    const existingUnitIds = new Set(
+      this.getDevices()
+        .map((device: any) => device?.getData?.()?.unitId ?? device?.getData?.()?.id)
+        .filter((unitId: unknown): unitId is string => typeof unitId === 'string' && unitId.length > 0),
+    );
+    logger.info('driver.pair.discovery.complete', 'BACnet pairing discovery completed', {
+      elapsedMs,
+      unitCount: units.length,
+      units: units.map((unit: any) => ({
+        unitId: unit.serialNormalized,
+        serial: unit.serial,
+        ip: unit.ip,
+        bacnetPort: unit.bacnetPort,
+        status: existingUnitIds.has(unit.serialNormalized) ? 'already_added' : 'new',
+      })),
+    });
 
     return units.map((u) => ({
       name: u.name,

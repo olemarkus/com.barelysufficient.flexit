@@ -7,6 +7,8 @@ import {
   setBacnetLogger,
   setBacnetModuleForTests,
 } from '../lib/bacnetClient.ts';
+import { createRuntimeLogger } from '../lib/logging';
+import { findStructuredLog } from './logging_test_utils';
 
 describe('bacnetClient (vitest)', () => {
   afterEach(() => {
@@ -61,13 +63,15 @@ describe('bacnetClient (vitest)', () => {
 
     setBacnetModuleForTests(BacnetStub);
 
-    const logger = { error: sinon.stub() };
-    setBacnetLogger(logger);
+    const sink = { log: sinon.stub(), error: sinon.stub() };
+    setBacnetLogger(createRuntimeLogger(sink, { component: 'registry' }));
     getBacnetClient(47810);
 
     const failure = new Error('socket failed');
     errorHandler?.(failure);
 
-    expect(logger.error.calledOnceWithExactly('[BacnetClient:47810] Error:', failure)).toBe(true);
+    const log = findStructuredLog(sink.error, 'bacnet.client.error');
+    expect(log?.port).toBe(47810);
+    expect(log?.error?.message).toBe('socket failed');
   });
 });

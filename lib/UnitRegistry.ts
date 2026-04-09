@@ -8,6 +8,7 @@ import {
   AuthenticationError,
   HttpError,
 } from './flexitCloudClient';
+import { createRuntimeLogger, RuntimeLogger, LogFields } from './logging';
 
 // Helper to clamp values
 function clamp(n: number, min: number, max: number) {
@@ -172,6 +173,7 @@ export const MAX_FILTER_CHANGE_INTERVAL_HOURS = (
 
 const POLL_INTERVAL_MS = 10_000;
 const CLOUD_POLL_INTERVAL_MS = 60_000;
+const CLOUD_MAX_READ_DATAPOINTS_PER_REQUEST = 24;
 const MODE_MISMATCH_GRACE_MS = 1000;
 const REDISCOVERY_INTERVAL_MS = 60_000;
 const MAX_BACNET_CONSECUTIVE_FAILURES = 3;
@@ -658,10 +660,7 @@ interface FanModeWriteContext {
   comfortButtonKey: string;
 }
 
-interface RegistryLogger {
-  log(...args: any[]): void;
-  error(...args: any[]): void;
-}
+type RegistryLogger = RuntimeLogger;
 
 function formatErrorMessage(err: unknown): string {
   if (err instanceof Error) {
@@ -682,6 +681,10 @@ function formatCloudPathForLog(path: string): string {
     return path;
   }
   return `${path} (${objectId.type}:${objectId.instance})`;
+}
+
+function sampleCloudPathsForLog(paths: string[], limit = 5): string[] {
+  return paths.slice(0, limit).map(formatCloudPathForLog);
 }
 
 interface RegistryDependencies {
@@ -889,6 +892,9 @@ const POLL_REQUEST = buildPollRequest();
 export class UnitRegistry {
     private units: Map<string, UnitState> = new Map();
     private logger?: RegistryLogger;
+    private legacyLogger?: { log(...args: any[]): void; error(...args: any[]): void };
+    private fallbackLogger?: RegistryLogger;
+    private fallbackLoggerDevice?: FlexitDevice;
     private readonly dependencies: RegistryDependencies;
     private fanSetpointChangedHandler?: (event: FanSetpointChangedEvent) => void;
     private dehumidificationStateChangedHandler?: (event: DehumidificationStateChangedEvent) => void;
@@ -903,8 +909,16 @@ export class UnitRegistry {
       };
     }
 
-    setLogger(logger: RegistryLogger) {
-      this.logger = logger;
+    setLogger(logger: RegistryLogger | { log(...args: any[]): void; error(...args: any[]): void }) {
+      if (logger instanceof RuntimeLogger) {
+        this.logger = logger;
+        this.legacyLogger = undefined;
+      } else {
+        this.legacyLogger = logger;
+        this.logger = undefined;
+      }
+      this.fallbackLogger = undefined;
+      this.fallbackLoggerDevice = undefined;
       this.syncBacnetLogger();
     }
 
@@ -927,10 +941,9 @@ export class UnitRegistry {
     }
 
     private syncBacnetLogger() {
-      if (typeof setBacnetLogger === 'function') {
-        setBacnetLogger({
-          error: (...args: any[]) => this.error(...args),
-        });
+      const logger = this.getLogger();
+      if (typeof setBacnetLogger === 'function' && logger) {
+        setBacnetLogger(logger.child({ component: 'bacnet' }));
       }
     }
 
@@ -942,20 +955,77 @@ export class UnitRegistry {
       return undefined;
     }
 
+    private getLogger() {
+      if (this.logger) return this.logger;
+      if (this.legacyLogger) {
+        if (!this.fallbackLogger) {
+          this.fallbackLogger = createRuntimeLogger(this.legacyLogger, { component: 'registry' });
+        }
+        return this.fallbackLogger;
+      }
+      const device = this.getAnyDevice();
+      if (!device) return undefined;
+      if (!this.fallbackLogger || this.fallbackLoggerDevice !== device) {
+        this.fallbackLogger = createRuntimeLogger(device, { component: 'registry' });
+        this.fallbackLoggerDevice = device;
+      }
+      return this.fallbackLogger;
+    }
+
     private log(...args: any[]) {
-      if (this.logger?.log) {
-        this.logger.log(...args);
+      if (this.legacyLogger) {
+        this.legacyLogger.log(...args);
         return;
       }
-      this.getAnyDevice()?.log(...args);
+      if (!this.logger) {
+        this.getAnyDevice()?.log(...args);
+        return;
+      }
+      const logger = this.getLogger();
+      if (!logger) return;
+      const { msg, error, fields } = this.normalizeLegacyLogArguments(args);
+      if (error !== undefined) {
+        logger.error('registry.legacy.info_with_error', msg, error, fields);
+        return;
+      }
+      logger.info('registry.legacy.info', msg, fields);
     }
 
     private error(...args: any[]) {
-      if (this.logger?.error) {
-        this.logger.error(...args);
+      if (this.legacyLogger) {
+        this.legacyLogger.error(...args);
         return;
       }
-      this.getAnyDevice()?.error(...args);
+      if (!this.logger) {
+        this.getAnyDevice()?.error(...args);
+        return;
+      }
+      const logger = this.getLogger();
+      if (!logger) return;
+      const { msg, error, fields } = this.normalizeLegacyLogArguments(args);
+      logger.error('registry.legacy.error', msg, error, fields);
+    }
+
+    private normalizeLegacyLogArguments(args: any[]) {
+      const [first, ...rest] = args;
+      const msg = typeof first === 'string'
+        ? first
+        : 'Registry log emitted without a string message';
+      let error: unknown = typeof first === 'string' ? rest[0] : rest[0];
+      const details: unknown[] = typeof first === 'string'
+        ? rest.slice(1)
+        : [first, ...rest.slice(1)];
+      if (error === undefined && typeof first !== 'string') {
+        error = first;
+        details.length = 0;
+      }
+      const fields: LogFields = {};
+      if (details.length === 1) {
+        fields.details = details[0] as any;
+      } else if (details.length > 1) {
+        fields.details = details as any;
+      }
+      return { msg, error, fields };
     }
 
     private logDetachedPromiseError(
@@ -1011,6 +1081,13 @@ export class UnitRegistry {
           heatingCoilStateInitialized: false,
         };
         this.units.set(unitId, unit);
+        this.getLogger()?.info('registry.unit.registered', 'Registered BACnet unit with registry', {
+          unitId,
+          transport: 'bacnet',
+          ip,
+          bacnetPort,
+          serial,
+        });
 
         // Start polling immediately
         this.pollUnit(unitId);
@@ -1080,6 +1157,11 @@ export class UnitRegistry {
           heatingCoilStateInitialized: false,
         };
         this.units.set(unitId, unit);
+        this.getLogger()?.info('registry.unit.registered', 'Registered cloud unit with registry', {
+          unitId,
+          transport: 'cloud',
+          plantId: config.plantId,
+        });
 
         this.startCloudPolling(unit);
       }
@@ -1123,6 +1205,11 @@ export class UnitRegistry {
 
     private startCloudPolling(unit: UnitState) {
       const { unitId } = unit;
+      this.getLogger()?.info('registry.cloud_polling.started', 'Started cloud polling loop', {
+        unitId,
+        plantId: unit.cloud?.plantId,
+        intervalMs: CLOUD_POLL_INTERVAL_MS,
+      });
       this.cloudPollUnit(unit).catch((err) => {
         this.log(`[UnitRegistry] Cloud poll failed for ${unitId}:`, err);
       });
@@ -1145,6 +1232,18 @@ export class UnitRegistry {
             unit.cloud.client.destroy();
           }
           this.units.delete(unitId);
+          if (this.fallbackLoggerDevice === device) {
+            this.fallbackLogger = undefined;
+            this.fallbackLoggerDevice = undefined;
+          }
+          this.getLogger()?.info(
+            'registry.unit.unregistered',
+            'Removed unit from registry after last device was deleted',
+            {
+              unitId,
+              transport: unit.transport,
+            },
+          );
         }
       }
     }
@@ -2051,7 +2150,15 @@ export class UnitRegistry {
     }
 
     private handlePollSuccess(unit: UnitState) {
+      const previousFailureCount = unit.consecutiveFailures;
       unit.consecutiveFailures = 0;
+      if (unit.transport === 'cloud' && previousFailureCount > 0) {
+        this.getLogger()?.info('registry.cloud_poll.recovered', 'Cloud poll recovered', {
+          unitId: unit.unitId,
+          plantId: unit.cloud?.plantId,
+          previousFailureCount,
+        });
+      }
       if (!unit.available) {
         unit.available = true;
         const location = unit.transport === 'cloud' ? 'cloud' : unit.ip;
@@ -3479,9 +3586,26 @@ export class UnitRegistry {
       unit: UnitState,
       plantId: string,
       paths: string[],
+      depth = 0,
     ): Promise<Record<string, any>> {
       if (!unit.cloud) return {};
       const { client } = unit.cloud;
+      if (paths.length > CLOUD_MAX_READ_DATAPOINTS_PER_REQUEST) {
+        const midpoint = Math.floor(paths.length / 2);
+        const firstHalf = await this.readCloudPollDatapoints(
+          unit,
+          plantId,
+          paths.slice(0, midpoint),
+          depth + 1,
+        );
+        const secondHalf = await this.readCloudPollDatapoints(
+          unit,
+          plantId,
+          paths.slice(midpoint),
+          depth + 1,
+        );
+        return { ...firstHalf, ...secondHalf };
+      }
       try {
         return await client.readDatapoints(plantId, paths);
       } catch (err) {
@@ -3496,22 +3620,36 @@ export class UnitRegistry {
             + ` for ${unit.unitId} (plant ${plantId}); excluding it from future polls`
             + ' until we have a cloud-compatible read path for it',
           );
-          throw new Error(
-            `[UnitRegistry] Cloud poll for ${unit.unitId} (plant ${plantId})`
-            + ` has no remaining supported datapoints after excluding ${formatCloudPathForLog(path)}`,
-          );
+          return {};
         }
 
         const midpoint = Math.floor(paths.length / 2);
+        this.getLogger()?.info(
+          'registry.cloud_poll.404_split',
+          'Cloud poll read returned 404; splitting datapoint batch',
+          {
+            unitId: unit.unitId,
+            plantId,
+            depth,
+            requestedDatapointCount: paths.length,
+            requestedPointsSample: sampleCloudPathsForLog(paths),
+            firstHalfCount: midpoint,
+            secondHalfCount: paths.length - midpoint,
+            firstHalfSample: sampleCloudPathsForLog(paths.slice(0, midpoint)),
+            secondHalfSample: sampleCloudPathsForLog(paths.slice(midpoint)),
+          },
+        );
         const firstHalf = await this.readCloudPollDatapoints(
           unit,
           plantId,
           paths.slice(0, midpoint),
+          depth + 1,
         );
         const secondHalf = await this.readCloudPollDatapoints(
           unit,
           plantId,
           paths.slice(midpoint),
+          depth + 1,
         );
         const datapoints = { ...firstHalf, ...secondHalf };
         if (Object.keys(datapoints).length === 0) {

@@ -2,6 +2,7 @@ import dgram from 'dgram';
 import os from 'os';
 import { randomUUID } from 'crypto';
 import { DiscoveredFlexitUnit, parseFlexitReply } from './flexitReplyParser';
+import { createRuntimeLogger, RuntimeLogger } from './logging';
 
 const TX_GROUP = '224.0.0.180';
 const TX_PORT = 30000;
@@ -10,20 +11,19 @@ const RX_GROUP = '224.0.0.181';
 const RX_PORT = 30001;
 
 type IPv4Interface = { name: string; address: string };
-type DiscoveryLogger = (...args: any[]) => void;
 type SendLogContext = {
   loggedSendInterfaces: Set<string>;
   loggedSendFailures: Set<string>;
-  log: DiscoveryLogger;
-  error: DiscoveryLogger;
+  logger?: RuntimeLogger;
 };
 type DiscoveryOptions = {
   interfaceAddress?: string;
   timeoutMs?: number;
   burstCount?: number;
   burstIntervalMs?: number;
-  log?: DiscoveryLogger;
-  error?: DiscoveryLogger;
+  logger?: RuntimeLogger;
+  log?: (...args: any[]) => void;
+  error?: (...args: any[]) => void;
 };
 type DiscoveryDependencies = {
   networkInterfaces: typeof os.networkInterfaces;
@@ -70,14 +70,22 @@ export async function discoverFlexitUnits(opts: DiscoveryOptions): Promise<Disco
   const timeoutMs = opts.timeoutMs ?? 5000;
   const burstCount = opts.burstCount ?? 10;
   const burstIntervalMs = opts.burstIntervalMs ?? 300;
-  const log = opts.log ?? (() => { });
-  const error = opts.error ?? (() => { });
+  const logger = opts.logger ?? (
+    opts.log || opts.error
+      ? createRuntimeLogger({
+        log: opts.log ?? (() => {}),
+        error: opts.error ?? opts.log ?? (() => {}),
+      }, { component: 'discovery' })
+      : undefined
+  );
   const allInterfaces = listIPv4Interfaces();
   const interfaces = pickInterfaces(allInterfaces, opts.interfaceAddress);
 
-  logInterfaceSelection(allInterfaces, interfaces, opts.interfaceAddress, log);
+  logInterfaceSelection(allInterfaces, interfaces, opts.interfaceAddress, logger);
   if (interfaces.length === 0) {
-    log('[Discovery] No candidate interfaces available for discovery');
+    logger?.info('discovery.interfaces.none_selected', 'No candidate interfaces available for discovery', {
+      interfaceAddress: opts.interfaceAddress ?? 'auto',
+    });
     return [];
   }
 
@@ -88,18 +96,20 @@ export async function discoverFlexitUnits(opts: DiscoveryOptions): Promise<Disco
 
   try {
     await bindSocket(rx, RX_PORT);
-    log(`[Discovery] Bound RX socket on 0.0.0.0:${RX_PORT}`);
-    joinReplyMulticast(rx, interfaces, log, error);
-    attachReplyHandler(rx, found, log);
+    logger?.info('discovery.socket.rx_bound', 'Bound discovery RX socket', {
+      bindAddress: '0.0.0.0',
+      port: RX_PORT,
+    });
+    joinReplyMulticast(rx, interfaces, logger);
+    attachReplyHandler(rx, found, logger);
 
     await bindSocket(tx, TX_PORT);
-    configureTxSocket(tx, log);
+    configureTxSocket(tx, logger);
     const request = buildDiscoverRequest();
     const sendLogContext: SendLogContext = {
       loggedSendInterfaces: new Set<string>(),
       loggedSendFailures: new Set<string>(),
-      log,
-      error,
+      logger,
     };
 
     const start = Date.now();
@@ -115,8 +125,8 @@ export async function discoverFlexitUnits(opts: DiscoveryOptions): Promise<Disco
 
     return [...found.values()];
   } finally {
-    safeClose(rx, 'RX', error);
-    safeClose(tx, 'TX', error);
+    safeClose(rx, 'rx', logger);
+    safeClose(tx, 'tx', logger);
   }
 }
 
@@ -129,27 +139,32 @@ function logInterfaceSelection(
   allInterfaces: IPv4Interface[],
   selectedInterfaces: IPv4Interface[],
   interfaceAddress: string | undefined,
-  log: DiscoveryLogger,
+  logger?: RuntimeLogger,
 ) {
-  log(`[Discovery] Available IPv4 interfaces: ${formatInterfaces(allInterfaces)}`);
-  if (interfaceAddress && interfaceAddress !== 'auto') {
-    log(`[Discovery] Requested interface address: ${interfaceAddress}`);
-  }
-  log(`[Discovery] Selected interfaces: ${formatInterfaces(selectedInterfaces)}`);
+  logger?.info('discovery.interfaces.selected', 'Selected interfaces for discovery', {
+    availableInterfaces: allInterfaces.map(formatInterface),
+    requestedInterfaceAddress: interfaceAddress ?? 'auto',
+    selectedInterfaces: selectedInterfaces.map(formatInterface),
+  });
 }
 
 function joinReplyMulticast(
   rx: dgram.Socket,
   interfaces: IPv4Interface[],
-  log: DiscoveryLogger,
-  error: DiscoveryLogger,
+  logger?: RuntimeLogger,
 ) {
   for (const nic of interfaces) {
     try {
       rx.addMembership(RX_GROUP, nic.address);
-      log(`[Discovery] Joined reply multicast ${RX_GROUP} on ${formatInterface(nic)}`);
+      logger?.info('discovery.multicast.joined', 'Joined discovery reply multicast group', {
+        group: RX_GROUP,
+        interface: formatInterface(nic),
+      });
     } catch (err) {
-      error(`[Discovery] Failed to join reply multicast ${RX_GROUP} on ${formatInterface(nic)}:`, err);
+      logger?.error('discovery.multicast.join.failed', 'Failed to join discovery reply multicast group', err, {
+        group: RX_GROUP,
+        interface: formatInterface(nic),
+      });
     }
   }
 }
@@ -157,31 +172,43 @@ function joinReplyMulticast(
 function attachReplyHandler(
   rx: dgram.Socket,
   found: Map<string, DiscoveredFlexitUnit>,
-  log: DiscoveryLogger,
+  logger?: RuntimeLogger,
 ) {
   rx.on('message', (msg, rinfo) => {
     const parsed = discoveryDependencies.parseFlexitReply(msg, rinfo.address);
     if (!parsed) {
-      log(
-        `[Discovery] Ignored reply from ${formatRemote(rinfo)} len=${msg.length};`
-        + ` parser returned null; ascii="${asciiPreview(msg)}"`,
-      );
+      logger?.info('discovery.reply.ignored', 'Ignored discovery reply because parser returned null', {
+        remote: formatRemote(rinfo),
+        payloadLength: msg.length,
+        asciiPreview: asciiPreview(msg),
+      });
       return;
     }
     const duplicate = found.has(parsed.serialNormalized);
     found.set(parsed.serialNormalized, parsed);
-    log(
-      `[Discovery] Parsed reply from ${formatRemote(rinfo)} len=${msg.length}:`
-      + ` ${parsed.serial}@${parsed.ip}:${parsed.bacnetPort}${duplicate ? ' (duplicate)' : ''}`,
-    );
+    logger?.info('discovery.reply.parsed', 'Parsed discovery reply', {
+      remote: formatRemote(rinfo),
+      payloadLength: msg.length,
+      unitId: parsed.serialNormalized,
+      serial: parsed.serial,
+      ip: parsed.ip,
+      bacnetPort: parsed.bacnetPort,
+      duplicate,
+    });
   });
 }
 
-function configureTxSocket(tx: dgram.Socket, log: DiscoveryLogger) {
+function configureTxSocket(tx: dgram.Socket, logger?: RuntimeLogger) {
   tx.setMulticastTTL(1); // link-local only
   tx.setMulticastLoopback(false);
-  log(`[Discovery] Bound TX socket on 0.0.0.0:${TX_PORT}`);
-  log(`[Discovery] Discovery request target ${TX_GROUP}:${TX_PORT} (multicast loopback disabled)`);
+  logger?.info('discovery.socket.tx_ready', 'Configured discovery TX socket', {
+    bindAddress: '0.0.0.0',
+    port: TX_PORT,
+    targetGroup: TX_GROUP,
+    targetPort: TX_PORT,
+    multicastLoopback: false,
+    ttl: 1,
+  });
 }
 
 function sendDiscoverViaInterfaces(
@@ -204,40 +231,43 @@ function sendDiscoverViaInterface(
   try {
     tx.setMulticastInterface(nic.address);
     tx.send(request, TX_PORT, TX_GROUP);
-    logDiscoverSend(nic, context.loggedSendInterfaces, context.log);
+    logDiscoverSend(nic, context.loggedSendInterfaces, context.logger);
   } catch (err) {
-    logDiscoverSendError(nic, context.loggedSendFailures, context.error, err);
+    logDiscoverSendError(nic, context.loggedSendFailures, context.logger, err);
   }
 }
 
 function logDiscoverSend(
   nic: IPv4Interface,
   loggedSendInterfaces: Set<string>,
-  log: DiscoveryLogger,
+  logger?: RuntimeLogger,
 ) {
   if (loggedSendInterfaces.has(nic.address)) return;
   loggedSendInterfaces.add(nic.address);
-  log(`[Discovery] Sending discover via ${formatInterface(nic)} to ${TX_GROUP}:${TX_PORT}`);
+  logger?.info('discovery.request.sent', 'Sent discovery request on interface', {
+    interface: formatInterface(nic),
+    targetGroup: TX_GROUP,
+    targetPort: TX_PORT,
+  });
 }
 
 function logDiscoverSendError(
   nic: IPv4Interface,
   loggedSendFailures: Set<string>,
-  error: DiscoveryLogger,
+  logger: RuntimeLogger | undefined,
   err: unknown,
 ) {
   if (loggedSendFailures.has(nic.address)) return;
   loggedSendFailures.add(nic.address);
-  error(`[Discovery] Failed to send discover via ${formatInterface(nic)} to ${TX_GROUP}:${TX_PORT}:`, err);
+  logger?.error('discovery.request.send.failed', 'Failed to send discovery request on interface', err, {
+    interface: formatInterface(nic),
+    targetGroup: TX_GROUP,
+    targetPort: TX_PORT,
+  });
 }
 
 function formatInterface(nic: IPv4Interface) {
   return `${nic.name}=${nic.address}`;
-}
-
-function formatInterfaces(interfaces: IPv4Interface[]) {
-  if (interfaces.length === 0) return 'none';
-  return interfaces.map((nic) => formatInterface(nic)).join(', ');
 }
 
 function formatRemote(rinfo: Pick<dgram.RemoteInfo, 'address' | 'port'>) {
@@ -315,11 +345,13 @@ function bindSocket(sock: dgram.Socket, port: number) {
   });
 }
 
-function safeClose(sock: dgram.Socket, label: string, error: DiscoveryLogger) {
+function safeClose(sock: dgram.Socket, label: string, logger?: RuntimeLogger) {
   try {
     sock.close();
   } catch (err) {
-    error(`[Discovery] Failed to close ${label} socket:`, err);
+    logger?.error('discovery.socket.close.failed', 'Failed to close discovery socket', err, {
+      socket: label,
+    });
   }
 }
 
