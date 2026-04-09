@@ -1279,7 +1279,6 @@ describe('UnitRegistry fake-unit e2e', function unitRegistryFakeUdpE2e() {
     const device = makeMockDevice(SERVER_BIND_ADDRESS, serverPort, 4380);
     const logger = {
       log: sinon.stub(),
-      warn: sinon.stub(),
       error: sinon.stub(),
     };
     registry.setLogger(logger);
@@ -1315,7 +1314,7 @@ describe('UnitRegistry fake-unit e2e', function unitRegistryFakeUdpE2e() {
         && call.args[4] === 13
       ));
       expect(awaySetpointWrite).to.not.equal(undefined);
-      expect(logger.warn.calledWithMatch('[UnitRegistry] Mode mismatch')).to.equal(false);
+      expect(logger.log.calledWithMatch('[UnitRegistry] Mode mismatch')).to.equal(false);
     } finally {
       tickStub.restore();
     }

@@ -11,6 +11,7 @@ const { UnitRegistry } = require('../lib/UnitRegistry.ts');
 const {
   FlexitCloudClient,
   AuthenticationError,
+  HttpError,
   bacnetObjectToCloudPath,
   cloudPathToBacnetObject,
 } = require('../lib/flexitCloudClient.ts');
@@ -145,8 +146,10 @@ function makeMockCloudClient(options: {
   sensorValues?: Array<{ type: number; instance: number; value: number }>;
   writeSuccess?: boolean;
   authFails?: boolean;
+  unsupportedReadPaths?: string[];
 }) {
   const sensorValues = [...(options.sensorValues ?? defaultSensorValues())];
+  const unsupportedReadPaths = new Set(options.unsupportedReadPaths ?? []);
 
   const updateSensorValue = (path: string, value: number | string | null) => {
     const { type, instance } = cloudPathToBacnetObject(path);
@@ -167,7 +170,12 @@ function makeMockCloudClient(options: {
       },
     ]),
     readDatapoints: sinon.stub().callsFake(
-      async (plantId: string, _paths: string[]) => buildCloudSensorResponse(plantId, sensorValues),
+      async (plantId: string, paths: string[]) => {
+        if (paths.some((path) => unsupportedReadPaths.has(path))) {
+          throw new HttpError(404, 'Not Found');
+        }
+        return buildCloudSensorResponse(plantId, sensorValues);
+      },
     ),
     writeDatapoint: sinon.stub().callsFake(async (_plantId: string, path: string, value: number | string | null) => {
       const success = options.writeSuccess ?? true;
@@ -318,6 +326,10 @@ describe('Cloud transport – UnitRegistry integration', () => {
   let registry: InstanceType<typeof UnitRegistry>;
   let mockClient: ReturnType<typeof makeMockCloudClient>;
   let mock: ReturnType<typeof makeMockDevice>;
+  let logger: {
+    log: sinon.SinonStub;
+    error: sinon.SinonStub;
+  };
 
   beforeEach(() => {
     registry = new UnitRegistry({
@@ -325,11 +337,11 @@ describe('Cloud transport – UnitRegistry integration', () => {
       getBacnetClient: () => ({}),
       discoverFlexitUnits: async () => [],
     });
-    registry.setLogger({
-      log: () => {},
-      error: () => {},
-      warn: () => {},
-    });
+    logger = {
+      log: sinon.stub(),
+      error: sinon.stub(),
+    };
+    registry.setLogger(logger);
 
     mockClient = makeMockCloudClient({});
     mock = makeMockDevice();
@@ -654,6 +666,107 @@ describe('Cloud transport – UnitRegistry integration', () => {
     expect(mock.device.setUnavailable.firstCall.args[0]).to.include('Cloud connection lost');
   });
 
+  it('logs cloud poll request failures to the error sink with operation details', async () => {
+    const failingClient = makeMockCloudClient({});
+    failingClient.readDatapoints.rejects(new HttpError(403, 'Forbidden'));
+
+    registry.registerCloud(UNIT_ID, mock.device, {
+      plantId: PLANT_ID,
+      client: failingClient,
+    });
+    await sleep(50);
+
+    expect(logger.error.calledWithMatch(
+      sinon.match(
+        new RegExp(
+          `^\\[UnitRegistry\\] Cloud readDatapoints failed for ${UNIT_ID}`
+          + ` \\(plant ${PLANT_ID}, \\d+ datapoints\\): HTTP 403: Forbidden$`,
+        ),
+      ),
+      sinon.match.instanceOf(HttpError),
+    )).to.equal(true);
+  });
+
+  it('excludes unsupported cloud datapoints after a 404 and continues polling', async () => {
+    const unsupportedPath = bacnetObjectToCloudPath(48, 318);
+    const partiallySupportedClient = makeMockCloudClient({
+      unsupportedReadPaths: [unsupportedPath],
+    });
+
+    registry.registerCloud(UNIT_ID, mock.device, {
+      plantId: PLANT_ID,
+      client: partiallySupportedClient,
+    });
+    await sleep(100);
+
+    expect(mock.device.setUnavailable.called).to.equal(false);
+    expect(logger.error.calledWithMatch(
+      `[UnitRegistry] Cloud datapoint ${unsupportedPath} (48:318) returned 404`
+      + ` for ${UNIT_ID} (plant ${PLANT_ID}); excluding it from future polls`
+      + ' until we have a cloud-compatible read path for it',
+    )).to.equal(true);
+
+    const unit = (registry as any).units.get(UNIT_ID);
+    expect(unit.unsupportedCloudPollPaths.has(unsupportedPath)).to.equal(true);
+
+    partiallySupportedClient.readDatapoints.resetHistory();
+    (registry as any).pollUnit(UNIT_ID);
+    await sleep(100);
+
+    expect(partiallySupportedClient.readDatapoints.called).to.equal(true);
+    const requestedPaths = partiallySupportedClient.readDatapoints.firstCall.args[1];
+    expect(requestedPaths).to.not.include(unsupportedPath);
+    expect(unit.pollInterval).to.not.equal(null);
+  });
+
+  it('stops cloud polling when no supported datapoints remain', async () => {
+    registry.registerCloud(UNIT_ID, mock.device, {
+      plantId: PLANT_ID,
+      client: mockClient,
+    });
+    await sleep(50);
+
+    const initialPaths = mockClient.readDatapoints.firstCall.args[1];
+    const unit = (registry as any).units.get(UNIT_ID);
+    unit.unsupportedCloudPollPaths = new Set(initialPaths);
+
+    (registry as any).pollUnit(UNIT_ID);
+    await sleep(50);
+
+    expect(unit.pollInterval).to.equal(null);
+    expect(mock.device.setUnavailable.calledWithMatch('Cloud polling stopped')).to.equal(true);
+    expect(logger.error.calledWithMatch(
+      `[UnitRegistry] Cloud poll stopped for ${UNIT_ID}: no supported datapoints remain`,
+    )).to.equal(true);
+  });
+
+  it('treats exclusion of the last supported cloud datapoint as a poll failure', async () => {
+    const unsupportedPath = bacnetObjectToCloudPath(48, 318);
+    const partiallySupportedClient = makeMockCloudClient({
+      unsupportedReadPaths: [unsupportedPath],
+    });
+
+    registry.registerCloud(UNIT_ID, mock.device, {
+      plantId: PLANT_ID,
+      client: partiallySupportedClient,
+    });
+    await sleep(100);
+
+    const unit = (registry as any).units.get(UNIT_ID);
+    unit.unsupportedCloudPollPaths = new Set(
+      (partiallySupportedClient.readDatapoints.firstCall.args[1] as string[])
+        .filter((path: string) => path !== unsupportedPath),
+    );
+
+    (registry as any).pollUnit(UNIT_ID);
+    await sleep(50);
+
+    expect(unit.consecutiveFailures).to.be.greaterThan(0);
+    expect(logger.error.calledWithMatch(
+      `[UnitRegistry] Cloud poll for ${UNIT_ID} (plant ${PLANT_ID}) has no remaining supported datapoints`,
+    )).to.equal(true);
+  });
+
   it('handles cloud write failure gracefully', async () => {
     const failingClient = makeMockCloudClient({ writeSuccess: false });
 
@@ -669,6 +782,67 @@ describe('Cloud transport – UnitRegistry integration', () => {
     } catch (err: any) {
       expect(err.message).to.include('Failed to write');
     }
+  });
+
+  it('logs cloud write request failures to the error sink with operation details', async () => {
+    const failingClient = makeMockCloudClient({});
+    failingClient.writeDatapoint.rejects(new HttpError(403, 'Forbidden'));
+
+    registry.registerCloud(UNIT_ID, mock.device, {
+      plantId: PLANT_ID,
+      client: failingClient,
+    });
+    await sleep(50);
+
+    try {
+      await registry.writeSetpoint(UNIT_ID, 22);
+      expect.fail('Should have thrown');
+    } catch (err: any) {
+      expect(err.message).to.include('Failed to write');
+    }
+
+    expect(logger.error.calledWithMatch(
+      sinon.match(
+        `[UnitRegistry] Cloud writeDatapoint failed for ${UNIT_ID}`
+        + ` (plant ${PLANT_ID}, path ${bacnetObjectToCloudPath(2, 1994)}, value 22):`
+        + ' HTTP 403: Forbidden',
+      ),
+      sinon.match.instanceOf(HttpError),
+    )).to.equal(true);
+  });
+
+  it('retries targeted cloud verification when the full poll is stale after a boolean write', async () => {
+    const delayedClient = makeMockCloudClient({});
+    let freeCoolingEnabled = 0;
+    delayedClient.writeDatapoint.callsFake(async (_plantId: string, path: string, value: number | string | null) => {
+      if (path === bacnetObjectToCloudPath(5, 478)) {
+        freeCoolingEnabled = Number(value);
+      }
+      return true;
+    });
+    delayedClient.readDatapoints.callsFake(async (plantId: string, paths: string[]) => {
+      const response = buildCloudSensorResponse(plantId, defaultSensorValues());
+      const singleFreeCoolingRead = paths.length === 1 && paths[0] === bacnetObjectToCloudPath(5, 478);
+      response[`${plantId}${bacnetObjectToCloudPath(5, 478)}`] = {
+        value: {
+          value: singleFreeCoolingRead ? freeCoolingEnabled : 0,
+          statusFlags: 0,
+          reliability: 0,
+          eventState: 0,
+        },
+      };
+      return response;
+    });
+
+    registry.registerCloud(UNIT_ID, mock.device, {
+      plantId: PLANT_ID,
+      client: delayedClient,
+    });
+    await sleep(50);
+
+    await registry.setFreeCoolingEnabled(UNIT_ID, true);
+
+    expect(mock.setSettings.calledWithMatch({ free_cooling_enabled: true })).to.equal(true);
   });
 
   it('detects change in dehumidification state', async () => {

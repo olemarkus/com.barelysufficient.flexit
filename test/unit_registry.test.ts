@@ -1064,7 +1064,6 @@ describe('UnitRegistry', () => {
     const mockDevice = makeMockDevice();
     const logger = {
       log: sinon.stub(),
-      warn: sinon.stub(),
       error: sinon.stub(),
     };
     registry.setLogger(logger);
@@ -1077,7 +1076,7 @@ describe('UnitRegistry', () => {
 
     await registry.setFanMode('test_unit', 'fireplace');
 
-    expect(logger.warn.calledWithMatch('[UnitRegistry] Fireplace requested while temporary ventilation is active'))
+    expect(logger.log.calledWithMatch('[UnitRegistry] Fireplace requested while temporary ventilation is active'))
       .to.equal(false);
   });
 
@@ -1087,7 +1086,6 @@ describe('UnitRegistry', () => {
       const mockDevice = makeMockDevice();
       const logger = {
         log: sinon.stub(),
-        warn: sinon.stub(),
         error: sinon.stub(),
       };
       registry.setLogger(logger);
@@ -1109,7 +1107,7 @@ describe('UnitRegistry', () => {
         mode_rf_input: 24,
       });
 
-      expect(logger.warn.calledWithMatch('[UnitRegistry] Mode mismatch')).to.equal(false);
+      expect(logger.log.calledWithMatch('[UnitRegistry] Mode mismatch')).to.equal(false);
 
       clock.tick(1001);
       (registry as any).distributeData(unit, {
@@ -1124,7 +1122,7 @@ describe('UnitRegistry', () => {
         mode_rf_input: 24,
       });
 
-      expect(logger.warn.calledWithMatch('[UnitRegistry] Mode mismatch')).to.equal(true);
+      expect(logger.log.calledWithMatch('[UnitRegistry] Mode mismatch')).to.equal(true);
     } finally {
       clock.restore();
     }
@@ -1772,7 +1770,6 @@ describe('UnitRegistry', () => {
     });
     const logger = {
       log: sinon.stub(),
-      warn: sinon.stub(),
       error: sinon.stub(),
     };
     registry.setLogger(logger);
@@ -1797,7 +1794,7 @@ describe('UnitRegistry', () => {
     expect(unit.bacnetPort).to.equal(47808);
     expect(mockDevice.setSettings.called).to.equal(false);
     expect(mockClient.readPropertyMultiple.called).to.equal(false);
-    expect(logger.warn.calledWithMatch(
+    expect(logger.log.calledWithMatch(
       `[UnitRegistry] Ignoring invalid rediscovered endpoint for ${unitId}: <empty>:nope`,
     )).to.equal(true);
   });

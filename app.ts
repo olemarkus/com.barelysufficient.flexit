@@ -18,7 +18,6 @@ export = class App extends Homey.App {
 
     Registry.setLogger({
       log: (...args: any[]) => this.log(...args),
-      warn: (...args: any[]) => this.log(...args),
       error: (...args: any[]) => this.error(...args),
     });
 
