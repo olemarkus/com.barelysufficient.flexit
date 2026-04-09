@@ -9,13 +9,17 @@
     "node": "22.22.1",
     "npm": "10.9.4"
   },
+  "ts-node": {
+    "files": true
+  },
   "main": "app.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "lint": "node scripts/check-test-titles.js && eslint . --ext .ts --max-warnings=0",
     "lint:fix": "eslint . --ext .ts --fix",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run typecheck && c8 --reporter=text --reporter=lcov mocha --require ts-node/register test/**/*.ts",
+    "test": "npm run typecheck && vitest run --config vitest.config.ts --coverage.enabled",
+    "test:vitest": "vitest run --config vitest.config.ts",
     "start": "homey app run --remote",
     "validate": "npm run lint && npm test && homey app validate",
     "fake-unit:start": "ts-node scripts/fake-unit.ts",
@@ -28,26 +32,28 @@
     "source-map-support": "^0.5.21"
   },
   "devDependencies": {
-    "@tsconfig/node22": "^22.0.0",
+    "@tsconfig/node22": "^22.0.5",
     "@types/chai": "^5.2.3",
     "@types/homey": "npm:homey-apps-sdk-v3-types",
     "@types/mocha": "^10.0.10",
-    "@types/node": "^22.0.0",
+    "@types/node": "^22.19.17",
     "@types/proxyquire": "^1.3.31",
-    "@types/sinon": "^21.0.0",
+    "@types/sinon": "^21.0.1",
     "@types/source-map-support": "^0.5.10",
-    "c8": "^10.1.2",
+    "@vitest/coverage-v8": "^4.1.4",
+    "c8": "^11.0.0",
     "chai": "^6.2.2",
     "eslint": "^7.32.0",
     "eslint-config-athom": "^3.1.5",
-    "eslint-import-resolver-typescript": "^2.7.1",
+    "eslint-import-resolver-typescript": "^3.10.1",
     "eslint-plugin-homey-app": "^1.0.2",
     "husky": "^9.1.7",
     "mocha": "^11.7.5",
     "proxyquire": "^2.1.3",
-    "sinon": "^21.0.1",
+    "sinon": "^21.0.3",
     "ts-node": "^10.9.2",
-    "typescript": "^5.6.0"
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.4"
   },
   "c8": {
     "check-coverage": true,

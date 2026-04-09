@@ -1,4 +1,4 @@
-import { expect } from 'chai';
+import { afterEach, describe, expect, it } from 'vitest';
 import sinon from 'sinon';
 import { createFlexitAppClass } from '../lib/createAppClass';
 
@@ -145,38 +145,38 @@ describe('App flow registration', () => {
 
     await app.onInit();
 
-    expect(app.homey.flow.getActionCard.calledWithExactly('set_fan_profile_mode')).to.equal(true);
-    expect(app.homey.flow.getActionCard.calledWithExactly('set_fireplace_duration')).to.equal(true);
-    expect(app.homey.flow.getActionCard.calledWithExactly('turn_heating_coil_on')).to.equal(true);
-    expect(app.homey.flow.getActionCard.calledWithExactly('turn_heating_coil_off')).to.equal(true);
-    expect(app.homey.flow.getActionCard.calledWithExactly('toggle_heating_coil_onoff')).to.equal(true);
+    expect(app.homey.flow.getActionCard.calledWithExactly('set_fan_profile_mode')).toBe(true);
+    expect(app.homey.flow.getActionCard.calledWithExactly('set_fireplace_duration')).toBe(true);
+    expect(app.homey.flow.getActionCard.calledWithExactly('turn_heating_coil_on')).toBe(true);
+    expect(app.homey.flow.getActionCard.calledWithExactly('turn_heating_coil_off')).toBe(true);
+    expect(app.homey.flow.getActionCard.calledWithExactly('toggle_heating_coil_onoff')).toBe(true);
 
-    expect(app.homey.flow.getConditionCard.calledWithExactly('dehumidification_is_active')).to.equal(true);
-    expect(app.homey.flow.getConditionCard.calledWithExactly('free_cooling_is_active')).to.equal(true);
-    expect(app.homey.flow.getConditionCard.calledWithExactly('heating_coil_is_on')).to.equal(true);
+    expect(app.homey.flow.getConditionCard.calledWithExactly('dehumidification_is_active')).toBe(true);
+    expect(app.homey.flow.getConditionCard.calledWithExactly('free_cooling_is_active')).toBe(true);
+    expect(app.homey.flow.getConditionCard.calledWithExactly('heating_coil_is_on')).toBe(true);
 
-    expect(app.homey.flow.getDeviceTriggerCard.calledWithExactly('dehumidification_activated')).to.equal(true);
-    expect(app.homey.flow.getDeviceTriggerCard.calledWithExactly('dehumidification_deactivated')).to.equal(true);
-    expect(app.homey.flow.getDeviceTriggerCard.calledWithExactly('free_cooling_activated')).to.equal(true);
-    expect(app.homey.flow.getDeviceTriggerCard.calledWithExactly('free_cooling_deactivated')).to.equal(true);
-    expect(app.homey.flow.getDeviceTriggerCard.calledWithExactly('supply_fan_setpoint_changed')).to.equal(true);
-    expect(app.homey.flow.getDeviceTriggerCard.calledWithExactly('extract_fan_setpoint_changed')).to.equal(true);
-    expect(app.homey.flow.getDeviceTriggerCard.calledWithExactly('heating_coil_turned_on')).to.equal(true);
-    expect(app.homey.flow.getDeviceTriggerCard.calledWithExactly('heating_coil_turned_off')).to.equal(true);
+    expect(app.homey.flow.getDeviceTriggerCard.calledWithExactly('dehumidification_activated')).toBe(true);
+    expect(app.homey.flow.getDeviceTriggerCard.calledWithExactly('dehumidification_deactivated')).toBe(true);
+    expect(app.homey.flow.getDeviceTriggerCard.calledWithExactly('free_cooling_activated')).toBe(true);
+    expect(app.homey.flow.getDeviceTriggerCard.calledWithExactly('free_cooling_deactivated')).toBe(true);
+    expect(app.homey.flow.getDeviceTriggerCard.calledWithExactly('supply_fan_setpoint_changed')).toBe(true);
+    expect(app.homey.flow.getDeviceTriggerCard.calledWithExactly('extract_fan_setpoint_changed')).toBe(true);
+    expect(app.homey.flow.getDeviceTriggerCard.calledWithExactly('heating_coil_turned_on')).toBe(true);
+    expect(app.homey.flow.getDeviceTriggerCard.calledWithExactly('heating_coil_turned_off')).toBe(true);
 
-    expect(cards.action.setFanProfileMode.registerRunListener.calledOnce).to.equal(true);
-    expect(cards.action.setFireplaceDuration.registerRunListener.calledOnce).to.equal(true);
-    expect(cards.action.turnHeatingCoilOn.registerRunListener.calledOnce).to.equal(true);
-    expect(cards.action.turnHeatingCoilOff.registerRunListener.calledOnce).to.equal(true);
-    expect(cards.action.toggleHeatingCoilOnOff.registerRunListener.calledOnce).to.equal(true);
-    expect(cards.condition.dehumidificationIsActive.registerRunListener.calledOnce).to.equal(true);
-    expect(cards.condition.freeCoolingIsActive.registerRunListener.calledOnce).to.equal(true);
-    expect(cards.condition.heatingCoilIsOn.registerRunListener.calledOnce).to.equal(true);
+    expect(cards.action.setFanProfileMode.registerRunListener.calledOnce).toBe(true);
+    expect(cards.action.setFireplaceDuration.registerRunListener.calledOnce).toBe(true);
+    expect(cards.action.turnHeatingCoilOn.registerRunListener.calledOnce).toBe(true);
+    expect(cards.action.turnHeatingCoilOff.registerRunListener.calledOnce).toBe(true);
+    expect(cards.action.toggleHeatingCoilOnOff.registerRunListener.calledOnce).toBe(true);
+    expect(cards.condition.dehumidificationIsActive.registerRunListener.calledOnce).toBe(true);
+    expect(cards.condition.freeCoolingIsActive.registerRunListener.calledOnce).toBe(true);
+    expect(cards.condition.heatingCoilIsOn.registerRunListener.calledOnce).toBe(true);
 
-    expect(registryStub.setFanSetpointChangedHandler.calledOnce).to.equal(true);
-    expect(registryStub.setDehumidificationStateChangedHandler.calledOnce).to.equal(true);
-    expect(registryStub.setFreeCoolingStateChangedHandler.calledOnce).to.equal(true);
-    expect(registryStub.setHeatingCoilStateChangedHandler.calledOnce).to.equal(true);
+    expect(registryStub.setFanSetpointChangedHandler.calledOnce).toBe(true);
+    expect(registryStub.setDehumidificationStateChangedHandler.calledOnce).toBe(true);
+    expect(registryStub.setFreeCoolingStateChangedHandler.calledOnce).toBe(true);
+    expect(registryStub.setHeatingCoilStateChangedHandler.calledOnce).toBe(true);
 
     const fanProfileListener = cards.action.setFanProfileMode.registerRunListener.firstCall.args[0];
     const fanProfileResult = await fanProfileListener({
@@ -185,60 +185,60 @@ describe('App flow registration', () => {
       supply_percent: 70,
       exhaust_percent: 60,
     });
-    expect(fanProfileResult).to.equal(true);
-    expect(registryStub.setFanProfileMode.calledOnceWithExactly('unit-1', 'home', 70, 60)).to.equal(true);
+    expect(fanProfileResult).toBe(true);
+    expect(registryStub.setFanProfileMode.calledOnceWithExactly('unit-1', 'home', 70, 60)).toBe(true);
 
     const fireplaceDurationListener = cards.action.setFireplaceDuration.registerRunListener.firstCall.args[0];
     const fireplaceDurationResult = await fireplaceDurationListener({
       device: { getData: () => ({ unitId: 'unit-1' }) },
       minutes: 45,
     });
-    expect(fireplaceDurationResult).to.equal(true);
-    expect(registryStub.setFireplaceVentilationDuration.calledOnceWithExactly('unit-1', 45)).to.equal(true);
+    expect(fireplaceDurationResult).toBe(true);
+    expect(registryStub.setFireplaceVentilationDuration.calledOnceWithExactly('unit-1', 45)).toBe(true);
 
     const turnOnHeatingCoilListener = cards.action.turnHeatingCoilOn.registerRunListener.firstCall.args[0];
     const turnOnResult = await turnOnHeatingCoilListener({
       device: { getData: () => ({ unitId: 'unit-1' }) },
     });
-    expect(turnOnResult).to.equal(true);
-    expect(registryStub.setHeatingCoilEnabled.calledWithExactly('unit-1', true)).to.equal(true);
+    expect(turnOnResult).toBe(true);
+    expect(registryStub.setHeatingCoilEnabled.calledWithExactly('unit-1', true)).toBe(true);
 
     const turnOffHeatingCoilListener = cards.action.turnHeatingCoilOff.registerRunListener.firstCall.args[0];
     const turnOffResult = await turnOffHeatingCoilListener({
       device: { getData: () => ({ unitId: 'unit-1' }) },
     });
-    expect(turnOffResult).to.equal(true);
-    expect(registryStub.setHeatingCoilEnabled.calledWithExactly('unit-1', false)).to.equal(true);
+    expect(turnOffResult).toBe(true);
+    expect(registryStub.setHeatingCoilEnabled.calledWithExactly('unit-1', false)).toBe(true);
 
     const toggleHeatingCoilListener = cards.action.toggleHeatingCoilOnOff.registerRunListener.firstCall.args[0];
     const toggleResult = await toggleHeatingCoilListener({
       device: { getData: () => ({ unitId: 'unit-1' }) },
     });
-    expect(toggleResult).to.equal(true);
-    expect(registryStub.toggleHeatingCoilEnabled.calledOnceWithExactly('unit-1')).to.equal(true);
+    expect(toggleResult).toBe(true);
+    expect(registryStub.toggleHeatingCoilEnabled.calledOnceWithExactly('unit-1')).toBe(true);
 
     const dehumidificationConditionListener = cards.condition
       .dehumidificationIsActive.registerRunListener.firstCall.args[0];
     const dehumidificationConditionResult = await dehumidificationConditionListener({
       device: { getData: () => ({ unitId: 'unit-1' }) },
     });
-    expect(dehumidificationConditionResult).to.equal(true);
-    expect(registryStub.getDehumidificationActive.calledOnceWithExactly('unit-1')).to.equal(true);
+    expect(dehumidificationConditionResult).toBe(true);
+    expect(registryStub.getDehumidificationActive.calledOnceWithExactly('unit-1')).toBe(true);
 
     const freeCoolingConditionListener = cards.condition
       .freeCoolingIsActive.registerRunListener.firstCall.args[0];
     const freeCoolingConditionResult = await freeCoolingConditionListener({
       device: { getData: () => ({ unitId: 'unit-1' }) },
     });
-    expect(freeCoolingConditionResult).to.equal(true);
-    expect(registryStub.getFreeCoolingActive.calledOnceWithExactly('unit-1')).to.equal(true);
+    expect(freeCoolingConditionResult).toBe(true);
+    expect(registryStub.getFreeCoolingActive.calledOnceWithExactly('unit-1')).toBe(true);
 
     const heatingCoilConditionListener = cards.condition.heatingCoilIsOn.registerRunListener.firstCall.args[0];
     const heatingCoilConditionResult = await heatingCoilConditionListener({
       device: { getData: () => ({ unitId: 'unit-1' }) },
     });
-    expect(heatingCoilConditionResult).to.equal(true);
-    expect(registryStub.getHeatingCoilEnabled.calledOnceWithExactly('unit-1')).to.equal(true);
+    expect(heatingCoilConditionResult).toBe(true);
+    expect(registryStub.getHeatingCoilEnabled.calledOnceWithExactly('unit-1')).toBe(true);
 
     const fanSetpointChangedHandler = registryStub.setFanSetpointChangedHandler.firstCall.args[0];
     await fanSetpointChangedHandler({
@@ -253,10 +253,10 @@ describe('App flow registration', () => {
       mode: 'home',
       setpointPercent: 77,
     });
-    expect(cards.trigger.supplyFanSetpointChanged.trigger.calledOnce).to.equal(true);
-    expect(cards.trigger.supplyFanSetpointChanged.trigger.firstCall.args[1]).to.deep.equal({ setpoint_percent: 81 });
-    expect(cards.trigger.extractFanSetpointChanged.trigger.calledOnce).to.equal(true);
-    expect(cards.trigger.extractFanSetpointChanged.trigger.firstCall.args[1]).to.deep.equal({ setpoint_percent: 77 });
+    expect(cards.trigger.supplyFanSetpointChanged.trigger.calledOnce).toBe(true);
+    expect(cards.trigger.supplyFanSetpointChanged.trigger.firstCall.args[1]).toEqual({ setpoint_percent: 81 });
+    expect(cards.trigger.extractFanSetpointChanged.trigger.calledOnce).toBe(true);
+    expect(cards.trigger.extractFanSetpointChanged.trigger.firstCall.args[1]).toEqual({ setpoint_percent: 77 });
 
     const dehumidificationStateChangedHandler = registryStub.setDehumidificationStateChangedHandler.firstCall.args[0];
     await dehumidificationStateChangedHandler({
@@ -267,8 +267,8 @@ describe('App flow registration', () => {
       device: { getData: () => ({ unitId: 'unit-1' }) },
       active: false,
     });
-    expect(cards.trigger.dehumidificationActivated.trigger.calledOnce).to.equal(true);
-    expect(cards.trigger.dehumidificationDeactivated.trigger.calledOnce).to.equal(true);
+    expect(cards.trigger.dehumidificationActivated.trigger.calledOnce).toBe(true);
+    expect(cards.trigger.dehumidificationDeactivated.trigger.calledOnce).toBe(true);
 
     const freeCoolingStateChangedHandler = registryStub.setFreeCoolingStateChangedHandler.firstCall.args[0];
     await freeCoolingStateChangedHandler({
@@ -279,8 +279,8 @@ describe('App flow registration', () => {
       device: { getData: () => ({ unitId: 'unit-1' }) },
       active: false,
     });
-    expect(cards.trigger.freeCoolingActivated.trigger.calledOnce).to.equal(true);
-    expect(cards.trigger.freeCoolingDeactivated.trigger.calledOnce).to.equal(true);
+    expect(cards.trigger.freeCoolingActivated.trigger.calledOnce).toBe(true);
+    expect(cards.trigger.freeCoolingDeactivated.trigger.calledOnce).toBe(true);
 
     const heatingCoilStateChangedHandler = registryStub.setHeatingCoilStateChangedHandler.firstCall.args[0];
     await heatingCoilStateChangedHandler({
@@ -291,8 +291,8 @@ describe('App flow registration', () => {
       device: { getData: () => ({ unitId: 'unit-1' }) },
       enabled: false,
     });
-    expect(cards.trigger.heatingCoilTurnedOn.trigger.calledOnce).to.equal(true);
-    expect(cards.trigger.heatingCoilTurnedOff.trigger.calledOnce).to.equal(true);
+    expect(cards.trigger.heatingCoilTurnedOn.trigger.calledOnce).toBe(true);
+    expect(cards.trigger.heatingCoilTurnedOff.trigger.calledOnce).toBe(true);
   });
 
   it('rejects unsupported flow mode values', async () => {
@@ -317,9 +317,9 @@ describe('App flow registration', () => {
       thrown = error as Error;
     }
 
-    expect(thrown).to.not.equal(null);
-    expect(thrown?.message).to.contain('Unsupported mode');
-    expect(registryStub.setFanProfileMode.called).to.equal(false);
+    expect(thrown).not.toBe(null);
+    expect(thrown?.message).toContain('Unsupported mode');
+    expect(registryStub.setFanProfileMode.called).toBe(false);
   });
 
   it('rejects missing device unit ids for action cards', async () => {
@@ -341,9 +341,9 @@ describe('App flow registration', () => {
       thrown = error as Error;
     }
 
-    expect(thrown).to.not.equal(null);
-    expect(thrown?.message).to.equal('Device unitId is missing.');
-    expect(registryStub.setHeatingCoilEnabled.called).to.equal(false);
+    expect(thrown).not.toBe(null);
+    expect(thrown?.message).toBe('Device unitId is missing.');
+    expect(registryStub.setHeatingCoilEnabled.called).toBe(false);
   });
 
   it('rejects completely missing device objects for action cards', async () => {
@@ -363,8 +363,8 @@ describe('App flow registration', () => {
       thrown = error as Error;
     }
 
-    expect(thrown?.message).to.equal('Device unitId is missing.');
-    expect(registryStub.setHeatingCoilEnabled.called).to.equal(false);
+    expect(thrown?.message).toBe('Device unitId is missing.');
+    expect(registryStub.setHeatingCoilEnabled.called).toBe(false);
   });
 
   it('rejects out-of-range values for selected mode', async () => {
@@ -397,9 +397,9 @@ describe('App flow registration', () => {
       thrown = error as Error;
     }
 
-    expect(thrown).to.not.equal(null);
-    expect(thrown?.message).to.contain('between 80 and 100');
-    expect(registryStub.setFanProfileMode.called).to.equal(false);
+    expect(thrown).not.toBe(null);
+    expect(thrown?.message).toContain('between 80 and 100');
+    expect(registryStub.setFanProfileMode.called).toBe(false);
   });
 
   it('rejects missing mode and non-numeric fan percentages', async () => {
@@ -435,9 +435,9 @@ describe('App flow registration', () => {
       numericError = error as Error;
     }
 
-    expect(missingModeError?.message).to.equal("Unsupported mode ''.");
-    expect(numericError?.message).to.equal('Supply and exhaust values must be numeric.');
-    expect(registryStub.setFanProfileMode.called).to.equal(false);
+    expect(missingModeError?.message).toBe("Unsupported mode ''.");
+    expect(numericError?.message).toBe('Supply and exhaust values must be numeric.');
+    expect(registryStub.setFanProfileMode.called).toBe(false);
   });
 
   it('rejects non-numeric fireplace duration values', async () => {
@@ -460,9 +460,9 @@ describe('App flow registration', () => {
       thrown = error as Error;
     }
 
-    expect(thrown).to.not.equal(null);
-    expect(thrown?.message).to.contain('numeric');
-    expect(registryStub.setFireplaceVentilationDuration.called).to.equal(false);
+    expect(thrown).not.toBe(null);
+    expect(thrown?.message).toContain('numeric');
+    expect(registryStub.setFireplaceVentilationDuration.called).toBe(false);
   });
 
   it('logs trigger-card failures without throwing back into the registry callbacks', async () => {
@@ -496,9 +496,9 @@ describe('App flow registration', () => {
     });
     await Promise.resolve();
 
-    expect(app.error.calledWith('Failed to trigger fan setpoint changed flow:', sinon.match.any)).to.equal(true);
-    expect(app.error.calledWith('Failed to trigger dehumidification state flow:', sinon.match.any)).to.equal(true);
-    expect(app.error.calledWith('Failed to trigger heating coil state flow:', sinon.match.any)).to.equal(true);
+    expect(app.error.calledWith('Failed to trigger fan setpoint changed flow:', sinon.match.any)).toBe(true);
+    expect(app.error.calledWith('Failed to trigger dehumidification state flow:', sinon.match.any)).toBe(true);
+    expect(app.error.calledWith('Failed to trigger heating coil state flow:', sinon.match.any)).toBe(true);
   });
 
   it('logs uncaughtException and unhandledRejection through global handlers', async () => {
@@ -517,7 +517,7 @@ describe('App flow registration', () => {
     uncaughtHandler(uncaught);
     rejectionHandler(rejection, Promise.resolve());
 
-    expect(app.error.calledWith('Uncaught Exception:', uncaught)).to.equal(true);
-    expect(app.error.calledWith('Unhandled Rejection:', rejection)).to.equal(true);
+    expect(app.error.calledWith('Uncaught Exception:', uncaught)).toBe(true);
+    expect(app.error.calledWith('Unhandled Rejection:', rejection)).toBe(true);
   });
 });

@@ -1,3 +1,5 @@
+import { createRequire } from 'module';
+
 import {
   APPLICATION_TAG,
   DEFAULT_POINT_VALUES,
@@ -15,6 +17,7 @@ import {
   pointKey,
 } from './manifest';
 
+const require = createRequire(import.meta.url);
 const Bacnet = require('bacstack');
 
 const BacnetEnums = Bacnet.enum;

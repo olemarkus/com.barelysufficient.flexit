@@ -1,6 +1,6 @@
 import { expect } from 'chai';
 import sinon from 'sinon';
-import proxyquire from 'proxyquire';
+import { vi } from 'vitest';
 
 const FILTER_CHANGE_INTERVAL_HOURS_PER_MONTH = 732;
 const MIN_FILTER_CHANGE_INTERVAL_HOURS = 3 * FILTER_CHANGE_INTERVAL_HOURS_PER_MONTH;
@@ -51,25 +51,46 @@ async function flushAsyncWork() {
   await new Promise((resolve) => setImmediate(resolve));
 }
 
-const BACNET_ENUMS = {
-  ApplicationTags: {
-    NULL: 0,
-    REAL: 4,
-    ENUMERATED: 9,
-    UNSIGNED_INTEGER: 2,
+const unitRegistryMocks = vi.hoisted(() => ({
+  getBacnetClientImpl: (() => {
+    throw new Error('getBacnetClient mock not initialized');
+  }) as any,
+  discoverFlexitUnitsImpl: (() => {
+    throw new Error('discoverFlexitUnits mock not initialized');
+  }) as any,
+  setBacnetLogger: vi.fn(),
+  bacnetEnums: {
+    ApplicationTags: {
+      NULL: 0,
+      REAL: 4,
+      ENUMERATED: 9,
+      UNSIGNED_INTEGER: 2,
+    },
+    MaxSegmentsAccepted: { SEGMENTS_0: 0 },
+    MaxApduLengthAccepted: { OCTETS_1476: 5 },
+    ObjectType: {
+      ANALOG_INPUT: 0,
+      ANALOG_OUTPUT: 1,
+      ANALOG_VALUE: 2,
+      BINARY_INPUT: 3,
+      BINARY_VALUE: 5,
+      MULTI_STATE_VALUE: 19,
+      POSITIVE_INTEGER_VALUE: 48,
+    },
   },
-  MaxSegmentsAccepted: { SEGMENTS_0: 0 },
-  MaxApduLengthAccepted: { OCTETS_1476: 5 },
-  ObjectType: {
-    ANALOG_INPUT: 0,
-    ANALOG_OUTPUT: 1,
-    ANALOG_VALUE: 2,
-    BINARY_INPUT: 3,
-    BINARY_VALUE: 5,
-    MULTI_STATE_VALUE: 19,
-    POSITIVE_INTEGER_VALUE: 48,
-  },
-};
+}));
+
+const BACNET_ENUMS = unitRegistryMocks.bacnetEnums;
+
+vi.mock('../lib/bacnetClient', () => ({
+  getBacnetClient: (...args: any[]) => unitRegistryMocks.getBacnetClientImpl(...args),
+  BacnetEnums: unitRegistryMocks.bacnetEnums,
+  setBacnetLogger: unitRegistryMocks.setBacnetLogger,
+}));
+
+vi.mock('../lib/flexitDiscovery', () => ({
+  discoverFlexitUnits: (...args: any[]) => unitRegistryMocks.discoverFlexitUnitsImpl(...args),
+}));
 
 function makeReadObject(type: number, instance: number, value: number) {
   return {
@@ -85,7 +106,10 @@ describe('UnitRegistry', () => {
   let getBacnetClientStub: sinon.SinonStub;
   let discoverStub: sinon.SinonStub;
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    vi.resetModules();
+    unitRegistryMocks.setBacnetLogger.mockReset();
+
     mockClient = {
       writeProperty: sinon.stub().yields(null, {}),
       readPropertyMultiple: sinon.stub().yields(null, { values: [] }),
@@ -94,16 +118,10 @@ describe('UnitRegistry', () => {
 
     getBacnetClientStub = sinon.stub().returns(mockClient);
     discoverStub = sinon.stub().resolves([]);
+    unitRegistryMocks.getBacnetClientImpl = getBacnetClientStub;
+    unitRegistryMocks.discoverFlexitUnitsImpl = discoverStub;
 
-    const mod = proxyquire('../lib/UnitRegistry', {
-      './bacnetClient': {
-        getBacnetClient: getBacnetClientStub,
-        BacnetEnums: BACNET_ENUMS,
-      },
-      './flexitDiscovery': {
-        discoverFlexitUnits: discoverStub,
-      },
-    });
+    const mod = await import('../lib/UnitRegistry.ts');
 
     UnitRegistryClass = mod.UnitRegistry;
     registry = new UnitRegistryClass({

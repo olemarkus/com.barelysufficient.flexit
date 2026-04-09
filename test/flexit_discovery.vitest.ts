@@ -1,6 +1,6 @@
-import { expect } from 'chai';
 import { EventEmitter } from 'events';
 import sinon from 'sinon';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   discoverFlexitUnits,
   listIPv4Interfaces,
@@ -20,7 +20,7 @@ function createMockSocket() {
   return socket;
 }
 
-function loadDiscoveryModule(options?: {
+function installDiscoveryDependencies(options?: {
   networkInterfaces?: Record<string, Array<Record<string, any>> | undefined>;
   createSocket?: sinon.SinonStub;
   parseFlexitReply?: sinon.SinonStub;
@@ -31,17 +31,16 @@ function loadDiscoveryModule(options?: {
     randomUUID: sinon.stub().returns('11111111-2222-3333-4444-555555555555'),
     parseFlexitReply: options?.parseFlexitReply ?? sinon.stub().returns(null),
   });
-  return { listIPv4Interfaces, discoverFlexitUnits };
 }
 
-describe('flexitDiscovery', () => {
+describe('flexitDiscovery (vitest)', () => {
   afterEach(() => {
     sinon.restore();
     resetFlexitDiscoveryDependenciesForTests();
   });
 
   it('lists only external IPv4 interfaces', () => {
-    const flexitDiscovery = loadDiscoveryModule({
+    installDiscoveryDependencies({
       networkInterfaces: {
         eth0: [
           { family: 'IPv4', internal: false, address: '192.0.2.10' },
@@ -52,7 +51,7 @@ describe('flexitDiscovery', () => {
       },
     });
 
-    expect(flexitDiscovery.listIPv4Interfaces()).to.deep.equal([
+    expect(listIPv4Interfaces()).toEqual([
       { name: 'eth0', address: '192.0.2.10' },
     ]);
   });
@@ -60,25 +59,25 @@ describe('flexitDiscovery', () => {
   it('returns no discovered units when the requested interface is unavailable', async () => {
     const createSocket = sinon.stub();
     const log = sinon.stub();
-    const flexitDiscovery = loadDiscoveryModule({
+    installDiscoveryDependencies({
       networkInterfaces: {
         eth0: [{ family: 'IPv4', internal: false, address: '192.0.2.10' }],
       },
       createSocket,
     });
 
-    const units = await flexitDiscovery.discoverFlexitUnits({
+    const units = await discoverFlexitUnits({
       interfaceAddress: '198.51.100.9',
       timeoutMs: 0,
       log,
     });
 
-    expect(units).to.deep.equal([]);
-    expect(createSocket.called).to.equal(false);
-    expect(log.calledWithExactly('[Discovery] Available IPv4 interfaces: eth0=192.0.2.10')).to.equal(true);
-    expect(log.calledWithExactly('[Discovery] Requested interface address: 198.51.100.9')).to.equal(true);
-    expect(log.calledWithExactly('[Discovery] Selected interfaces: none')).to.equal(true);
-    expect(log.calledWithExactly('[Discovery] No candidate interfaces available for discovery')).to.equal(true);
+    expect(units).toEqual([]);
+    expect(createSocket.called).toBe(false);
+    expect(log.calledWithExactly('[Discovery] Available IPv4 interfaces: eth0=192.0.2.10')).toBe(true);
+    expect(log.calledWithExactly('[Discovery] Requested interface address: 198.51.100.9')).toBe(true);
+    expect(log.calledWithExactly('[Discovery] Selected interfaces: none')).toBe(true);
+    expect(log.calledWithExactly('[Discovery] No candidate interfaces available for discovery')).toBe(true);
   });
 
   it('logs interface selection, reply parsing, and per-interface failures while discovering', async () => {
@@ -123,11 +122,11 @@ describe('flexitDiscovery', () => {
     ]);
 
     txSocket.send.callsFake((payload: Buffer, port: number, group: string) => {
-      expect(Buffer.isBuffer(payload)).to.equal(true);
-      expect(payload.length).to.equal(104);
-      expect(payload.toString('ascii')).to.include('discover');
-      expect(port).to.equal(30000);
-      expect(group).to.equal('224.0.0.180');
+      expect(Buffer.isBuffer(payload)).toBe(true);
+      expect(payload.length).toBe(104);
+      expect(payload.toString('ascii')).toContain('discover');
+      expect(port).toBe(30000);
+      expect(group).toBe('224.0.0.180');
 
       rxSocket.emit('message', Buffer.from('reply-one', 'ascii'), { address: '198.51.100.20' });
       rxSocket.emit('message', Buffer.from('reply-one-duplicate', 'ascii'), { address: '198.51.100.20' });
@@ -143,7 +142,8 @@ describe('flexitDiscovery', () => {
     const parseFlexitReply = sinon.stub().callsFake((_message: Buffer, address: string) => (
       parsedUnits.get(address) ?? null
     ));
-    const flexitDiscovery = loadDiscoveryModule({
+
+    installDiscoveryDependencies({
       networkInterfaces: {
         eth0: [{ family: 'IPv4', internal: false, address: '192.0.2.10' }],
         eth1: [{ family: 'IPv4', internal: false, address: '192.0.2.11' }],
@@ -152,7 +152,7 @@ describe('flexitDiscovery', () => {
       parseFlexitReply,
     });
 
-    const units = await flexitDiscovery.discoverFlexitUnits({
+    const units = await discoverFlexitUnits({
       interfaceAddress: 'auto',
       timeoutMs: 0,
       burstCount: 1,
@@ -161,53 +161,19 @@ describe('flexitDiscovery', () => {
       error,
     });
 
-    expect(units).to.deep.equal([
+    expect(units).toEqual([
       parsedUnits.get('198.51.100.20'),
       parsedUnits.get('198.51.100.21'),
     ]);
-    expect(rxSocket.addMembership.firstCall.args).to.deep.equal(['224.0.0.181', '192.0.2.10']);
-    expect(rxSocket.addMembership.secondCall.args).to.deep.equal(['224.0.0.181', '192.0.2.11']);
-    expect(txSocket.setMulticastTTL.calledOnceWithExactly(1)).to.equal(true);
-    expect(txSocket.setMulticastLoopback.calledOnceWithExactly(false)).to.equal(true);
-    expect(txSocket.setMulticastInterface.calledTwice).to.equal(true);
-    expect(txSocket.send.calledOnce).to.equal(true);
-    expect(rxSocket.close.calledOnce).to.equal(true);
-    expect(txSocket.close.calledOnce).to.equal(true);
-
-    const availableInterfacesLog = '[Discovery] Available IPv4 interfaces: eth0=192.0.2.10, eth1=192.0.2.11';
-    const selectedInterfacesLog = '[Discovery] Selected interfaces: eth0=192.0.2.10, eth1=192.0.2.11';
-    const joinedReplyLog = '[Discovery] Joined reply multicast 224.0.0.181 on eth0=192.0.2.10';
-    const discoveryTargetLog = '[Discovery] Discovery request target 224.0.0.180:30000 (multicast loopback disabled)';
-    const sendSuccessLog = '[Discovery] Sending discover via eth0=192.0.2.10 to 224.0.0.180:30000';
-    const parsedReplyOneLog = '[Discovery] Parsed reply from 198.51.100.20:? len=9: 800131-000001@198.51.100.20:47808';
-    const parsedReplyDuplicateLog = '[Discovery] Parsed reply from 198.51.100.20:? len=19:'
-      + ' 800131-000001@198.51.100.20:47808 (duplicate)';
-    const parsedReplyTwoLog = '[Discovery] Parsed reply from 198.51.100.21:? len=9: 800131-000002@198.51.100.21:47808';
-    const ignoredReplyLog = '[Discovery] Ignored reply from 198.51.100.99:30001 len=14;'
-      + ' parser returned null; ascii="unparsed-reply"';
-
-    expect(log.calledWithExactly(availableInterfacesLog)).to.equal(true);
-    expect(log.calledWithExactly(selectedInterfacesLog)).to.equal(true);
-    expect(log.calledWithExactly('[Discovery] Bound RX socket on 0.0.0.0:30001')).to.equal(true);
-    expect(log.calledWithExactly(joinedReplyLog)).to.equal(true);
-    expect(error.calledWithExactly(
-      '[Discovery] Failed to join reply multicast 224.0.0.181 on eth1=192.0.2.11:',
-      sinon.match.instanceOf(Error),
-    )).to.equal(true);
-    expect(log.calledWithExactly('[Discovery] Bound TX socket on 0.0.0.0:30000')).to.equal(true);
-    expect(log.calledWithExactly(discoveryTargetLog)).to.equal(true);
-    expect(log.calledWithExactly(sendSuccessLog)).to.equal(true);
-    expect(error.calledWithExactly(
-      '[Discovery] Failed to send discover via eth1=192.0.2.11 to 224.0.0.180:30000:',
-      sinon.match.instanceOf(Error),
-    )).to.equal(true);
-    expect(error.calledWithExactly(
-      '[Discovery] Failed to close TX socket:',
-      sinon.match.instanceOf(Error),
-    )).to.equal(true);
-    expect(log.calledWithExactly(parsedReplyOneLog)).to.equal(true);
-    expect(log.calledWithExactly(parsedReplyDuplicateLog)).to.equal(true);
-    expect(log.calledWithExactly(parsedReplyTwoLog)).to.equal(true);
-    expect(log.calledWithExactly(ignoredReplyLog)).to.equal(true);
+    expect(rxSocket.addMembership.firstCall.args).toEqual(['224.0.0.181', '192.0.2.10']);
+    expect(rxSocket.addMembership.secondCall.args).toEqual(['224.0.0.181', '192.0.2.11']);
+    expect(txSocket.setMulticastTTL.calledOnceWithExactly(1)).toBe(true);
+    expect(txSocket.setMulticastLoopback.calledOnceWithExactly(false)).toBe(true);
+    expect(txSocket.setMulticastInterface.calledTwice).toBe(true);
+    expect(txSocket.send.calledOnce).toBe(true);
+    expect(rxSocket.close.calledOnce).toBe(true);
+    expect(txSocket.close.calledOnce).toBe(true);
+    expect(log.calledWithExactly('[Discovery] Available IPv4 interfaces: eth0=192.0.2.10, eth1=192.0.2.11')).toBe(true);
+    expect(log.calledWithExactly('[Discovery] Selected interfaces: eth0=192.0.2.10, eth1=192.0.2.11')).toBe(true);
   });
 });

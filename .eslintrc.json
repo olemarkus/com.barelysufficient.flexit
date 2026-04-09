@@ -145,12 +145,36 @@
       },
       "rules": {
         "node/no-unpublished-import": "off",
+        "node/no-unsupported-features/es-syntax": "off",
+        "import/extensions": "off",
+        "import/first": "off",
+        "import/newline-after-import": "off",
+        "import/order": "off",
+        "object-curly-newline": "off",
+        "max-classes-per-file": "off",
         "complexity": "off",
         "max-depth": "off",
         "max-lines": "off",
         "max-lines-per-function": "off",
         "max-params": "off",
         "max-statements": "off"
+      }
+    },
+    {
+      "files": [
+        "vitest.config.ts"
+      ],
+      "rules": {
+        "node/no-unpublished-import": "off",
+        "import/no-extraneous-dependencies": "off"
+      }
+    },
+    {
+      "files": [
+        "lib/createAppClass.ts"
+      ],
+      "rules": {
+        "max-lines-per-function": "off"
       }
     }
   ]
