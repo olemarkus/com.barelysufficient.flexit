@@ -12,6 +12,7 @@
   "include": [
     "./app.ts",
     "./lib/**/*.ts",
-    "./drivers/**/*.ts"
+    "./drivers/**/*.ts",
+    "./types/**/*.d.ts"
   ]
 }

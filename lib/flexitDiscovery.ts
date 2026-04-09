@@ -25,10 +25,36 @@ type DiscoveryOptions = {
   log?: DiscoveryLogger;
   error?: DiscoveryLogger;
 };
+type DiscoveryDependencies = {
+  networkInterfaces: typeof os.networkInterfaces;
+  createSocket: typeof dgram.createSocket;
+  randomUUID: typeof randomUUID;
+  parseFlexitReply: typeof parseFlexitReply;
+};
+
+const defaultDiscoveryDependencies: DiscoveryDependencies = {
+  networkInterfaces: os.networkInterfaces.bind(os),
+  createSocket: dgram.createSocket.bind(dgram),
+  randomUUID,
+  parseFlexitReply,
+};
+
+let discoveryDependencies = defaultDiscoveryDependencies;
+
+export function setFlexitDiscoveryDependenciesForTests(dependencies: Partial<DiscoveryDependencies>) {
+  discoveryDependencies = {
+    ...defaultDiscoveryDependencies,
+    ...dependencies,
+  };
+}
+
+export function resetFlexitDiscoveryDependenciesForTests() {
+  discoveryDependencies = defaultDiscoveryDependencies;
+}
 
 export function listIPv4Interfaces(): IPv4Interface[] {
   const out: IPv4Interface[] = [];
-  const nics = os.networkInterfaces();
+  const nics = discoveryDependencies.networkInterfaces();
 
   for (const [name, infos] of Object.entries(nics)) {
     for (const info of infos ?? []) {
@@ -55,8 +81,8 @@ export async function discoverFlexitUnits(opts: DiscoveryOptions): Promise<Disco
     return [];
   }
 
-  const rx = dgram.createSocket({ type: 'udp4', reuseAddr: true });
-  const tx = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+  const rx = discoveryDependencies.createSocket({ type: 'udp4', reuseAddr: true });
+  const tx = discoveryDependencies.createSocket({ type: 'udp4', reuseAddr: true });
 
   const found = new Map<string, DiscoveredFlexitUnit>();
 
@@ -134,7 +160,7 @@ function attachReplyHandler(
   log: DiscoveryLogger,
 ) {
   rx.on('message', (msg, rinfo) => {
-    const parsed = parseFlexitReply(msg, rinfo.address);
+    const parsed = discoveryDependencies.parseFlexitReply(msg, rinfo.address);
     if (!parsed) {
       log(
         `[Discovery] Ignored reply from ${formatRemote(rinfo)} len=${msg.length};`
@@ -232,7 +258,7 @@ function asciiPreview(payload: Buffer) {
  * Must be EXACTLY 104 bytes or units don't respond.
  */
 function buildDiscoverRequest(): Buffer {
-  const uuid = randomUUID(); // 36 chars
+  const uuid = discoveryDependencies.randomUUID(); // 36 chars
   const tlv2 = `ABTMobile:${uuid}`; // length 46
   const tlv3 = '?Devices=All'; // length 12
 

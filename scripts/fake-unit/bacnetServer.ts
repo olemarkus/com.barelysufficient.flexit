@@ -1,4 +1,5 @@
 import dgram from 'dgram';
+import { createRequire } from 'module';
 import {
   APPLICATION_TAG,
   DEVICE_OBJECT_TYPE,
@@ -18,6 +19,7 @@ import {
 } from './manifest';
 import { FakeNordicUnitState, valueTagForRead, valueToWriteNumber } from './state';
 
+const require = createRequire(import.meta.url);
 const Bacnet = require('bacstack');
 const Bvlc = require('bacstack/lib/bvlc');
 const Npdu = require('bacstack/lib/npdu');

@@ -1,5 +1,5 @@
-import { expect } from 'chai';
 import sinon from 'sinon';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   BacnetEnums,
   getBacnetClient,
@@ -8,7 +8,7 @@ import {
   setBacnetModuleForTests,
 } from '../lib/bacnetClient.ts';
 
-describe('bacnetClient', () => {
+describe('bacnetClient (vitest)', () => {
   afterEach(() => {
     sinon.restore();
     resetBacnetClientStateForTests();
@@ -31,20 +31,20 @@ describe('bacnetClient', () => {
     const repeatedDefaultPortClient = getBacnetClient(Number.NaN);
     const customPortClient = getBacnetClient(47809);
 
-    expect(defaultPortClient).to.equal(firstClient);
-    expect(repeatedDefaultPortClient).to.equal(firstClient);
-    expect(customPortClient).to.equal(secondClient);
-    expect(BacnetStub.firstCall.args[0]).to.deep.equal({
+    expect(defaultPortClient).toBe(firstClient);
+    expect(repeatedDefaultPortClient).toBe(firstClient);
+    expect(customPortClient).toBe(secondClient);
+    expect(BacnetStub.firstCall.args[0]).toEqual({
       port: 47808,
       apduTimeout: 15000,
       apduSize: 1476,
     });
-    expect(BacnetStub.secondCall.args[0]).to.deep.equal({
+    expect(BacnetStub.secondCall.args[0]).toEqual({
       port: 47809,
       apduTimeout: 15000,
       apduSize: 1476,
     });
-    expect(BacnetEnums.ApplicationTags).to.equal(BacnetStub.enum.ApplicationTags);
+    expect(BacnetEnums.ApplicationTags).toBe(BacnetStub.enum.ApplicationTags);
   });
 
   it('logs BACnet client error events through the configured logger', () => {
@@ -68,6 +68,6 @@ describe('bacnetClient', () => {
     const failure = new Error('socket failed');
     errorHandler?.(failure);
 
-    expect(logger.error.calledOnceWithExactly('[BacnetClient:47810] Error:', failure)).to.equal(true);
+    expect(logger.error.calledOnceWithExactly('[BacnetClient:47810] Error:', failure)).toBe(true);
   });
 });
