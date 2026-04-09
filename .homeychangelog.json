@@ -73,5 +73,8 @@
   },
   "1.7.5": {
     "en": "Minor stability fixes."
+  },
+  "1.8.0": {
+    "en": "Add support for configuring free cooling"
   }
 }
