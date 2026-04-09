@@ -31,10 +31,12 @@ function createRegistryStub(overrides: Record<string, any> = {}) {
     setLogger: sinon.stub(),
     setFanSetpointChangedHandler: sinon.stub(),
     setDehumidificationStateChangedHandler: sinon.stub(),
+    setFreeCoolingStateChangedHandler: sinon.stub(),
     setHeatingCoilStateChangedHandler: sinon.stub(),
     setFanProfileMode: sinon.stub().resolves(),
     setFireplaceVentilationDuration: sinon.stub().resolves(),
     getDehumidificationActive: sinon.stub().resolves(true),
+    getFreeCoolingActive: sinon.stub().resolves(true),
     setHeatingCoilEnabled: sinon.stub().resolves(),
     toggleHeatingCoilEnabled: sinon.stub().resolves(true),
     getHeatingCoilEnabled: sinon.stub().resolves(true),
@@ -79,11 +81,14 @@ function createCards() {
     },
     condition: {
       dehumidificationIsActive: { registerRunListener: sinon.stub() },
+      freeCoolingIsActive: { registerRunListener: sinon.stub() },
       heatingCoilIsOn: { registerRunListener: sinon.stub() },
     },
     trigger: {
       dehumidificationActivated: { trigger: sinon.stub().resolves() },
       dehumidificationDeactivated: { trigger: sinon.stub().resolves() },
+      freeCoolingActivated: { trigger: sinon.stub().resolves() },
+      freeCoolingDeactivated: { trigger: sinon.stub().resolves() },
       supplyFanSetpointChanged: { trigger: sinon.stub().resolves() },
       extractFanSetpointChanged: { trigger: sinon.stub().resolves() },
       heatingCoilTurnedOn: { trigger: sinon.stub().resolves() },
@@ -102,6 +107,9 @@ function wireCards(app: any, cards: ReturnType<typeof createCards>) {
   app.homey.flow.getConditionCard
     .withArgs('dehumidification_is_active')
     .returns(cards.condition.dehumidificationIsActive);
+  app.homey.flow.getConditionCard
+    .withArgs('free_cooling_is_active')
+    .returns(cards.condition.freeCoolingIsActive);
   app.homey.flow.getConditionCard.withArgs('heating_coil_is_on').returns(cards.condition.heatingCoilIsOn);
 
   app.homey.flow.getDeviceTriggerCard
@@ -110,6 +118,12 @@ function wireCards(app: any, cards: ReturnType<typeof createCards>) {
   app.homey.flow.getDeviceTriggerCard
     .withArgs('dehumidification_deactivated')
     .returns(cards.trigger.dehumidificationDeactivated);
+  app.homey.flow.getDeviceTriggerCard
+    .withArgs('free_cooling_activated')
+    .returns(cards.trigger.freeCoolingActivated);
+  app.homey.flow.getDeviceTriggerCard
+    .withArgs('free_cooling_deactivated')
+    .returns(cards.trigger.freeCoolingDeactivated);
   app.homey.flow.getDeviceTriggerCard
     .withArgs('supply_fan_setpoint_changed')
     .returns(cards.trigger.supplyFanSetpointChanged);
@@ -129,7 +143,7 @@ describe('App flow registration', () => {
     sinon.restore();
   });
 
-  it('registers dehumidification and heating-coil flow cards and forwards callbacks', async () => {
+  it('registers dehumidification, free-cooling, and heating-coil flow cards and forwards callbacks', async () => {
     const registryStub = createRegistryStub();
     const cards = createCards();
     const AppClass = createAppClass(registryStub);
@@ -145,10 +159,13 @@ describe('App flow registration', () => {
     expect(app.homey.flow.getActionCard.calledWithExactly('toggle_heating_coil_onoff')).to.equal(true);
 
     expect(app.homey.flow.getConditionCard.calledWithExactly('dehumidification_is_active')).to.equal(true);
+    expect(app.homey.flow.getConditionCard.calledWithExactly('free_cooling_is_active')).to.equal(true);
     expect(app.homey.flow.getConditionCard.calledWithExactly('heating_coil_is_on')).to.equal(true);
 
     expect(app.homey.flow.getDeviceTriggerCard.calledWithExactly('dehumidification_activated')).to.equal(true);
     expect(app.homey.flow.getDeviceTriggerCard.calledWithExactly('dehumidification_deactivated')).to.equal(true);
+    expect(app.homey.flow.getDeviceTriggerCard.calledWithExactly('free_cooling_activated')).to.equal(true);
+    expect(app.homey.flow.getDeviceTriggerCard.calledWithExactly('free_cooling_deactivated')).to.equal(true);
     expect(app.homey.flow.getDeviceTriggerCard.calledWithExactly('supply_fan_setpoint_changed')).to.equal(true);
     expect(app.homey.flow.getDeviceTriggerCard.calledWithExactly('extract_fan_setpoint_changed')).to.equal(true);
     expect(app.homey.flow.getDeviceTriggerCard.calledWithExactly('heating_coil_turned_on')).to.equal(true);
@@ -160,10 +177,12 @@ describe('App flow registration', () => {
     expect(cards.action.turnHeatingCoilOff.registerRunListener.calledOnce).to.equal(true);
     expect(cards.action.toggleHeatingCoilOnOff.registerRunListener.calledOnce).to.equal(true);
     expect(cards.condition.dehumidificationIsActive.registerRunListener.calledOnce).to.equal(true);
+    expect(cards.condition.freeCoolingIsActive.registerRunListener.calledOnce).to.equal(true);
     expect(cards.condition.heatingCoilIsOn.registerRunListener.calledOnce).to.equal(true);
 
     expect(registryStub.setFanSetpointChangedHandler.calledOnce).to.equal(true);
     expect(registryStub.setDehumidificationStateChangedHandler.calledOnce).to.equal(true);
+    expect(registryStub.setFreeCoolingStateChangedHandler.calledOnce).to.equal(true);
     expect(registryStub.setHeatingCoilStateChangedHandler.calledOnce).to.equal(true);
 
     const fanProfileListener = cards.action.setFanProfileMode.registerRunListener.firstCall.args[0];
@@ -213,6 +232,14 @@ describe('App flow registration', () => {
     expect(dehumidificationConditionResult).to.equal(true);
     expect(registryStub.getDehumidificationActive.calledOnceWithExactly('unit-1')).to.equal(true);
 
+    const freeCoolingConditionListener = cards.condition
+      .freeCoolingIsActive.registerRunListener.firstCall.args[0];
+    const freeCoolingConditionResult = await freeCoolingConditionListener({
+      device: { getData: () => ({ unitId: 'unit-1' }) },
+    });
+    expect(freeCoolingConditionResult).to.equal(true);
+    expect(registryStub.getFreeCoolingActive.calledOnceWithExactly('unit-1')).to.equal(true);
+
     const heatingCoilConditionListener = cards.condition.heatingCoilIsOn.registerRunListener.firstCall.args[0];
     const heatingCoilConditionResult = await heatingCoilConditionListener({
       device: { getData: () => ({ unitId: 'unit-1' }) },
@@ -249,6 +276,18 @@ describe('App flow registration', () => {
     });
     expect(cards.trigger.dehumidificationActivated.trigger.calledOnce).to.equal(true);
     expect(cards.trigger.dehumidificationDeactivated.trigger.calledOnce).to.equal(true);
+
+    const freeCoolingStateChangedHandler = registryStub.setFreeCoolingStateChangedHandler.firstCall.args[0];
+    await freeCoolingStateChangedHandler({
+      device: { getData: () => ({ unitId: 'unit-1' }) },
+      active: true,
+    });
+    await freeCoolingStateChangedHandler({
+      device: { getData: () => ({ unitId: 'unit-1' }) },
+      active: false,
+    });
+    expect(cards.trigger.freeCoolingActivated.trigger.calledOnce).to.equal(true);
+    expect(cards.trigger.freeCoolingDeactivated.trigger.calledOnce).to.equal(true);
 
     const heatingCoilStateChangedHandler = registryStub.setHeatingCoilStateChangedHandler.firstCall.args[0];
     await heatingCoilStateChangedHandler({

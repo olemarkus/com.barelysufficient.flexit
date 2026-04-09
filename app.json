@@ -116,6 +116,44 @@
       },
       {
         "title": {
+          "en": "Free cooling activated"
+        },
+        "titleFormatted": {
+          "en": "Free cooling activated"
+        },
+        "hint": {
+          "en": "Triggers when free cooling activates."
+        },
+        "args": [
+          {
+            "type": "device",
+            "name": "device",
+            "filter": "driver_id=nordic|nordic-cloud"
+          }
+        ],
+        "id": "free_cooling_activated"
+      },
+      {
+        "title": {
+          "en": "Free cooling deactivated"
+        },
+        "titleFormatted": {
+          "en": "Free cooling deactivated"
+        },
+        "hint": {
+          "en": "Triggers when free cooling deactivates."
+        },
+        "args": [
+          {
+            "type": "device",
+            "name": "device",
+            "filter": "driver_id=nordic|nordic-cloud"
+          }
+        ],
+        "id": "free_cooling_deactivated"
+      },
+      {
+        "title": {
           "en": "Heating coil turned off"
         },
         "titleFormatted": {
@@ -200,6 +238,25 @@
           }
         ],
         "id": "dehumidification_is_active"
+      },
+      {
+        "title": {
+          "en": "Free cooling is active"
+        },
+        "titleFormatted": {
+          "en": "Free cooling is active"
+        },
+        "hint": {
+          "en": "Checks whether free cooling is active."
+        },
+        "args": [
+          {
+            "type": "device",
+            "name": "device",
+            "filter": "driver_id=nordic|nordic-cloud"
+          }
+        ],
+        "id": "free_cooling_is_active"
       },
       {
         "title": {
@@ -407,6 +464,7 @@
         "target_temperature",
         "measure_humidity",
         "dehumidification_active",
+        "free_cooling_active",
         "measure_power",
         "fan_mode",
         "measure_motor_rpm",
@@ -427,6 +485,11 @@
         "dehumidification_active": {
           "title": {
             "en": "Dehumidification active"
+          }
+        },
+        "free_cooling_active": {
+          "title": {
+            "en": "Free cooling active"
           }
         },
         "measure_power": {
@@ -637,6 +700,64 @@
               "min": 10,
               "max": 30,
               "step": 0.5
+            }
+          ]
+        },
+        {
+          "type": "group",
+          "label": {
+            "en": "Free cooling"
+          },
+          "children": [
+            {
+              "id": "free_cooling_enabled",
+              "type": "checkbox",
+              "label": {
+                "en": "Enable free cooling"
+              },
+              "value": false
+            },
+            {
+              "id": "free_cooling_extract_temp_setpoint",
+              "type": "number",
+              "label": {
+                "en": "Free cooling temperature setpoint"
+              },
+              "units": {
+                "en": "degC"
+              },
+              "value": 22,
+              "min": 10,
+              "max": 30,
+              "step": 0.5
+            },
+            {
+              "id": "free_cooling_outside_temp_limit",
+              "type": "number",
+              "label": {
+                "en": "Outside temperature limit"
+              },
+              "units": {
+                "en": "degC"
+              },
+              "value": 18,
+              "min": 10,
+              "max": 30,
+              "step": 0.5
+            },
+            {
+              "id": "free_cooling_min_on_time_seconds",
+              "type": "number",
+              "label": {
+                "en": "Minimum on-time"
+              },
+              "units": {
+                "en": "sec"
+              },
+              "value": 600,
+              "min": 0,
+              "max": 18000,
+              "step": 1
             }
           ]
         },
@@ -920,6 +1041,7 @@
         "target_temperature",
         "measure_humidity",
         "dehumidification_active",
+        "free_cooling_active",
         "measure_power",
         "fan_mode",
         "measure_motor_rpm",
@@ -940,6 +1062,11 @@
         "dehumidification_active": {
           "title": {
             "en": "Dehumidification active"
+          }
+        },
+        "free_cooling_active": {
+          "title": {
+            "en": "Free cooling active"
           }
         },
         "measure_power": {
@@ -1200,6 +1327,64 @@
         {
           "type": "group",
           "label": {
+            "en": "Free cooling"
+          },
+          "children": [
+            {
+              "id": "free_cooling_enabled",
+              "type": "checkbox",
+              "label": {
+                "en": "Enable free cooling"
+              },
+              "value": false
+            },
+            {
+              "id": "free_cooling_extract_temp_setpoint",
+              "type": "number",
+              "label": {
+                "en": "Free cooling temperature setpoint"
+              },
+              "units": {
+                "en": "degC"
+              },
+              "value": 22,
+              "min": 10,
+              "max": 30,
+              "step": 0.5
+            },
+            {
+              "id": "free_cooling_outside_temp_limit",
+              "type": "number",
+              "label": {
+                "en": "Outside temperature limit"
+              },
+              "units": {
+                "en": "degC"
+              },
+              "value": 18,
+              "min": 10,
+              "max": 30,
+              "step": 0.5
+            },
+            {
+              "id": "free_cooling_min_on_time_seconds",
+              "type": "number",
+              "label": {
+                "en": "Minimum on-time"
+              },
+              "units": {
+                "en": "sec"
+              },
+              "value": 600,
+              "min": 0,
+              "max": 18000,
+              "step": 1
+            }
+          ]
+        },
+        {
+          "type": "group",
+          "label": {
             "en": "Temporary ventilation"
           },
           "children": [
@@ -1437,6 +1622,16 @@
         "en": "Dehumidification active"
       },
       "icon": "/assets/capabilities/dehumidification_active.svg",
+      "getable": true,
+      "setable": false,
+      "uiComponent": "sensor"
+    },
+    "free_cooling_active": {
+      "type": "boolean",
+      "title": {
+        "en": "Free cooling active"
+      },
+      "icon": "/assets/capabilities/free_cooling_active.svg",
       "getable": true,
       "setable": false,
       "uiComponent": "sensor"

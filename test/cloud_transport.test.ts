@@ -35,6 +35,12 @@ const DEFAULT_TARGET_TEMPERATURE_SETTINGS: Record<string, number> = {
   target_temperature_home: 20,
   target_temperature_away: 18,
 };
+const DEFAULT_FREE_COOLING_SETTINGS = {
+  free_cooling_enabled: false,
+  free_cooling_extract_temp_setpoint: 22,
+  free_cooling_outside_temp_limit: 18,
+  free_cooling_min_on_time_seconds: 600,
+};
 
 // ---------------------------------------------------------------
 // Helpers
@@ -118,6 +124,11 @@ function defaultSensorValues(): Array<{ type: number; instance: number; value: n
     // Dehumidification
     { type: OBJ.ANALOG_VALUE, instance: 1870, value: 0 }, // dehumidification fan control
     { type: OBJ.BINARY_VALUE, instance: 653, value: 0 }, // dehumidification slope request
+    { type: OBJ.BINARY_VALUE, instance: 478, value: 0 }, // free cooling enabled
+    { type: OBJ.ANALOG_VALUE, instance: 1934, value: 18 }, // free cooling outside temp limit
+    { type: OBJ.ANALOG_VALUE, instance: 2071, value: 22 }, // free cooling room setpoint
+    { type: OBJ.POSITIVE_INTEGER_VALUE, instance: 296, value: 600 }, // free cooling minimum on-time
+    { type: OBJ.MULTI_STATE_VALUE, instance: 19, value: 3 }, // actual ventilation mode
 
     // Fireplace / rapid
     { type: OBJ.POSITIVE_INTEGER_VALUE, instance: 270, value: 10 }, // fireplace runtime
@@ -135,7 +146,18 @@ function makeMockCloudClient(options: {
   writeSuccess?: boolean;
   authFails?: boolean;
 }) {
-  const sensorValues = options.sensorValues ?? defaultSensorValues();
+  const sensorValues = [...(options.sensorValues ?? defaultSensorValues())];
+
+  const updateSensorValue = (path: string, value: number | string | null) => {
+    const { type, instance } = cloudPathToBacnetObject(path);
+    const numericValue = value === null ? 0 : Number(value);
+    const existing = sensorValues.find((entry) => entry.type === type && entry.instance === instance);
+    if (existing) {
+      existing.value = numericValue;
+      return;
+    }
+    sensorValues.push({ type, instance, value: numericValue });
+  };
 
   const client = {
     authenticate: sinon.stub(),
@@ -147,7 +169,11 @@ function makeMockCloudClient(options: {
     readDatapoints: sinon.stub().callsFake(
       async (plantId: string, _paths: string[]) => buildCloudSensorResponse(plantId, sensorValues),
     ),
-    writeDatapoint: sinon.stub().resolves(options.writeSuccess ?? true),
+    writeDatapoint: sinon.stub().callsFake(async (_plantId: string, path: string, value: number | string | null) => {
+      const success = options.writeSuccess ?? true;
+      if (success) updateSensorValue(path, value);
+      return success;
+    }),
     hasValidToken: sinon.stub().returns(true),
     restoreToken: sinon.stub(),
     getToken: sinon.stub().returns(null),
@@ -175,6 +201,7 @@ function makeMockDevice(filterIntervalHours: number = 4392) {
   let currentFireplaceDurationMinutes = 10;
   const currentFanSettings = { ...DEFAULT_FAN_SETTINGS };
   const currentTargetTemperatureSettings = { ...DEFAULT_TARGET_TEMPERATURE_SETTINGS };
+  const currentFreeCoolingSettings = { ...DEFAULT_FREE_COOLING_SETTINGS };
   const getSetting = sinon.stub();
   getSetting.withArgs('plantId').returns(PLANT_ID);
   getSetting.withArgs('filter_change_interval_hours').callsFake(() => currentFilterIntervalHours);
@@ -184,6 +211,9 @@ function makeMockDevice(filterIntervalHours: number = 4392) {
     if (Object.prototype.hasOwnProperty.call(currentFanSettings, key)) return currentFanSettings[key];
     if (Object.prototype.hasOwnProperty.call(currentTargetTemperatureSettings, key)) {
       return currentTargetTemperatureSettings[key];
+    }
+    if (Object.prototype.hasOwnProperty.call(currentFreeCoolingSettings, key)) {
+      return currentFreeCoolingSettings[key as keyof typeof currentFreeCoolingSettings];
     }
     return undefined;
   });
@@ -209,6 +239,9 @@ function makeMockDevice(filterIntervalHours: number = 4392) {
       }
       if (Object.prototype.hasOwnProperty.call(currentTargetTemperatureSettings, key)) {
         currentTargetTemperatureSettings[key] = value as number;
+      }
+      if (Object.prototype.hasOwnProperty.call(currentFreeCoolingSettings, key)) {
+        (currentFreeCoolingSettings as Record<string, unknown>)[key] = value;
       }
     }
   });
@@ -339,6 +372,7 @@ describe('Cloud transport – UnitRegistry integration', () => {
     expect(mock.capabilityValues['measure_fan_speed_percent.extract']).to.equal(74);
     expect(mock.capabilityValues['target_temperature']).to.equal(20);
     expect(mock.capabilityValues['fan_mode']).to.equal('home');
+    expect(mock.capabilityValues['free_cooling_active']).to.equal(false);
     // heater power is value * 1000 (kW -> W)
     expect(mock.capabilityValues['measure_power']).to.equal(500);
   });
@@ -668,6 +702,74 @@ describe('Cloud transport – UnitRegistry integration', () => {
     // The dehumidification state change handler must have been called
     expect(dehumidificationHandler.called).to.equal(true);
     expect(dehumidificationHandler.firstCall.args[0].active).to.equal(true);
+  });
+
+  it('detects change in free cooling state from actual ventilation mode', async () => {
+    const freeCoolingHandler = sinon.stub();
+    registry.setFreeCoolingStateChangedHandler(freeCoolingHandler);
+
+    registry.registerCloud(UNIT_ID, mock.device, {
+      plantId: PLANT_ID,
+      client: mockClient,
+    });
+    await sleep(100);
+
+    const activeValues = defaultSensorValues().map((v) => {
+      if (v.type === OBJ.MULTI_STATE_VALUE && v.instance === 19) {
+        return { ...v, value: 10 };
+      }
+      return v;
+    });
+    mockClient.readDatapoints.callsFake(
+      async (plantId: string) => buildCloudSensorResponse(plantId, activeValues),
+    );
+
+    await registry.writeSetpoint(UNIT_ID, 21);
+    await sleep(100);
+
+    expect(freeCoolingHandler.called).to.equal(true);
+    expect(freeCoolingHandler.firstCall.args[0].active).to.equal(true);
+    expect(mock.capabilityValues['free_cooling_active']).to.equal(true);
+  });
+
+  it('writes and verifies free cooling settings via cloud', async () => {
+    registry.registerCloud(UNIT_ID, mock.device, {
+      plantId: PLANT_ID,
+      client: mockClient,
+    });
+    await sleep(50);
+
+    await registry.setFreeCoolingEnabled(UNIT_ID, true);
+    await registry.setFreeCoolingTemperatureSetpoint(UNIT_ID, 24.5);
+    await registry.setFreeCoolingOutsideTemperatureLimit(UNIT_ID, 16.5);
+    await registry.setFreeCoolingMinOnTimeSeconds(UNIT_ID, 1200);
+
+    expect(mockClient.writeDatapoint.calledWith(
+      PLANT_ID,
+      bacnetObjectToCloudPath(5, 478),
+      1,
+    )).to.equal(true);
+    expect(mockClient.writeDatapoint.calledWith(
+      PLANT_ID,
+      bacnetObjectToCloudPath(2, 2071),
+      24.5,
+    )).to.equal(true);
+    expect(mockClient.writeDatapoint.calledWith(
+      PLANT_ID,
+      bacnetObjectToCloudPath(2, 1934),
+      16.5,
+    )).to.equal(true);
+    expect(mockClient.writeDatapoint.calledWith(
+      PLANT_ID,
+      bacnetObjectToCloudPath(48, 296),
+      1200,
+    )).to.equal(true);
+
+    const settingsCalls = mock.setSettings.getCalls().map((call: any) => call.args[0]);
+    expect(settingsCalls.some((value: any) => value?.free_cooling_enabled === true)).to.equal(true);
+    expect(settingsCalls.some((value: any) => value?.free_cooling_extract_temp_setpoint === 24.5)).to.equal(true);
+    expect(settingsCalls.some((value: any) => value?.free_cooling_outside_temp_limit === 16.5)).to.equal(true);
+    expect(settingsCalls.some((value: any) => value?.free_cooling_min_on_time_seconds === 1200)).to.equal(true);
   });
 
   it('computes filter life correctly from cloud data', async () => {

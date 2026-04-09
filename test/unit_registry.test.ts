@@ -20,6 +20,10 @@ function makeMockDevice(opts: {
     target_temperature_home: 20,
     target_temperature_away: 18,
     fireplace_duration_minutes: 10,
+    free_cooling_enabled: false,
+    free_cooling_extract_temp_setpoint: 22,
+    free_cooling_outside_temp_limit: 18,
+    free_cooling_min_on_time_seconds: 600,
     ...(opts.settings ?? {}),
   };
 
@@ -261,6 +265,33 @@ describe('UnitRegistry', () => {
     expect(events).to.have.length(2);
     expect(events[0].active).to.equal(false);
     expect(events[1].active).to.equal(true);
+    expect(events[0].device).to.equal(mockDevice);
+    expect(events[1].device).to.equal(mockDevice);
+  });
+
+  it('emits free cooling state change callback on transitions', () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    const events: Array<{ active: boolean; device: any }> = [];
+    registry.setFreeCoolingStateChangedHandler((event: any) => {
+      events.push({ active: event.active, device: event.device });
+    });
+
+    const unit = (registry as any).units.get('test_unit');
+    (registry as any).distributeData(unit, {
+      free_cooling_actual_mode: 3,
+    });
+    (registry as any).distributeData(unit, {
+      free_cooling_actual_mode: 10,
+    });
+    (registry as any).distributeData(unit, {
+      free_cooling_actual_mode: 3,
+    });
+
+    expect(events).to.have.length(2);
+    expect(events[0].active).to.equal(true);
+    expect(events[1].active).to.equal(false);
     expect(events[0].device).to.equal(mockDevice);
     expect(events[1].device).to.equal(mockDevice);
   });
@@ -1325,6 +1356,25 @@ describe('UnitRegistry', () => {
     expect(mockDevice.setCapabilityValue.calledWith('dehumidification_active', false)).to.equal(true);
   });
 
+  it('publishes free cooling capability from actual ventilation mode', () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    const unit = { unitId: 'test_unit', devices: new Set([mockDevice]) };
+    (registry as any).distributeData(unit, {
+      free_cooling_actual_mode: 10,
+    });
+
+    expect(mockDevice.setCapabilityValue.calledWith('free_cooling_active', true)).to.equal(true);
+
+    mockDevice.setCapabilityValue.resetHistory();
+    (registry as any).distributeData(unit, {
+      free_cooling_actual_mode: 3,
+    });
+
+    expect(mockDevice.setCapabilityValue.calledWith('free_cooling_active', false)).to.equal(true);
+  });
+
   it('falls back to slope request when dehumidification fan control is unavailable', () => {
     const mockDevice = makeMockDevice();
     registry.register('test_unit', mockDevice);
@@ -1426,6 +1476,83 @@ describe('UnitRegistry', () => {
 
     expect(thrown).to.not.equal(null);
     expect(thrown?.message).to.equal('Dehumidification state unavailable');
+  });
+
+  it('reads free cooling state from MSV:19 before the first poll initializes it', async () => {
+    const mockDevice = makeMockDevice();
+    mockClient.readPropertyMultiple.resetBehavior();
+    mockClient.readPropertyMultiple.callsFake((_ip: string, request: any[], cb: any) => {
+      const requestedObjects = request
+        .map((entry) => `${entry?.objectId?.type}:${entry?.objectId?.instance}`)
+        .sort()
+        .join(',');
+      if (requestedObjects === '19:19') {
+        cb(null, { values: [makeReadObject(BACNET_ENUMS.ObjectType.MULTI_STATE_VALUE, 19, 10)] });
+        return;
+      }
+      cb(null, { values: [] });
+    });
+
+    registry.register('test_unit', mockDevice);
+
+    const unit = (registry as any).units.get('test_unit');
+    unit.freeCoolingActive = undefined;
+    unit.freeCoolingStateInitialized = false;
+    unit.probeValues.delete('19:19');
+
+    const active = await registry.getFreeCoolingActive('test_unit');
+
+    expect(active).to.equal(true);
+    expect(unit.freeCoolingActive).to.equal(true);
+    expect(unit.freeCoolingStateInitialized).to.equal(true);
+  });
+
+  it('writes free cooling enabled via BV:478 with priority 13', async () => {
+    const mockDevice = makeMockDevice();
+    mockClient.readPropertyMultiple.resetBehavior();
+    mockClient.readPropertyMultiple.callsFake((_ip: string, request: any[], cb: any) => {
+      const requestedObjects = request
+        .map((entry) => `${entry?.objectId?.type}:${entry?.objectId?.instance}`)
+        .sort()
+        .join(',');
+      if (requestedObjects === '5:478') {
+        cb(null, { values: [makeReadObject(BACNET_ENUMS.ObjectType.BINARY_VALUE, 478, 1)] });
+        return;
+      }
+      cb(null, { values: [] });
+    });
+
+    registry.register('test_unit', mockDevice);
+    await registry.setFreeCoolingEnabled('test_unit', true);
+
+    const writeArgs = mockClient.writeProperty.firstCall.args;
+    expect(writeArgs[1]).to.deep.equal({ type: 5, instance: 478 });
+    expect(writeArgs[3][0].value).to.equal(1);
+    expect(writeArgs[4].priority).to.equal(13);
+  });
+
+  it('writes free cooling temperature setpoint via AV:2071 with priority 13 and verifies the value', async () => {
+    const mockDevice = makeMockDevice();
+    mockClient.readPropertyMultiple.resetBehavior();
+    mockClient.readPropertyMultiple.callsFake((_ip: string, request: any[], cb: any) => {
+      const requestedObjects = request
+        .map((entry) => `${entry?.objectId?.type}:${entry?.objectId?.instance}`)
+        .sort()
+        .join(',');
+      if (requestedObjects === '2:2071') {
+        cb(null, { values: [makeReadObject(BACNET_ENUMS.ObjectType.ANALOG_VALUE, 2071, 24.5)] });
+        return;
+      }
+      cb(null, { values: [] });
+    });
+
+    registry.register('test_unit', mockDevice);
+    await registry.setFreeCoolingTemperatureSetpoint('test_unit', 24.5);
+
+    const writeArgs = mockClient.writeProperty.firstCall.args;
+    expect(writeArgs[1]).to.deep.equal({ type: 2, instance: 2071 });
+    expect(writeArgs[3][0].value).to.equal(24.5);
+    expect(writeArgs[4].priority).to.equal(13);
   });
 
   it('marks BACnet device unavailable after 3 consecutive poll failures', () => {
