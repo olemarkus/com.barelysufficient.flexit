@@ -5,6 +5,10 @@ import {
   FILTER_CHANGE_INTERVAL_MONTHS_SETTING,
   FILTER_CHANGE_INTERVAL_HOURS_LEGACY_SETTING,
   FIREPLACE_DURATION_SETTING,
+  FREE_COOLING_ENABLED_SETTING,
+  FREE_COOLING_TEMPERATURE_SETPOINT_SETTING,
+  FREE_COOLING_OUTSIDE_TEMPERATURE_LIMIT_SETTING,
+  FREE_COOLING_MIN_ON_TIME_SECONDS_SETTING,
   FAN_PROFILE_MODES,
   FAN_PROFILE_SETTING_KEYS,
   FanProfileMode,
@@ -19,8 +23,14 @@ import {
   TARGET_TEMPERATURE_AWAY_SETTING,
   MIN_TARGET_TEMPERATURE_C,
   MAX_TARGET_TEMPERATURE_C,
+  MIN_FREE_COOLING_TEMPERATURE_C,
+  MAX_FREE_COOLING_TEMPERATURE_C,
+  MIN_FREE_COOLING_MIN_ON_TIME_SECONDS,
+  MAX_FREE_COOLING_MIN_ON_TIME_SECONDS,
   normalizeFireplaceDurationMinutes,
   normalizeTargetTemperature,
+  normalizeFreeCoolingTemperature,
+  normalizeFreeCoolingMinOnTimeSeconds,
 } from './UnitRegistry';
 
 const RESET_FILTER_CAPABILITY = 'button.reset_filter';
@@ -29,6 +39,7 @@ const SETTING_SYNC_TOLERANCE = 0.1;
 const REQUIRED_CAPABILITIES = [
   'measure_temperature.exhaust',
   'dehumidification_active',
+  'free_cooling_active',
   RESET_FILTER_CAPABILITY,
   'measure_fan_setpoint_percent',
   'measure_fan_setpoint_percent.extract',
@@ -141,6 +152,16 @@ export abstract class FlexitNordicBaseDevice extends Homey.Device {
       const awayTargetTemperatureChanged = effectiveChangedKeys.includes(
         TARGET_TEMPERATURE_AWAY_SETTING,
       );
+      const freeCoolingEnabledChanged = effectiveChangedKeys.includes(FREE_COOLING_ENABLED_SETTING);
+      const freeCoolingTemperatureSetpointChanged = effectiveChangedKeys.includes(
+        FREE_COOLING_TEMPERATURE_SETPOINT_SETTING,
+      );
+      const freeCoolingOutsideTemperatureLimitChanged = effectiveChangedKeys.includes(
+        FREE_COOLING_OUTSIDE_TEMPERATURE_LIMIT_SETTING,
+      );
+      const freeCoolingMinOnTimeSecondsChanged = effectiveChangedKeys.includes(
+        FREE_COOLING_MIN_ON_TIME_SECONDS_SETTING,
+      );
       const fireplaceDurationChanged = effectiveChangedKeys.includes(FIREPLACE_DURATION_SETTING);
       const changedFanModes = this.getChangedFanModes(effectiveChangedKeys);
       if (
@@ -148,6 +169,10 @@ export abstract class FlexitNordicBaseDevice extends Homey.Device {
         && !legacyHoursChanged
         && !homeTargetTemperatureChanged
         && !awayTargetTemperatureChanged
+        && !freeCoolingEnabledChanged
+        && !freeCoolingTemperatureSetpointChanged
+        && !freeCoolingOutsideTemperatureLimitChanged
+        && !freeCoolingMinOnTimeSecondsChanged
         && !fireplaceDurationChanged
         && changedFanModes.length === 0
       ) return;
@@ -161,6 +186,32 @@ export abstract class FlexitNordicBaseDevice extends Homey.Device {
       );
       await this.maybeHandleTargetTemperatureSetting(
         unitId, 'away', newSettings, awayTargetTemperatureChanged,
+      );
+      await this.maybeHandleFreeCoolingEnabledSetting(
+        unitId, newSettings, freeCoolingEnabledChanged,
+      );
+      await this.maybeHandleFreeCoolingTemperatureSetting(
+        unitId,
+        newSettings,
+        freeCoolingTemperatureSetpointChanged,
+        {
+          settingKey: FREE_COOLING_TEMPERATURE_SETPOINT_SETTING,
+          label: 'free cooling temperature setpoint',
+          update: (nextValue) => Registry.setFreeCoolingTemperatureSetpoint(unitId, nextValue),
+        },
+      );
+      await this.maybeHandleFreeCoolingTemperatureSetting(
+        unitId,
+        newSettings,
+        freeCoolingOutsideTemperatureLimitChanged,
+        {
+          settingKey: FREE_COOLING_OUTSIDE_TEMPERATURE_LIMIT_SETTING,
+          label: 'free cooling outside temperature limit',
+          update: (nextValue) => Registry.setFreeCoolingOutsideTemperatureLimit(unitId, nextValue),
+        },
+      );
+      await this.maybeHandleFreeCoolingMinOnTimeSetting(
+        unitId, newSettings, freeCoolingMinOnTimeSecondsChanged,
       );
       await this.maybeHandleFireplaceDurationSetting(
         unitId, newSettings, fireplaceDurationChanged,
@@ -225,6 +276,106 @@ export abstract class FlexitNordicBaseDevice extends Homey.Device {
       changedFanModes.push(mode);
     }
     return changedFanModes;
+  }
+
+  private async maybeHandleFreeCoolingEnabledSetting(
+    unitId: string,
+    newSettings: Record<string, unknown>,
+    changed: boolean,
+  ) {
+    if (!changed) return;
+
+    const requestedValue = Boolean(newSettings[FREE_COOLING_ENABLED_SETTING]);
+    const currentValue = this.getSetting(FREE_COOLING_ENABLED_SETTING);
+    if (currentValue === requestedValue) return;
+
+    try {
+      this.log(`Updating free cooling enabled=${requestedValue} for unit ${unitId}`);
+      await Registry.setFreeCoolingEnabled(unitId, requestedValue);
+    } catch (error) {
+      this.error('Failed to update free cooling enabled:', error);
+      throw new Error('Failed to update free cooling enabled on the unit.');
+    }
+  }
+
+  private async maybeHandleFreeCoolingTemperatureSetting(
+    unitId: string,
+    newSettings: Record<string, unknown>,
+    changed: boolean,
+    config: {
+      settingKey: string;
+      label: string;
+      update: (value: number) => Promise<void>;
+    },
+  ) {
+    if (!changed) return;
+    const { settingKey, label, update } = config;
+
+    const requestedValue = Number(newSettings[settingKey]);
+    if (!Number.isFinite(requestedValue)) {
+      throw new Error(`${label} must be numeric.`);
+    }
+    if (
+      requestedValue < MIN_FREE_COOLING_TEMPERATURE_C
+      || requestedValue > MAX_FREE_COOLING_TEMPERATURE_C
+    ) {
+      throw new Error(
+        `${label} must be between ${MIN_FREE_COOLING_TEMPERATURE_C}`
+        + ` and ${MAX_FREE_COOLING_TEMPERATURE_C} degC.`,
+      );
+    }
+
+    const normalizedRequestedValue = normalizeFreeCoolingTemperature(requestedValue);
+    const currentValue = Number(this.getSetting(settingKey));
+    if (
+      Number.isFinite(currentValue)
+      && Math.abs(currentValue - normalizedRequestedValue) < SETTING_SYNC_TOLERANCE
+    ) return;
+
+    try {
+      this.log(`Updating ${label} to ${normalizedRequestedValue} for unit ${unitId}`);
+      await update(normalizedRequestedValue);
+    } catch (error) {
+      this.error(`Failed to update ${label}:`, error);
+      throw new Error(`Failed to update ${label} on the unit.`);
+    }
+  }
+
+  private async maybeHandleFreeCoolingMinOnTimeSetting(
+    unitId: string,
+    newSettings: Record<string, unknown>,
+    changed: boolean,
+  ) {
+    if (!changed) return;
+
+    const requestedValue = Number(newSettings[FREE_COOLING_MIN_ON_TIME_SECONDS_SETTING]);
+    if (!Number.isFinite(requestedValue)) {
+      throw new Error('Free cooling minimum on-time must be numeric.');
+    }
+    if (
+      requestedValue < MIN_FREE_COOLING_MIN_ON_TIME_SECONDS
+      || requestedValue > MAX_FREE_COOLING_MIN_ON_TIME_SECONDS
+    ) {
+      throw new Error(
+        `Free cooling minimum on-time must be between ${MIN_FREE_COOLING_MIN_ON_TIME_SECONDS}`
+        + ` and ${MAX_FREE_COOLING_MIN_ON_TIME_SECONDS} seconds.`,
+      );
+    }
+
+    const normalizedRequestedValue = normalizeFreeCoolingMinOnTimeSeconds(requestedValue);
+    const currentValue = Number(this.getSetting(FREE_COOLING_MIN_ON_TIME_SECONDS_SETTING));
+    if (
+      Number.isFinite(currentValue)
+      && Math.abs(currentValue - normalizedRequestedValue) < SETTING_SYNC_TOLERANCE
+    ) return;
+
+    try {
+      this.log(`Updating free cooling minimum on-time to ${normalizedRequestedValue}s for unit ${unitId}`);
+      await Registry.setFreeCoolingMinOnTimeSeconds(unitId, normalizedRequestedValue);
+    } catch (error) {
+      this.error('Failed to update free cooling minimum on-time:', error);
+      throw new Error('Failed to update free cooling minimum on-time on the unit.');
+    }
   }
 
   private async maybeHandleFilterIntervalSetting(

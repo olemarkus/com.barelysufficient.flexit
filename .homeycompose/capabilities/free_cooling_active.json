@@ -1,0 +1,10 @@
+{
+  "type": "boolean",
+  "title": {
+    "en": "Free cooling active"
+  },
+  "icon": "/assets/capabilities/free_cooling_active.svg",
+  "getable": true,
+  "setable": false,
+  "uiComponent": "sensor"
+}

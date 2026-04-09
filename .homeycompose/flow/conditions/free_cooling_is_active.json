@@ -1,0 +1,18 @@
+{
+  "title": {
+    "en": "Free cooling is active"
+  },
+  "titleFormatted": {
+    "en": "Free cooling is active"
+  },
+  "hint": {
+    "en": "Checks whether free cooling is active."
+  },
+  "args": [
+    {
+      "type": "device",
+      "name": "device",
+      "filter": "driver_id=nordic|nordic-cloud"
+    }
+  ]
+}

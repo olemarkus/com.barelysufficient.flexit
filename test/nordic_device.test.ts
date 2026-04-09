@@ -4,6 +4,7 @@ import proxyquire from 'proxyquire';
 
 const EXHAUST_TEMP_CAPABILITY = 'measure_temperature.exhaust';
 const DEHUMIDIFICATION_ACTIVE_CAPABILITY = 'dehumidification_active';
+const FREE_COOLING_ACTIVE_CAPABILITY = 'free_cooling_active';
 const RESET_FILTER_CAPABILITY = 'button.reset_filter';
 const proxyquireStrict = proxyquire.noCallThru().noPreserveCache();
 
@@ -37,6 +38,10 @@ describe('Nordic device', () => {
       resetFilterTimer: sinon.stub().resolves(),
       setFilterChangeInterval: sinon.stub().resolves(),
       setFireplaceVentilationDuration: sinon.stub().resolves(),
+      setFreeCoolingEnabled: sinon.stub().resolves(),
+      setFreeCoolingTemperatureSetpoint: sinon.stub().resolves(),
+      setFreeCoolingOutsideTemperatureLimit: sinon.stub().resolves(),
+      setFreeCoolingMinOnTimeSeconds: sinon.stub().resolves(),
     };
 
     unitRegistryModuleStub = {
@@ -45,9 +50,17 @@ describe('Nordic device', () => {
       FILTER_CHANGE_INTERVAL_HOURS_LEGACY_SETTING: 'filter_change_interval_hours',
       TARGET_TEMPERATURE_HOME_SETTING: 'target_temperature_home',
       TARGET_TEMPERATURE_AWAY_SETTING: 'target_temperature_away',
+      FREE_COOLING_ENABLED_SETTING: 'free_cooling_enabled',
+      FREE_COOLING_TEMPERATURE_SETPOINT_SETTING: 'free_cooling_extract_temp_setpoint',
+      FREE_COOLING_OUTSIDE_TEMPERATURE_LIMIT_SETTING: 'free_cooling_outside_temp_limit',
+      FREE_COOLING_MIN_ON_TIME_SECONDS_SETTING: 'free_cooling_min_on_time_seconds',
       FIREPLACE_DURATION_SETTING: 'fireplace_duration_minutes',
       MIN_TARGET_TEMPERATURE_C: 10,
       MAX_TARGET_TEMPERATURE_C: 30,
+      MIN_FREE_COOLING_TEMPERATURE_C: 10,
+      MAX_FREE_COOLING_TEMPERATURE_C: 30,
+      MIN_FREE_COOLING_MIN_ON_TIME_SECONDS: 0,
+      MAX_FREE_COOLING_MIN_ON_TIME_SECONDS: 18000,
       FAN_PROFILE_MODES: ['home', 'away', 'high', 'fireplace', 'cooker'],
       FAN_PROFILE_SETTING_KEYS: {
         home: { supply: 'fan_profile_home_supply', exhaust: 'fan_profile_home_exhaust' },
@@ -72,6 +85,27 @@ describe('Nordic device', () => {
         const rounded = Math.round(numeric);
         if (rounded < 1 || rounded > 360) {
           throw new Error('Fireplace duration must be between 1 and 360 minutes');
+        }
+        return rounded;
+      },
+      normalizeFreeCoolingTemperature: (value: unknown) => {
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric)) {
+          throw new Error('Free cooling temperature must be numeric');
+        }
+        if (numeric < 10 || numeric > 30) {
+          throw new Error('Free cooling temperature must be between 10 and 30 degC');
+        }
+        return Number((Math.round(numeric * 2) / 2).toFixed(1));
+      },
+      normalizeFreeCoolingMinOnTimeSeconds: (value: unknown) => {
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric)) {
+          throw new Error('Free cooling minimum on-time must be numeric');
+        }
+        const rounded = Math.round(numeric);
+        if (rounded < 0 || rounded > 18000) {
+          throw new Error('Free cooling minimum on-time must be between 0 and 18000 seconds');
         }
         return rounded;
       },
@@ -110,6 +144,7 @@ describe('Nordic device', () => {
     const device = new DeviceClass();
     device.hasCapability.withArgs(EXHAUST_TEMP_CAPABILITY).returns(false);
     device.hasCapability.withArgs(DEHUMIDIFICATION_ACTIVE_CAPABILITY).returns(true);
+    device.hasCapability.withArgs(FREE_COOLING_ACTIVE_CAPABILITY).returns(true);
     device.hasCapability.withArgs(RESET_FILTER_CAPABILITY).returns(true);
 
     await device.onInit();
@@ -122,6 +157,7 @@ describe('Nordic device', () => {
     const device = new DeviceClass();
     device.hasCapability.withArgs(EXHAUST_TEMP_CAPABILITY).returns(true);
     device.hasCapability.withArgs(DEHUMIDIFICATION_ACTIVE_CAPABILITY).returns(true);
+    device.hasCapability.withArgs(FREE_COOLING_ACTIVE_CAPABILITY).returns(true);
     device.hasCapability.withArgs(RESET_FILTER_CAPABILITY).returns(true);
 
     await device.onInit();
@@ -134,6 +170,7 @@ describe('Nordic device', () => {
     const device = new DeviceClass();
     device.hasCapability.withArgs(EXHAUST_TEMP_CAPABILITY).returns(true);
     device.hasCapability.withArgs(DEHUMIDIFICATION_ACTIVE_CAPABILITY).returns(false);
+    device.hasCapability.withArgs(FREE_COOLING_ACTIVE_CAPABILITY).returns(true);
     device.hasCapability.withArgs(RESET_FILTER_CAPABILITY).returns(true);
 
     await device.onInit();
@@ -142,11 +179,25 @@ describe('Nordic device', () => {
     expect(registryStub.register.calledOnceWithExactly('test_unit', device)).to.equal(true);
   });
 
+  it('adds free cooling capability during onInit when missing', async () => {
+    const device = new DeviceClass();
+    device.hasCapability.withArgs(EXHAUST_TEMP_CAPABILITY).returns(true);
+    device.hasCapability.withArgs(DEHUMIDIFICATION_ACTIVE_CAPABILITY).returns(true);
+    device.hasCapability.withArgs(FREE_COOLING_ACTIVE_CAPABILITY).returns(false);
+    device.hasCapability.withArgs(RESET_FILTER_CAPABILITY).returns(true);
+
+    await device.onInit();
+
+    expect(device.addCapability.calledOnceWithExactly(FREE_COOLING_ACTIVE_CAPABILITY)).to.equal(true);
+    expect(registryStub.register.calledOnceWithExactly('test_unit', device)).to.equal(true);
+  });
+
   it('logs capability migration errors and continues initialization', async () => {
     const device = new DeviceClass();
     const err = new Error('add failed');
     device.hasCapability.withArgs(EXHAUST_TEMP_CAPABILITY).returns(false);
     device.hasCapability.withArgs(DEHUMIDIFICATION_ACTIVE_CAPABILITY).returns(true);
+    device.hasCapability.withArgs(FREE_COOLING_ACTIVE_CAPABILITY).returns(true);
     device.hasCapability.withArgs(RESET_FILTER_CAPABILITY).returns(true);
     device.addCapability.rejects(err);
 
@@ -522,6 +573,75 @@ describe('Nordic device', () => {
     expect(thrown).to.not.equal(null);
     expect(thrown?.message).to.contain('between 10 and 30');
     expect(registryStub.setTemperatureSetpoint.called).to.equal(false);
+  });
+
+  it('writes free cooling settings through the shared settings handler', async () => {
+    const device = new DeviceClass();
+    device.hasCapability.withArgs(EXHAUST_TEMP_CAPABILITY).returns(true);
+    device.hasCapability.withArgs(RESET_FILTER_CAPABILITY).returns(true);
+    device.getSetting.withArgs('free_cooling_enabled').returns(false);
+    device.getSetting.withArgs('free_cooling_extract_temp_setpoint').returns(22);
+    device.getSetting.withArgs('free_cooling_outside_temp_limit').returns(18);
+    device.getSetting.withArgs('free_cooling_min_on_time_seconds').returns(600);
+    await device.onInit();
+
+    await device.onSettings({
+      newSettings: {
+        free_cooling_enabled: true,
+        free_cooling_extract_temp_setpoint: 21.26,
+        free_cooling_outside_temp_limit: 17.74,
+        free_cooling_min_on_time_seconds: 900.2,
+      },
+      changedKeys: [
+        'free_cooling_enabled',
+        'free_cooling_extract_temp_setpoint',
+        'free_cooling_outside_temp_limit',
+        'free_cooling_min_on_time_seconds',
+      ],
+    });
+
+    expect(registryStub.setFreeCoolingEnabled.calledOnceWithExactly('test_unit', true)).to.equal(true);
+    expect(
+      registryStub.setFreeCoolingTemperatureSetpoint.calledOnceWithExactly('test_unit', 21.5),
+    ).to.equal(true);
+    expect(
+      registryStub.setFreeCoolingOutsideTemperatureLimit.calledOnceWithExactly('test_unit', 17.5),
+    ).to.equal(true);
+    expect(
+      registryStub.setFreeCoolingMinOnTimeSeconds.calledOnceWithExactly('test_unit', 900),
+    ).to.equal(true);
+  });
+
+  it('rejects out-of-range free cooling settings', async () => {
+    const device = new DeviceClass();
+    device.hasCapability.withArgs(EXHAUST_TEMP_CAPABILITY).returns(true);
+    device.hasCapability.withArgs(RESET_FILTER_CAPABILITY).returns(true);
+    await device.onInit();
+
+    let thrownTemperature: Error | null = null;
+    try {
+      await device.onSettings({
+        newSettings: { free_cooling_extract_temp_setpoint: 31 },
+        changedKeys: ['free_cooling_extract_temp_setpoint'],
+      });
+    } catch (error) {
+      thrownTemperature = error as Error;
+    }
+
+    let thrownRuntime: Error | null = null;
+    try {
+      await device.onSettings({
+        newSettings: { free_cooling_min_on_time_seconds: 18001 },
+        changedKeys: ['free_cooling_min_on_time_seconds'],
+      });
+    } catch (error) {
+      thrownRuntime = error as Error;
+    }
+
+    expect(thrownTemperature?.message).to.contain('between 10 and 30');
+    expect(thrownRuntime?.message).to.contain('between 0 and 18000 seconds');
+    expect(registryStub.setFreeCoolingTemperatureSetpoint.called).to.equal(false);
+    expect(registryStub.setFreeCoolingMinOnTimeSeconds.called).to.equal(false);
   });
 
   it('writes changed fan profile settings by mode', async () => {

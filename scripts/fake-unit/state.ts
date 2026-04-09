@@ -2,6 +2,7 @@ import {
   APPLICATION_TAG,
   DEFAULT_POINT_VALUES,
   FanMode,
+  FREE_COOLING_ACTIVE_MODE_VALUE,
   MODE_RF_VALUES,
   OBJECT_TYPE,
   OPERATION_MODE_VALUES,
@@ -566,6 +567,20 @@ export class FakeNordicUnitState {
     else if (this.mode === 'high') operationMode = OPERATION_MODE_VALUES.HIGH;
     else operationMode = OPERATION_MODE_VALUES.AWAY;
     this.setByName('operation_mode', operationMode);
+
+    const freeCoolingEnabled = asInteger(this.getByName('free_cooling_enabled')) === 1;
+    const freeCoolingOutsideTemperatureLimit = this.getByName('free_cooling_outside_temp_limit');
+    const freeCoolingRoomSetpoint = this.getByName('free_cooling_setpoint_room');
+    const freeCoolingActive = freeCoolingEnabled
+      && !this.fireplaceVentilationActive
+      && this.rapidRemainingMinutes <= 0
+      && !cookerHoodActive
+      && this.getByName('temp_outside') <= freeCoolingOutsideTemperatureLimit
+      && this.getByName('temp_room') >= freeCoolingRoomSetpoint;
+    this.setByName(
+      'actual_ventilation_mode',
+      freeCoolingActive ? FREE_COOLING_ACTIVE_MODE_VALUE : operationMode,
+    );
 
     const fanTargets = this.targetFanPercent(this.mode, cookerHoodActive);
     this.setByName('fan_speed_supply_percent', fanTargets.supply);

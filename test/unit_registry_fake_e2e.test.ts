@@ -48,6 +48,12 @@ const DEFAULT_TARGET_TEMPERATURE_SETTINGS: Record<string, number> = {
   target_temperature_home: 20,
   target_temperature_away: 18,
 };
+const DEFAULT_FREE_COOLING_SETTINGS: Record<string, number | boolean> = {
+  free_cooling_enabled: false,
+  free_cooling_extract_temp_setpoint: 22,
+  free_cooling_outside_temp_limit: 18,
+  free_cooling_min_on_time_seconds: 600,
+};
 
 function createState() {
   return new FakeNordicUnitState({
@@ -77,6 +83,7 @@ function makeMockDevice(serverIp: string, serverPort: number, filterIntervalHour
     fireplace_duration_minutes: 10,
     ...DEFAULT_FAN_SETTINGS,
     ...DEFAULT_TARGET_TEMPERATURE_SETTINGS,
+    ...DEFAULT_FREE_COOLING_SETTINGS,
   };
 
   const applySettings = async (settings: Record<string, any>) => {
@@ -664,6 +671,63 @@ describe('UnitRegistry fake-unit e2e', function unitRegistryFakeUdpE2e() {
     expect(inactive).to.equal(false);
   });
 
+  it('publishes free cooling capability from observed BACnet points', async () => {
+    const device = makeMockDevice(SERVER_BIND_ADDRESS, serverPort, 4380);
+    registry.register('test_unit', device);
+
+    (state as any).setSimulatedPoint('free_cooling_enabled', 1);
+    (state as any).setSimulatedPoint('free_cooling_setpoint_room', 22);
+    (state as any).setSimulatedPoint('free_cooling_outside_temp_limit', 18);
+    (state as any).setSimulatedPoint('temp_room', 24);
+    (state as any).setSimulatedPoint('temp_outside', 12);
+    (registry as any).pollUnit('test_unit');
+
+    await waitFor(() => device.setCapabilityValue.getCalls().some((call: any) => (
+      call.args[0] === 'free_cooling_active' && call.args[1] === true
+    )));
+
+    (state as any).setSimulatedPoint('free_cooling_enabled', 0);
+    device.setCapabilityValue.resetHistory();
+    (registry as any).pollUnit('test_unit');
+
+    await waitFor(() => device.setCapabilityValue.getCalls().some((call: any) => (
+      call.args[0] === 'free_cooling_active' && call.args[1] === false
+    )));
+  });
+
+  it('reads free cooling state directly from BACnet when requested', async () => {
+    const device = makeMockDevice(SERVER_BIND_ADDRESS, serverPort, 4380);
+    registry.register('test_unit', device);
+
+    await waitFor(() => {
+      const unit = (registry as any).units.get('test_unit');
+      return Boolean(unit);
+    });
+
+    const unit = (registry as any).units.get('test_unit');
+    if (!unit) throw new Error('Expected unit to exist');
+
+    unit.freeCoolingActive = undefined;
+    unit.freeCoolingStateInitialized = false;
+    unit.probeValues.delete('19:19');
+
+    (state as any).setSimulatedPoint('free_cooling_enabled', 1);
+    (state as any).setSimulatedPoint('free_cooling_setpoint_room', 22);
+    (state as any).setSimulatedPoint('free_cooling_outside_temp_limit', 18);
+    (state as any).setSimulatedPoint('temp_room', 24);
+    (state as any).setSimulatedPoint('temp_outside', 12);
+    const active = await registry.getFreeCoolingActive('test_unit');
+    expect(active).to.equal(true);
+
+    unit.freeCoolingActive = undefined;
+    unit.freeCoolingStateInitialized = false;
+    unit.probeValues.delete('19:19');
+
+    (state as any).setSimulatedPoint('free_cooling_enabled', 0);
+    const inactive = await registry.getFreeCoolingActive('test_unit');
+    expect(inactive).to.equal(false);
+  });
+
   it('writes home fan profile using AV 1836/1841 with priority 16', async () => {
     const device = makeMockDevice(SERVER_BIND_ADDRESS, serverPort, 4380);
     registry.register('test_unit', device);
@@ -712,6 +776,46 @@ describe('UnitRegistry fake-unit e2e', function unitRegistryFakeUdpE2e() {
     ));
     expect(runtimeWrite).to.not.equal(undefined);
     expect(device.getSetting('fireplace_duration_minutes')).to.equal(27);
+  });
+
+  it('writes free cooling settings with priority 13 and syncs settings', async () => {
+    const device = makeMockDevice(SERVER_BIND_ADDRESS, serverPort, 4380);
+    registry.register('test_unit', device);
+
+    await registry.setFreeCoolingEnabled('test_unit', true);
+    await registry.setFreeCoolingTemperatureSetpoint('test_unit', 24.5);
+    await registry.setFreeCoolingOutsideTemperatureLimit('test_unit', 16.5);
+    await registry.setFreeCoolingMinOnTimeSeconds('test_unit', 1200);
+
+    await waitFor(() => {
+      const enabled = state.readPresentValue(OBJECT_TYPE.BINARY_VALUE, 478, PROPERTY_ID.PRESENT_VALUE);
+      const setpoint = state.readPresentValue(OBJECT_TYPE.ANALOG_VALUE, 2071, PROPERTY_ID.PRESENT_VALUE);
+      const outside = state.readPresentValue(OBJECT_TYPE.ANALOG_VALUE, 1934, PROPERTY_ID.PRESENT_VALUE);
+      const runtime = state.readPresentValue(OBJECT_TYPE.POSITIVE_INTEGER_VALUE, 296, PROPERTY_ID.PRESENT_VALUE);
+      return enabled.ok
+        && setpoint.ok
+        && outside.ok
+        && runtime.ok
+        && enabled.value.value === 1
+        && Math.abs(setpoint.value.value - 24.5) < 0.1
+        && Math.abs(outside.value.value - 16.5) < 0.1
+        && runtime.value.value === 1200;
+    });
+
+    const writes = writePresentValueSpy.getCalls().filter((call: any) => (
+      call.args[2] === PROPERTY_ID.PRESENT_VALUE
+      && call.args[4] === 13
+      && (
+        (call.args[0] === OBJECT_TYPE.BINARY_VALUE && call.args[1] === 478)
+        || (call.args[0] === OBJECT_TYPE.ANALOG_VALUE && (call.args[1] === 2071 || call.args[1] === 1934))
+        || (call.args[0] === OBJECT_TYPE.POSITIVE_INTEGER_VALUE && call.args[1] === 296)
+      )
+    ));
+    expect(writes.length).to.equal(4);
+    expect(device.getSetting('free_cooling_enabled')).to.equal(true);
+    expect(device.getSetting('free_cooling_extract_temp_setpoint')).to.equal(24.5);
+    expect(device.getSetting('free_cooling_outside_temp_limit')).to.equal(16.5);
+    expect(device.getSetting('free_cooling_min_on_time_seconds')).to.equal(1200);
   });
 
   it('does not re-trigger fireplace when fireplace is already active', async () => {

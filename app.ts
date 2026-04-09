@@ -25,12 +25,14 @@ export = class App extends Homey.App {
     this.registerFanSetpointChangedFlowTrigger();
     this.registerHeatingCoilStateFlowTrigger();
     this.registerDehumidificationStateFlowTrigger();
+    this.registerFreeCoolingStateFlowTrigger();
     this.registerGlobalErrorHandlers();
     this.registerFanProfileActionCard();
     this.registerFireplaceDurationActionCard();
     this.registerHeatingCoilActionCards();
     this.registerHeatingCoilConditionCard();
     this.registerDehumidificationConditionCard();
+    this.registerFreeCoolingConditionCard();
   }
 
   private registerGlobalErrorHandlers() {
@@ -92,6 +94,22 @@ export = class App extends Homey.App {
         {},
       ).catch((error: unknown) => {
         this.error('Failed to trigger dehumidification state flow:', error);
+      });
+    });
+  }
+
+  private registerFreeCoolingStateFlowTrigger() {
+    const freeCoolingActivatedCard = this.homey.flow.getDeviceTriggerCard('free_cooling_activated');
+    const freeCoolingDeactivatedCard = this.homey.flow.getDeviceTriggerCard('free_cooling_deactivated');
+    Registry.setFreeCoolingStateChangedHandler((event) => {
+      const card = event.active
+        ? freeCoolingActivatedCard
+        : freeCoolingDeactivatedCard;
+      card.trigger(
+        event.device as unknown as Homey.Device,
+        {},
+      ).catch((error: unknown) => {
+        this.error('Failed to trigger free cooling state flow:', error);
       });
     });
   }
@@ -177,6 +195,15 @@ export = class App extends Homey.App {
       const device = args?.device as Homey.Device | undefined;
       const unitId = this.resolveUnitId(device);
       return Registry.getDehumidificationActive(unitId);
+    });
+  }
+
+  private registerFreeCoolingConditionCard() {
+    const freeCoolingIsActiveCard = this.homey.flow.getConditionCard('free_cooling_is_active');
+    freeCoolingIsActiveCard.registerRunListener(async (args: any) => {
+      const device = args?.device as Homey.Device | undefined;
+      const unitId = this.resolveUnitId(device);
+      return Registry.getFreeCoolingActive(unitId);
     });
   }
 };

@@ -109,6 +109,16 @@ export const SUPPORTED_POINTS: SupportedPoint[] = [
     { min: 1, max: 4, requiresPriority13: true },
   ),
   point(
+    'actual_ventilation_mode',
+    'MULTI_STATE_VALUE',
+    19,
+    'enum',
+    'R',
+    'observed',
+    'Actual ventilation mode',
+    { min: 1, max: 10 },
+  ),
+  point(
     'heating_delta_setpoint_home',
     'ANALOG_VALUE',
     1921,
@@ -277,6 +287,65 @@ export const SUPPORTED_POINTS: SupportedPoint[] = [
     'observed',
     'Humidity present fan control',
     { min: 0, max: 100, units: '%' },
+  ),
+  point(
+    'free_cooling_enabled',
+    'BINARY_VALUE',
+    478,
+    'enum',
+    'RW',
+    'observed',
+    'Enable free cooling',
+    {
+      min: 0,
+      max: 1,
+      requiresPriority13: true,
+    },
+  ),
+  point(
+    'free_cooling_outside_temp_limit',
+    'ANALOG_VALUE',
+    1934,
+    'real',
+    'RW',
+    'observed',
+    'Outside air temperature limit for free cooling',
+    {
+      min: 10,
+      max: 30,
+      units: 'degC',
+      requiresPriority13: true,
+    },
+  ),
+  point(
+    'free_cooling_setpoint_room',
+    'ANALOG_VALUE',
+    2071,
+    'real',
+    'RW',
+    'observed',
+    'Free cooling setpoint room',
+    {
+      min: 10,
+      max: 30,
+      units: 'degC',
+      requiresPriority13: true,
+    },
+  ),
+  point(
+    'free_cooling_min_on_time_seconds',
+    'POSITIVE_INTEGER_VALUE',
+    296,
+    'unsigned',
+    'RW',
+    'observed',
+    'Free cooling minimum on-time',
+    {
+      min: 0,
+      max: 18000,
+      units: 'sec',
+      requiresPriority13: true,
+    },
   ),
   point(
     'extract_pressure',
@@ -761,6 +830,7 @@ export const OPERATION_MODE_VALUES = {
   FIREPLACE: 6,
   TEMPORARY_HIGH: 7,
 } as const;
+export const FREE_COOLING_ACTIVE_MODE_VALUE = 10;
 
 export type FanMode = 'away' | 'home' | 'high' | 'fireplace';
 
@@ -799,6 +869,7 @@ function key(typeName: string, instance: number): string {
 export const DEFAULT_POINT_VALUES: Record<string, number> = {
   [key('BINARY_VALUE', 50)]: 1,
   [key('BINARY_VALUE', 445)]: 1,
+  [key('MULTI_STATE_VALUE', 19)]: OPERATION_MODE_VALUES.HOME,
   [key('MULTI_STATE_VALUE', 361)]: OPERATION_MODE_VALUES.HOME,
   [key('MULTI_STATE_VALUE', 42)]: VENTILATION_MODE_VALUES.HOME,
   [key('ANALOG_VALUE', 1921)]: 1,
@@ -817,6 +888,10 @@ export const DEFAULT_POINT_VALUES: Record<string, number> = {
   [key('ANALOG_INPUT', 5)]: 3100,
   [key('BINARY_VALUE', 653)]: 0,
   [key('ANALOG_VALUE', 1870)]: 0,
+  [key('BINARY_VALUE', 478)]: 0,
+  [key('ANALOG_VALUE', 1934)]: 18,
+  [key('ANALOG_VALUE', 2071)]: 22,
+  [key('POSITIVE_INTEGER_VALUE', 296)]: 600,
   [key('ANALOG_INPUT', 72)]: 0,
   [key('ANALOG_INPUT', 73)]: 0,
   [key('ANALOG_INPUT', 11)]: 17,

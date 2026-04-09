@@ -42,11 +42,20 @@ export const MAX_TARGET_TEMPERATURE_C = 30;
 const TARGET_TEMPERATURE_STEP_C = 0.5;
 export const TARGET_TEMPERATURE_HOME_SETTING = 'target_temperature_home';
 export const TARGET_TEMPERATURE_AWAY_SETTING = 'target_temperature_away';
+export const FREE_COOLING_ENABLED_SETTING = 'free_cooling_enabled';
+export const FREE_COOLING_TEMPERATURE_SETPOINT_SETTING = 'free_cooling_extract_temp_setpoint';
+export const FREE_COOLING_OUTSIDE_TEMPERATURE_LIMIT_SETTING = 'free_cooling_outside_temp_limit';
+export const FREE_COOLING_MIN_ON_TIME_SECONDS_SETTING = 'free_cooling_min_on_time_seconds';
 export const FIREPLACE_DURATION_SETTING = 'fireplace_duration_minutes';
 const BACNET_IP_SETTING = 'ip';
 const BACNET_PORT_SETTING = 'bacnetPort';
 export const MIN_FIREPLACE_DURATION_MINUTES = 1;
 export const MAX_FIREPLACE_DURATION_MINUTES = 360;
+export const MIN_FREE_COOLING_TEMPERATURE_C = 10;
+export const MAX_FREE_COOLING_TEMPERATURE_C = 30;
+const FREE_COOLING_TEMPERATURE_STEP_C = 0.5;
+export const MIN_FREE_COOLING_MIN_ON_TIME_SECONDS = 0;
+export const MAX_FREE_COOLING_MIN_ON_TIME_SECONDS = 18_000;
 type TargetTemperatureMode = 'home' | 'away';
 export const FILTER_CHANGE_INTERVAL_MONTHS_SETTING = 'filter_change_interval_months';
 export const FILTER_CHANGE_INTERVAL_HOURS_LEGACY_SETTING = 'filter_change_interval_hours';
@@ -190,15 +199,21 @@ const TRIGGER_VALUE = 2;
 const HEATING_COIL_OFF = 0;
 const HEATING_COIL_ON = 1;
 const COOKER_HOOD_ON = 1;
+const FREE_COOLING_ACTIVE_MODE_VALUE = 10;
 
 const BACNET_OBJECTS = {
   comfortButton: { type: OBJECT_TYPE.BINARY_VALUE, instance: 50 },
   comfortButtonDelay: { type: OBJECT_TYPE.POSITIVE_INTEGER_VALUE, instance: 318 },
   ventilationMode: { type: OBJECT_TYPE.MULTI_STATE_VALUE, instance: 42 },
   operationMode: { type: OBJECT_TYPE.MULTI_STATE_VALUE, instance: 361 },
+  actualVentilationMode: { type: OBJECT_TYPE.MULTI_STATE_VALUE, instance: 19 },
   heatingCoilEnable: { type: OBJECT_TYPE.BINARY_VALUE, instance: 445 },
   dehumidificationSlopeRequest: { type: OBJECT_TYPE.BINARY_VALUE, instance: 653 },
   dehumidificationFanControl: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 1870 },
+  freeCoolingEnabled: { type: OBJECT_TYPE.BINARY_VALUE, instance: 478 },
+  freeCoolingOutsideTemperatureLimit: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 1934 },
+  freeCoolingTemperatureSetpoint: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 2071 },
+  freeCoolingMinOnTime: { type: OBJECT_TYPE.POSITIVE_INTEGER_VALUE, instance: 296 },
   rapidVentilationTrigger: { type: OBJECT_TYPE.MULTI_STATE_VALUE, instance: 357 },
   rapidVentilationRuntime: { type: OBJECT_TYPE.POSITIVE_INTEGER_VALUE, instance: 293 },
   rapidVentilationRemaining: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 2031 },
@@ -269,6 +284,26 @@ const DEHUMIDIFICATION_SLOPE_REQUEST_KEY = objectKey(
   BACNET_OBJECTS.dehumidificationSlopeRequest.type,
   BACNET_OBJECTS.dehumidificationSlopeRequest.instance,
 );
+const FREE_COOLING_ENABLED_KEY = objectKey(
+  BACNET_OBJECTS.freeCoolingEnabled.type,
+  BACNET_OBJECTS.freeCoolingEnabled.instance,
+);
+const FREE_COOLING_OUTSIDE_TEMPERATURE_LIMIT_KEY = objectKey(
+  BACNET_OBJECTS.freeCoolingOutsideTemperatureLimit.type,
+  BACNET_OBJECTS.freeCoolingOutsideTemperatureLimit.instance,
+);
+const FREE_COOLING_TEMPERATURE_SETPOINT_KEY = objectKey(
+  BACNET_OBJECTS.freeCoolingTemperatureSetpoint.type,
+  BACNET_OBJECTS.freeCoolingTemperatureSetpoint.instance,
+);
+const FREE_COOLING_MIN_ON_TIME_KEY = objectKey(
+  BACNET_OBJECTS.freeCoolingMinOnTime.type,
+  BACNET_OBJECTS.freeCoolingMinOnTime.instance,
+);
+const ACTUAL_VENTILATION_MODE_KEY = objectKey(
+  BACNET_OBJECTS.actualVentilationMode.type,
+  BACNET_OBJECTS.actualVentilationMode.instance,
+);
 const TARGET_TEMPERATURE_MODE_PROBE_KEY_MAP: ReadonlyArray<readonly [string, string]> = [
   [OPERATION_MODE_KEY, 'operation_mode'],
   [VENTILATION_MODE_KEY, 'ventilation_mode'],
@@ -304,6 +339,7 @@ const CAPABILITY_MAPPINGS = [
   { dataKey: 'measure_fan_speed_percent.extract', capability: 'measure_fan_speed_percent.extract' },
 ] as const;
 const DEHUMIDIFICATION_ACTIVE_CAPABILITY = 'dehumidification_active';
+const FREE_COOLING_ACTIVE_CAPABILITY = 'free_cooling_active';
 
 const MODE_RF_INPUT_MAP: Record<number, 'home' | 'away' | 'high' | 'fireplace'> = {
   3: 'high',
@@ -382,10 +418,65 @@ function resolveDehumidificationActive(data: Record<string, number>): boolean | 
   );
 }
 
+function resolveFreeCoolingEnabled(value: number | undefined): boolean | undefined {
+  if (value === undefined || !Number.isFinite(value)) return undefined;
+  return Math.round(value) !== 0;
+}
+
+function resolveFreeCoolingActive(data: Record<string, number>): boolean | undefined {
+  const actualVentilationMode = data.free_cooling_actual_mode;
+  if (actualVentilationMode === undefined || !Number.isFinite(actualVentilationMode)) {
+    return undefined;
+  }
+  return Math.round(actualVentilationMode) === FREE_COOLING_ACTIVE_MODE_VALUE;
+}
+
 export function normalizeTargetTemperature(value: number): number {
   const clamped = clamp(value, MIN_TARGET_TEMPERATURE_C, MAX_TARGET_TEMPERATURE_C);
   const stepped = Math.round(clamped / TARGET_TEMPERATURE_STEP_C) * TARGET_TEMPERATURE_STEP_C;
   return Number(stepped.toFixed(1));
+}
+
+export function normalizeFreeCoolingTemperature(value: unknown): number {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    throw new Error('Free cooling temperature must be numeric');
+  }
+
+  const clamped = clamp(
+    numeric,
+    MIN_FREE_COOLING_TEMPERATURE_C,
+    MAX_FREE_COOLING_TEMPERATURE_C,
+  );
+  if (clamped !== numeric) {
+    throw new Error(
+      `Free cooling temperature must be between ${MIN_FREE_COOLING_TEMPERATURE_C}`
+      + ` and ${MAX_FREE_COOLING_TEMPERATURE_C} degC`,
+    );
+  }
+
+  const stepped = Math.round(clamped / FREE_COOLING_TEMPERATURE_STEP_C)
+    * FREE_COOLING_TEMPERATURE_STEP_C;
+  return Number(stepped.toFixed(1));
+}
+
+export function normalizeFreeCoolingMinOnTimeSeconds(value: unknown): number {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    throw new Error('Free cooling minimum on-time must be numeric');
+  }
+
+  const rounded = Math.round(numeric);
+  if (
+    rounded < MIN_FREE_COOLING_MIN_ON_TIME_SECONDS
+    || rounded > MAX_FREE_COOLING_MIN_ON_TIME_SECONDS
+  ) {
+    throw new Error(
+      `Free cooling minimum on-time must be between ${MIN_FREE_COOLING_MIN_ON_TIME_SECONDS}`
+      + ` and ${MAX_FREE_COOLING_MIN_ON_TIME_SECONDS} seconds`,
+    );
+  }
+  return rounded;
 }
 
 export function normalizeFireplaceDurationMinutes(value: unknown): number {
@@ -507,6 +598,8 @@ interface UnitState {
   currentFanSetpointsInitialized: boolean;
   dehumidificationActive?: boolean;
   dehumidificationStateInitialized: boolean;
+  freeCoolingActive?: boolean;
+  freeCoolingStateInitialized: boolean;
   heatingCoilEnabled?: boolean;
   heatingCoilStateInitialized: boolean;
 }
@@ -578,6 +671,11 @@ interface DehumidificationStateChangedEvent {
   active: boolean;
 }
 
+interface FreeCoolingStateChangedEvent {
+  device: FlexitDevice;
+  active: boolean;
+}
+
 function presentValueRequest(objectId: { type: number; instance: number }) {
   return {
     objectId,
@@ -613,6 +711,10 @@ function buildPollRequest() {
     presentValueRequest({ type: OBJECT_TYPE.ANALOG_OUTPUT, instance: 4 }), // Fan Speed % Extract
     presentValueRequest(BACNET_OBJECTS.dehumidificationFanControl),
     presentValueRequest(BACNET_OBJECTS.dehumidificationSlopeRequest),
+    presentValueRequest(BACNET_OBJECTS.freeCoolingEnabled),
+    presentValueRequest(BACNET_OBJECTS.freeCoolingTemperatureSetpoint),
+    presentValueRequest(BACNET_OBJECTS.freeCoolingOutsideTemperatureLimit),
+    presentValueRequest(BACNET_OBJECTS.freeCoolingMinOnTime),
     presentValueRequest(FAN_PROFILE_OBJECTS.home.supply), // Setpoint supply HOME
     presentValueRequest(FAN_PROFILE_OBJECTS.home.exhaust), // Setpoint exhaust HOME
     presentValueRequest(FAN_PROFILE_OBJECTS.away.supply), // Setpoint supply AWAY
@@ -629,6 +731,7 @@ function buildPollRequest() {
     // Mode / comfort
     presentValueRequest(BACNET_OBJECTS.comfortButton),
     presentValueRequest(BACNET_OBJECTS.comfortButtonDelay),
+    presentValueRequest(BACNET_OBJECTS.actualVentilationMode),
     presentValueRequest(BACNET_OBJECTS.ventilationMode),
     presentValueRequest(BACNET_OBJECTS.operationMode),
     presentValueRequest(BACNET_OBJECTS.rapidVentilationTrigger),
@@ -681,6 +784,10 @@ const POLL_VALUE_MAPPINGS: Record<string, (value: number, target: PollParseTarge
   [objectKey(OBJECT_TYPE.ANALOG_OUTPUT, 4)]: mapPollValue('measure_fan_speed_percent.extract'),
   [DEHUMIDIFICATION_FAN_CONTROL_KEY]: mapPollValue('dehumidification_fan_control'),
   [DEHUMIDIFICATION_SLOPE_REQUEST_KEY]: mapPollValue('dehumidification_request_by_slope'),
+  [FREE_COOLING_ENABLED_KEY]: mapPollValue('free_cooling_enabled'),
+  [FREE_COOLING_TEMPERATURE_SETPOINT_KEY]: mapPollValue('free_cooling_temperature_setpoint'),
+  [FREE_COOLING_OUTSIDE_TEMPERATURE_LIMIT_KEY]: mapPollValue('free_cooling_outside_temperature_limit'),
+  [FREE_COOLING_MIN_ON_TIME_KEY]: mapPollValue('free_cooling_min_on_time_seconds'),
   [objectKey(
     FAN_PROFILE_OBJECTS.home.supply.type,
     FAN_PROFILE_OBJECTS.home.supply.instance,
@@ -725,6 +832,7 @@ const POLL_VALUE_MAPPINGS: Record<string, (value: number, target: PollParseTarge
   [objectKey(OBJECT_TYPE.ANALOG_VALUE, 286)]: mapPollValue('filter_limit'),
   [objectKey(OBJECT_TYPE.BINARY_VALUE, 50)]: mapPollValue('comfort_button'),
   [objectKey(OBJECT_TYPE.POSITIVE_INTEGER_VALUE, 318)]: mapPollValue('comfort_delay'),
+  [ACTUAL_VENTILATION_MODE_KEY]: mapPollValue('free_cooling_actual_mode'),
   [objectKey(OBJECT_TYPE.MULTI_STATE_VALUE, 42)]: mapPollValue('ventilation_mode'),
   [objectKey(OBJECT_TYPE.MULTI_STATE_VALUE, 361)]: mapPollValue('operation_mode'),
   [objectKey(
@@ -748,6 +856,7 @@ export class UnitRegistry {
     private readonly dependencies: RegistryDependencies;
     private fanSetpointChangedHandler?: (event: FanSetpointChangedEvent) => void;
     private dehumidificationStateChangedHandler?: (event: DehumidificationStateChangedEvent) => void;
+    private freeCoolingStateChangedHandler?: (event: FreeCoolingStateChangedEvent) => void;
     private heatingCoilStateChangedHandler?: (event: HeatingCoilStateChangedEvent) => void;
 
     constructor(dependencies?: Partial<RegistryDependencies>) {
@@ -771,6 +880,10 @@ export class UnitRegistry {
       handler?: (event: DehumidificationStateChangedEvent) => void,
     ) {
       this.dehumidificationStateChangedHandler = handler;
+    }
+
+    setFreeCoolingStateChangedHandler(handler?: (event: FreeCoolingStateChangedEvent) => void) {
+      this.freeCoolingStateChangedHandler = handler;
     }
 
     setHeatingCoilStateChangedHandler(handler?: (event: HeatingCoilStateChangedEvent) => void) {
@@ -867,6 +980,8 @@ export class UnitRegistry {
           currentFanSetpointsInitialized: false,
           dehumidificationActive: undefined,
           dehumidificationStateInitialized: false,
+          freeCoolingActive: undefined,
+          freeCoolingStateInitialized: false,
           heatingCoilEnabled: undefined,
           heatingCoilStateInitialized: false,
         };
@@ -933,6 +1048,8 @@ export class UnitRegistry {
           currentFanSetpointsInitialized: false,
           dehumidificationActive: undefined,
           dehumidificationStateInitialized: false,
+          freeCoolingActive: undefined,
+          freeCoolingStateInitialized: false,
           heatingCoilEnabled: undefined,
           heatingCoilStateInitialized: false,
         };
@@ -1135,6 +1252,295 @@ export class UnitRegistry {
           }
         }
       }));
+    }
+
+    async setFreeCoolingEnabled(unitId: string, enabled: boolean) {
+      const unit = this.units.get(unitId);
+      if (!unit) throw new Error('Unit not found');
+
+      const expectedEnabled = Boolean(enabled);
+      const currentEnabled = resolveFreeCoolingEnabled(unit.probeValues.get(FREE_COOLING_ENABLED_KEY));
+      if (currentEnabled === expectedEnabled) {
+        this.log(
+          `[UnitRegistry] Skipping free cooling enabled write — already ${expectedEnabled}`
+          + ` on ${unit.unitId}`,
+        );
+        return;
+      }
+
+      await this.writeFreeCoolingBooleanSetting(unit, {
+        objectId: BACNET_OBJECTS.freeCoolingEnabled,
+        settingKey: FREE_COOLING_ENABLED_SETTING,
+        expectedEnabled,
+        label: 'free cooling enabled',
+      });
+    }
+
+    async setFreeCoolingTemperatureSetpoint(unitId: string, value: number) {
+      const unit = this.units.get(unitId);
+      if (!unit) throw new Error('Unit not found');
+
+      const normalizedValue = normalizeFreeCoolingTemperature(value);
+      const currentValue = unit.probeValues.get(FREE_COOLING_TEMPERATURE_SETPOINT_KEY);
+      if (
+        currentValue !== undefined
+        && valuesMatch(normalizeFreeCoolingTemperature(currentValue), normalizedValue)
+      ) {
+        this.log(
+          `[UnitRegistry] Skipping free cooling setpoint write — already ${normalizedValue}`
+          + ` on ${unit.unitId}`,
+        );
+        return;
+      }
+
+      await this.writeFreeCoolingNumericSetting(unit, {
+        objectId: BACNET_OBJECTS.freeCoolingTemperatureSetpoint,
+        settingKey: FREE_COOLING_TEMPERATURE_SETPOINT_SETTING,
+        expectedValue: normalizedValue,
+        normalize: normalizeFreeCoolingTemperature,
+        tag: BacnetEnums.ApplicationTags.REAL,
+        label: 'free cooling temperature setpoint',
+      });
+    }
+
+    async setFreeCoolingOutsideTemperatureLimit(unitId: string, value: number) {
+      const unit = this.units.get(unitId);
+      if (!unit) throw new Error('Unit not found');
+
+      const normalizedValue = normalizeFreeCoolingTemperature(value);
+      const currentValue = unit.probeValues.get(FREE_COOLING_OUTSIDE_TEMPERATURE_LIMIT_KEY);
+      if (
+        currentValue !== undefined
+        && valuesMatch(normalizeFreeCoolingTemperature(currentValue), normalizedValue)
+      ) {
+        this.log(
+          `[UnitRegistry] Skipping free cooling outside limit write — already ${normalizedValue}`
+          + ` on ${unit.unitId}`,
+        );
+        return;
+      }
+
+      await this.writeFreeCoolingNumericSetting(unit, {
+        objectId: BACNET_OBJECTS.freeCoolingOutsideTemperatureLimit,
+        settingKey: FREE_COOLING_OUTSIDE_TEMPERATURE_LIMIT_SETTING,
+        expectedValue: normalizedValue,
+        normalize: normalizeFreeCoolingTemperature,
+        tag: BacnetEnums.ApplicationTags.REAL,
+        label: 'free cooling outside temperature limit',
+      });
+    }
+
+    async setFreeCoolingMinOnTimeSeconds(unitId: string, value: number) {
+      const unit = this.units.get(unitId);
+      if (!unit) throw new Error('Unit not found');
+
+      const normalizedValue = normalizeFreeCoolingMinOnTimeSeconds(value);
+      const currentValue = unit.probeValues.get(FREE_COOLING_MIN_ON_TIME_KEY);
+      if (
+        currentValue !== undefined
+        && valuesMatch(normalizeFreeCoolingMinOnTimeSeconds(currentValue), normalizedValue)
+      ) {
+        this.log(
+          '[UnitRegistry] Skipping free cooling minimum on-time write — already'
+          + ` ${normalizedValue} on ${unit.unitId}`,
+        );
+        return;
+      }
+
+      await this.writeFreeCoolingNumericSetting(
+        unit,
+        {
+          objectId: BACNET_OBJECTS.freeCoolingMinOnTime,
+          settingKey: FREE_COOLING_MIN_ON_TIME_SECONDS_SETTING,
+          expectedValue: normalizedValue,
+          normalize: normalizeFreeCoolingMinOnTimeSeconds,
+          tag: BacnetEnums.ApplicationTags.UNSIGNED_INTEGER,
+          label: 'free cooling minimum on-time',
+        },
+      );
+    }
+
+    private async writeFreeCoolingBooleanSetting(
+      unit: UnitState,
+      config: {
+        objectId: { type: number; instance: number };
+        settingKey: string;
+        expectedEnabled: boolean;
+        label: string;
+      },
+    ) {
+      const {
+        objectId, settingKey, expectedEnabled, label,
+      } = config;
+      if (unit.transport === 'cloud') {
+        await this.cloudWriteAndVerifyBooleanSetting(unit, config);
+        return;
+      }
+
+      const writeOptions: WriteOptions = {
+        maxSegments: BacnetEnums.MaxSegmentsAccepted.SEGMENTS_0,
+        maxApdu: BacnetEnums.MaxApduLengthAccepted.OCTETS_1476,
+        priority: DEFAULT_WRITE_PRIORITY,
+      };
+
+      await this.enqueueWrite(unit, async () => {
+        const context: FanModeWriteContext = {
+          unit,
+          mode: `free_cooling:${settingKey}`,
+          writeOptions,
+          client: this.dependencies.getBacnetClient(unit.bacnetPort),
+          ventilationModeKey: VENTILATION_MODE_KEY,
+          comfortButtonKey: COMFORT_BUTTON_KEY,
+        };
+
+        const writeOk = await this.writeUpdate(context, {
+          objectId,
+          tag: BacnetEnums.ApplicationTags.ENUMERATED,
+          value: expectedEnabled ? 1 : 0,
+          priority: DEFAULT_WRITE_PRIORITY,
+        });
+        if (!writeOk) throw new Error(`Failed to write ${label}`);
+
+        const verifiedValue = await this.readPresentValue(context.client, unit, objectId);
+        unit.probeValues.set(objectKey(objectId.type, objectId.instance), verifiedValue);
+        const verifiedEnabled = resolveFreeCoolingEnabled(verifiedValue);
+        if (verifiedEnabled !== expectedEnabled) {
+          throw new Error(
+            `Failed to verify ${label}: expected ${expectedEnabled}, got ${String(verifiedEnabled)}`,
+          );
+        }
+
+        await this.syncSettingAfterWrite(unit, settingKey, verifiedEnabled);
+      });
+    }
+
+    private async writeFreeCoolingNumericSetting(
+      unit: UnitState,
+      config: {
+        objectId: { type: number; instance: number };
+        settingKey: string;
+        expectedValue: number;
+        normalize: (value: unknown) => number;
+        tag: number;
+        label: string;
+      },
+    ) {
+      const {
+        objectId, settingKey, expectedValue, normalize, tag, label,
+      } = config;
+      if (unit.transport === 'cloud') {
+        await this.cloudWriteAndVerifyNumericSetting(unit, config);
+        return;
+      }
+
+      const writeOptions: WriteOptions = {
+        maxSegments: BacnetEnums.MaxSegmentsAccepted.SEGMENTS_0,
+        maxApdu: BacnetEnums.MaxApduLengthAccepted.OCTETS_1476,
+        priority: DEFAULT_WRITE_PRIORITY,
+      };
+
+      await this.enqueueWrite(unit, async () => {
+        const context: FanModeWriteContext = {
+          unit,
+          mode: `free_cooling:${settingKey}`,
+          writeOptions,
+          client: this.dependencies.getBacnetClient(unit.bacnetPort),
+          ventilationModeKey: VENTILATION_MODE_KEY,
+          comfortButtonKey: COMFORT_BUTTON_KEY,
+        };
+
+        const writeOk = await this.writeUpdate(context, {
+          objectId,
+          tag,
+          value: expectedValue,
+          priority: DEFAULT_WRITE_PRIORITY,
+        });
+        if (!writeOk) throw new Error(`Failed to write ${label}`);
+
+        const verifiedValue = await this.readPresentValue(context.client, unit, objectId);
+        unit.probeValues.set(objectKey(objectId.type, objectId.instance), verifiedValue);
+        const normalizedVerifiedValue = normalize(verifiedValue);
+        if (!valuesMatch(normalizedVerifiedValue, expectedValue)) {
+          throw new Error(
+            `Failed to verify ${label}: expected ${expectedValue}, got ${normalizedVerifiedValue}`,
+          );
+        }
+
+        await this.syncSettingAfterWrite(unit, settingKey, normalizedVerifiedValue);
+      });
+    }
+
+    private async cloudWriteAndVerifyBooleanSetting(
+      unit: UnitState,
+      config: {
+        objectId: { type: number; instance: number };
+        settingKey: string;
+        expectedEnabled: boolean;
+        label: string;
+      },
+    ) {
+      const {
+        objectId, settingKey, expectedEnabled, label,
+      } = config;
+      const success = await this.cloudWriteDatapoint(unit, objectId, expectedEnabled ? 1 : 0);
+      if (!success) throw new Error(`Failed to write ${label} via cloud`);
+
+      await this.cloudPollUnit(unit);
+
+      const verifiedValue = unit.probeValues.get(objectKey(objectId.type, objectId.instance));
+      const verifiedEnabled = resolveFreeCoolingEnabled(verifiedValue);
+      if (verifiedEnabled !== expectedEnabled) {
+        throw new Error(
+          `Failed to verify ${label} via cloud: expected ${expectedEnabled}, got ${String(verifiedEnabled)}`,
+        );
+      }
+
+      await this.syncSettingAfterWrite(unit, settingKey, verifiedEnabled);
+    }
+
+    private async cloudWriteAndVerifyNumericSetting(
+      unit: UnitState,
+      config: {
+        objectId: { type: number; instance: number };
+        settingKey: string;
+        expectedValue: number;
+        normalize: (value: unknown) => number;
+        label: string;
+      },
+    ) {
+      const {
+        objectId, settingKey, expectedValue, normalize, label,
+      } = config;
+      const success = await this.cloudWriteDatapoint(unit, objectId, expectedValue);
+      if (!success) throw new Error(`Failed to write ${label} via cloud`);
+
+      await this.cloudPollUnit(unit);
+
+      const verifiedValue = unit.probeValues.get(objectKey(objectId.type, objectId.instance));
+      if (verifiedValue === undefined || !Number.isFinite(verifiedValue)) {
+        throw new Error(`Failed to verify ${label} via cloud: no value returned`);
+      }
+
+      const normalizedVerifiedValue = normalize(verifiedValue);
+      if (!valuesMatch(normalizedVerifiedValue, expectedValue)) {
+        throw new Error(
+          `Failed to verify ${label} via cloud: expected ${expectedValue}, got ${normalizedVerifiedValue}`,
+        );
+      }
+
+      await this.syncSettingAfterWrite(unit, settingKey, normalizedVerifiedValue);
+    }
+
+    private async syncSettingAfterWrite(
+      unit: UnitState,
+      settingKey: string,
+      verifiedValue: boolean | number,
+    ) {
+      const updates = Array.from(unit.devices).map((device) => this.updateDeviceSettings(device, {
+        [settingKey]: verifiedValue,
+      }));
+      await Promise.allSettled(updates);
+      this.pollUnit(unit.unitId);
     }
 
     private resolveTargetTemperatureModeFromProbe(unit: UnitState): TargetTemperatureMode {
@@ -1596,7 +2002,9 @@ export class UnitRegistry {
 
     private distributeData(unit: UnitState, data: Record<string, number>) {
       const dehumidificationActive = resolveDehumidificationActive(data);
+      const freeCoolingActive = resolveFreeCoolingActive(data);
       this.observeDehumidificationState(unit, dehumidificationActive);
+      this.observeFreeCoolingState(unit, freeCoolingActive);
       this.observeHeatingCoilState(unit, data.heating_coil_enabled);
 
       const mode = this.resolveFanMode(unit, data);
@@ -1608,6 +2016,7 @@ export class UnitRegistry {
         this.applyCurrentTargetTemperatureCapability(device, data, temperatureMode);
         this.applyCurrentFanSetpointCapabilities(unit, device, data, setpointMode);
         this.syncTargetTemperatureSettings(device, data);
+        this.syncFreeCoolingSettings(device, data);
         this.syncFanProfileSettings(device, data);
         this.syncFireplaceDurationSetting(device, data[FIREPLACE_DURATION_DATA_KEY]);
         this.syncFilterIntervalSetting(device, data.filter_limit);
@@ -1615,6 +2024,9 @@ export class UnitRegistry {
         if (filterLife !== undefined) this.setCapability(device, 'measure_hepa_filter', filterLife);
         if (dehumidificationActive !== undefined) {
           this.setCapability(device, DEHUMIDIFICATION_ACTIVE_CAPABILITY, dehumidificationActive);
+        }
+        if (freeCoolingActive !== undefined) {
+          this.setCapability(device, FREE_COOLING_ACTIVE_CAPABILITY, freeCoolingActive);
         }
         if (mode !== undefined) this.setCapability(device, 'fan_mode', mode);
       }
@@ -1780,6 +2192,34 @@ export class UnitRegistry {
       }
     }
 
+    private observeFreeCoolingState(unit: UnitState, active: boolean | undefined) {
+      if (active === undefined) return;
+
+      if (!unit.freeCoolingStateInitialized) {
+        unit.freeCoolingActive = active;
+        unit.freeCoolingStateInitialized = true;
+        return;
+      }
+      if (unit.freeCoolingActive === active) return;
+
+      unit.freeCoolingActive = active;
+      for (const device of unit.devices) {
+        this.triggerFreeCoolingStateChanged({
+          device,
+          active,
+        });
+      }
+    }
+
+    private triggerFreeCoolingStateChanged(event: FreeCoolingStateChangedEvent) {
+      if (!this.freeCoolingStateChangedHandler) return;
+      try {
+        this.freeCoolingStateChangedHandler(event);
+      } catch (error) {
+        this.warn('[UnitRegistry] Failed to handle free cooling state changed callback:', error);
+      }
+    }
+
     private parseHeatingCoilEnabled(value: number): boolean {
       return Math.round(value) !== HEATING_COIL_OFF;
     }
@@ -1900,6 +2340,58 @@ export class UnitRegistry {
 
       this.updateDeviceSettings(device, updates).catch((err) => {
         this.warn(`[UnitRegistry] Failed to sync target temperature settings for ${device.getData().unitId}:`, err);
+      });
+    }
+
+    private syncFreeCoolingSettings(device: FlexitDevice, data: Record<string, number>) {
+      const updates: Record<string, boolean | number> = {};
+
+      const enabled = resolveFreeCoolingEnabled(data.free_cooling_enabled);
+      const currentEnabled = device.getSetting(FREE_COOLING_ENABLED_SETTING);
+      if (enabled !== undefined && currentEnabled !== enabled) {
+        updates[FREE_COOLING_ENABLED_SETTING] = enabled;
+      }
+
+      const numericSettings: Array<{
+        dataKey: string;
+        settingKey: string;
+        normalize: (value: unknown) => number;
+      }> = [
+        {
+          dataKey: 'free_cooling_temperature_setpoint',
+          settingKey: FREE_COOLING_TEMPERATURE_SETPOINT_SETTING,
+          normalize: normalizeFreeCoolingTemperature,
+        },
+        {
+          dataKey: 'free_cooling_outside_temperature_limit',
+          settingKey: FREE_COOLING_OUTSIDE_TEMPERATURE_LIMIT_SETTING,
+          normalize: normalizeFreeCoolingTemperature,
+        },
+        {
+          dataKey: 'free_cooling_min_on_time_seconds',
+          settingKey: FREE_COOLING_MIN_ON_TIME_SECONDS_SETTING,
+          normalize: normalizeFreeCoolingMinOnTimeSeconds,
+        },
+      ];
+
+      for (const { dataKey, settingKey, normalize } of numericSettings) {
+        const rawValue = data[dataKey];
+        if (rawValue === undefined || !Number.isFinite(rawValue)) continue;
+
+        const normalized = normalize(rawValue);
+        const current = Number(device.getSetting(settingKey));
+        if (!Number.isFinite(current) || !valuesMatch(current, normalized)) {
+          updates[settingKey] = normalized;
+        }
+      }
+
+      if (Object.keys(updates).length === 0) return;
+
+      this.updateDeviceSettings(device, updates).catch((err) => {
+        this.warn(
+          `[UnitRegistry] Failed to sync free cooling settings for ${device.getData().unitId}:`,
+          err,
+        );
       });
     }
 
@@ -2189,6 +2681,54 @@ export class UnitRegistry {
 
       unit.dehumidificationActive = active;
       unit.dehumidificationStateInitialized = true;
+      return active;
+    }
+
+    async getFreeCoolingActive(unitId: string): Promise<boolean> {
+      const unit = this.units.get(unitId);
+      if (!unit) throw new Error('Unit not found');
+
+      if (unit.freeCoolingStateInitialized && typeof unit.freeCoolingActive === 'boolean') {
+        return unit.freeCoolingActive;
+      }
+
+      let mergedData: Record<string, number> = {};
+      const cachedValue = unit.probeValues.get(ACTUAL_VENTILATION_MODE_KEY);
+      if (typeof cachedValue === 'number' && Number.isFinite(cachedValue)) {
+        mergedData = {
+          free_cooling_actual_mode: cachedValue,
+        };
+      }
+
+      if (unit.transport === 'cloud') {
+        await this.cloudPollUnit(unit);
+        const cloudValue = unit.probeValues.get(ACTUAL_VENTILATION_MODE_KEY);
+        if (typeof cloudValue === 'number' && Number.isFinite(cloudValue)) {
+          mergedData.free_cooling_actual_mode = cloudValue;
+        }
+      } else {
+        const client = this.dependencies.getBacnetClient(unit.bacnetPort);
+        try {
+          const modeValue = await this.readPresentValue(client, unit, BACNET_OBJECTS.actualVentilationMode);
+          unit.probeValues.set(ACTUAL_VENTILATION_MODE_KEY, modeValue);
+          mergedData.free_cooling_actual_mode = modeValue;
+        } catch (error) {
+          if (!('free_cooling_actual_mode' in mergedData)) {
+            this.warn(
+              `[UnitRegistry] Failed to bootstrap free cooling state for ${unitId}:`,
+              error,
+            );
+          }
+        }
+      }
+
+      const active = resolveFreeCoolingActive(mergedData);
+      if (active === undefined) {
+        throw new Error('Free cooling state unavailable');
+      }
+
+      unit.freeCoolingActive = active;
+      unit.freeCoolingStateInitialized = true;
       return active;
     }
 
