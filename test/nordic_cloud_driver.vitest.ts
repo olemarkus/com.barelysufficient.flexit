@@ -75,6 +75,24 @@ describe('Nordic cloud driver (vitest)', () => {
     expect(driver.log.calledOnceWithExactly('Flexit Nordic Cloud driver init (app v1.2.3)')).toBe(true);
   });
 
+  it('falls back to the driver manifest version or unknown during initialization', async () => {
+    const manifestDriver = new DriverClass();
+    manifestDriver.homey = {};
+    manifestDriver.manifest = { version: '0.9.0' };
+
+    await manifestDriver.onInit();
+
+    expect(manifestDriver.log.calledWithExactly('Flexit Nordic Cloud driver init (app v0.9.0)')).toBe(true);
+
+    const unknownDriver = new DriverClass();
+    unknownDriver.homey = {};
+    unknownDriver.manifest = {};
+
+    await unknownDriver.onInit();
+
+    expect(unknownDriver.log.calledWithExactly('Flexit Nordic Cloud driver init (app vunknown)')).toBe(true);
+  });
+
   it('requires a successful cloud login before listing paired devices', async () => {
     const driver = new DriverClass();
     const session = createSession();
@@ -405,5 +423,40 @@ describe('Nordic cloud driver (vitest)', () => {
     expect(repairClient.restoreToken.called).toBe(false);
     expect(nordicCloudDriverMocks.registryStub.registerCloud.called).toBe(false);
     expect(device.setStoreValue.called).toBe(false);
+  });
+
+  it('surfaces repair authentication failures with a user-facing error', async () => {
+    const authFailure = new Error('repair auth failed');
+    const authClient = {
+      authenticateWithPassword: sinon.stub().rejects(authFailure),
+    };
+    setCloudDriverMocks({
+      clients: [authClient],
+    });
+    vi.resetModules();
+    const mod = await import('../drivers/nordic-cloud/driver.ts');
+    DriverClass = mod.default ?? mod;
+
+    const session = createSession();
+    const device = {
+      getData: sinon.stub().returns({ unitId: 'unit-1', plantId: 'plant-1' }),
+      getStoreValue: sinon.stub(),
+      setStoreValue: sinon.stub().resolves(),
+    };
+    const driver = new DriverClass();
+
+    await driver.onRepair(session, device);
+    const loginHandler = session.handlers.get('login');
+
+    let error: unknown;
+    try {
+      await loginHandler({ username: 'user@example.com', password: 'secret' });
+    } catch (err) {
+      error = err;
+    }
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe('Authentication failed. Check your credentials.');
+    expect(driver.error.calledOnceWithExactly('[Repair] Cloud authentication failed:', authFailure)).toBe(true);
   });
 });
