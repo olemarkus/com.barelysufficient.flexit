@@ -977,13 +977,12 @@ export class UnitRegistry {
         this.legacyLogger.log(...args);
         return;
       }
-      if (!this.logger) {
+      const logger = this.getLogger();
+      if (!logger) {
         this.getAnyDevice()?.log(...args);
         return;
       }
-      const logger = this.getLogger();
-      if (!logger) return;
-      const { msg, error, fields } = this.normalizeLegacyLogArguments(args);
+      const { msg, error, fields } = this.normalizeLegacyLogArguments(args, 'info');
       if (error !== undefined) {
         logger.error('registry.legacy.info_with_error', msg, error, fields);
         return;
@@ -996,29 +995,44 @@ export class UnitRegistry {
         this.legacyLogger.error(...args);
         return;
       }
-      if (!this.logger) {
+      const logger = this.getLogger();
+      if (!logger) {
         this.getAnyDevice()?.error(...args);
         return;
       }
-      const logger = this.getLogger();
-      if (!logger) return;
-      const { msg, error, fields } = this.normalizeLegacyLogArguments(args);
+      const { msg, error, fields } = this.normalizeLegacyLogArguments(args, 'error');
       logger.error('registry.legacy.error', msg, error, fields);
     }
 
-    private normalizeLegacyLogArguments(args: any[]) {
+    private normalizeLegacyLogArguments(args: any[], level: 'info' | 'error') {
       const [first, ...rest] = args;
       const msg = typeof first === 'string'
         ? first
         : 'Registry log emitted without a string message';
-      let error: unknown = typeof first === 'string' ? rest[0] : rest[0];
-      const details: unknown[] = typeof first === 'string'
-        ? rest.slice(1)
-        : [first, ...rest.slice(1)];
-      if (error === undefined && typeof first !== 'string') {
-        error = first;
-        details.length = 0;
+      let error: unknown;
+      const details: unknown[] = [];
+
+      if (typeof first !== 'string') {
+        if (first instanceof Error) {
+          error = first;
+        } else {
+          details.push(first);
+        }
       }
+
+      const [candidateError, ...remaining] = rest;
+      if (candidateError !== undefined) {
+        const treatAsError = level === 'error'
+          || candidateError instanceof Error
+          || (typeof first !== 'string' && error === undefined);
+        if (treatAsError) {
+          error = candidateError;
+          details.push(...remaining);
+        } else {
+          details.push(candidateError, ...remaining);
+        }
+      }
+
       const fields: LogFields = {};
       if (details.length === 1) {
         fields.details = details[0] as any;

@@ -1,6 +1,7 @@
 import { expect } from 'chai';
 import sinon from 'sinon';
 import { vi } from 'vitest';
+import { parseStructuredLogArg } from './logging_test_utils';
 
 const FILTER_CHANGE_INTERVAL_HOURS_PER_MONTH = 732;
 const MIN_FILTER_CHANGE_INTERVAL_HOURS = 3 * FILTER_CHANGE_INTERVAL_HOURS_PER_MONTH;
@@ -1669,10 +1670,10 @@ describe('UnitRegistry', () => {
     (registry as any).handlePollFailure(unit);
     await Promise.resolve();
 
-    expect(mockDevice.error.calledWithExactly(
-      '[UnitRegistry] Failed to set device unavailable for test_unit:',
-      failure,
-    )).to.equal(true);
+    const record = parseStructuredLogArg(mockDevice.error.firstCall.args[0]);
+    expect(record.event).to.equal('registry.legacy.error');
+    expect(record.msg).to.equal('[UnitRegistry] Failed to set device unavailable for test_unit:');
+    expect(record.error.message).to.equal('setUnavailable failed');
   });
 
   it('marks device available again after poll success', () => {
@@ -1702,10 +1703,10 @@ describe('UnitRegistry', () => {
     (registry as any).handlePollSuccess(unit);
     await Promise.resolve();
 
-    expect(mockDevice.error.calledWithExactly(
-      '[UnitRegistry] Failed to set device available for test_unit:',
-      failure,
-    )).to.equal(true);
+    const record = parseStructuredLogArg(mockDevice.error.firstCall.args[0]);
+    expect(record.event).to.equal('registry.legacy.error');
+    expect(record.msg).to.equal('[UnitRegistry] Failed to set device available for test_unit:');
+    expect(record.error.message).to.equal('setAvailable failed');
   });
 
   it('falls back to the default BACnet port when the stored setting is invalid', () => {
@@ -1866,10 +1867,10 @@ describe('UnitRegistry', () => {
 
     (registry as any).handlePollResponse(unit, {});
 
-    expect(mockDevice.error.calledWithExactly(
-      '[UnitRegistry] Poll response missing values for test_unit:',
-      {},
-    )).to.equal(true);
+    const record = parseStructuredLogArg(mockDevice.error.firstCall.args[0]);
+    expect(record.event).to.equal('registry.legacy.error');
+    expect(record.msg).to.equal('[UnitRegistry] Poll response missing values for test_unit:');
+    expect(record.error.details).to.deep.equal({});
     expect(unit.consecutiveFailures).to.equal(1);
   });
 
@@ -2038,10 +2039,10 @@ describe('UnitRegistry', () => {
     (registry as any).setCapability(mockDevice, 'measure_temperature', 21.5);
     await Promise.resolve();
 
-    expect(mockDevice.error.calledWithExactly(
-      "[UnitRegistry] Failed to set capability 'measure_temperature' for test_unit:",
-      failure,
-    )).to.equal(true);
+    const record = parseStructuredLogArg(mockDevice.error.firstCall.args[0]);
+    expect(record.event).to.equal('registry.legacy.error');
+    expect(record.msg).to.equal("[UnitRegistry] Failed to set capability 'measure_temperature' for test_unit:");
+    expect(record.error.message).to.equal('setCapabilityValue failed');
   });
 
   it('does not read device data on successful capability updates', async () => {
@@ -2081,9 +2082,9 @@ describe('UnitRegistry', () => {
       setFanModeStub.restore();
     }
 
-    expect(mockDevice.error.calledWithExactly(
-      '[UnitRegistry] Deferred fireplace retry failed for test_unit:',
-      failure,
-    )).to.equal(true);
+    const record = parseStructuredLogArg(mockDevice.error.firstCall.args[0]);
+    expect(record.event).to.equal('registry.legacy.error');
+    expect(record.msg).to.equal('[UnitRegistry] Deferred fireplace retry failed for test_unit:');
+    expect(record.error.message).to.equal('retry failed');
   });
 });
