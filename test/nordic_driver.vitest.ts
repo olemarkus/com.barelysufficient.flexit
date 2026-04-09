@@ -1,5 +1,6 @@
 import sinon from 'sinon';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { findStructuredLog } from './logging_test_utils';
 
 class MockHomeyDriver {
   homey = { manifest: { version: '1.0.2' } };
@@ -38,7 +39,9 @@ describe('Nordic driver (vitest)', () => {
 
     await driver.onInit();
 
-    expect(driver.log.calledWith('Flexit Nordic driver init (app v1.0.2)')).toBe(true);
+    const log = findStructuredLog(driver.log, 'driver.init');
+    expect(log?.msg).toBe('Flexit Nordic BACnet driver initialized');
+    expect(log?.appVersion).toBe('1.0.2');
   });
 
   it('falls back to the driver manifest version when the app manifest version is unavailable', async () => {
@@ -48,7 +51,7 @@ describe('Nordic driver (vitest)', () => {
 
     await driver.onInit();
 
-    expect(driver.log.calledWith('Flexit Nordic driver init (app v0.9.0)')).toBe(true);
+    expect(findStructuredLog(driver.log, 'driver.init')?.appVersion).toBe('0.9.0');
   });
 
   it('falls back to unknown when no manifest version is available', async () => {
@@ -58,7 +61,7 @@ describe('Nordic driver (vitest)', () => {
 
     await driver.onInit();
 
-    expect(driver.log.calledWith('Flexit Nordic driver init (app vunknown)')).toBe(true);
+    expect(findStructuredLog(driver.log, 'driver.init')?.appVersion).toBe('unknown');
   });
 
   it('logs discovery progress and maps discovered units for pairing', async () => {
@@ -81,15 +84,21 @@ describe('Nordic driver (vitest)', () => {
     expect(discoverArgs.timeoutMs).toBe(5000);
     expect(discoverArgs.burstCount).toBe(10);
     expect(discoverArgs.burstIntervalMs).toBe(300);
-    expect(typeof discoverArgs.log).toBe('function');
-    expect(typeof discoverArgs.error).toBe('function');
-    discoverArgs.log('[Discovery] test log');
-    discoverArgs.error('[Discovery] test error');
-    expect(driver.log.calledWithMatch('[Pair] Discovery start')).toBe(true);
-    expect(driver.log.calledWithExactly('[Discovery] test log')).toBe(true);
-    expect(driver.error.calledWithExactly('[Discovery] test error')).toBe(true);
-    expect(driver.log.calledWithMatch('[Pair] Discovery complete: 1 unit(s) found in')).toBe(true);
-    expect(driver.log.calledWithExactly('[Pair] Unit 800131-000001@192.0.2.10:47808 (new)')).toBe(true);
+    expect(typeof discoverArgs.logger?.info).toBe('function');
+    expect(typeof discoverArgs.logger?.error).toBe('function');
+    const startLog = findStructuredLog(driver.log, 'driver.pair.discovery.start');
+    expect(startLog?.timeoutMs).toBe(5000);
+    const completeLog = findStructuredLog(driver.log, 'driver.pair.discovery.complete');
+    expect(completeLog?.unitCount).toBe(1);
+    expect(completeLog?.units).toEqual([
+      {
+        unitId: '800131000001',
+        serial: '800131-000001',
+        ip: '192.0.2.10',
+        bacnetPort: 47808,
+        status: 'new',
+      },
+    ]);
     expect(devices).toEqual([
       {
         name: 'Nordic S4 REL',
@@ -129,7 +138,8 @@ describe('Nordic driver (vitest)', () => {
 
     await driver.onPairListDevices();
 
-    expect(driver.log.calledWithExactly('[Pair] Unit 800131-000001@192.0.2.10:47808 (already added)')).toBe(true);
+    const completeLog = findStructuredLog(driver.log, 'driver.pair.discovery.complete');
+    expect(completeLog?.units?.[0]?.status).toBe('already_added');
   });
 
   it('returns an empty pairing list without unit status logs when discovery finds nothing', async () => {
@@ -139,8 +149,9 @@ describe('Nordic driver (vitest)', () => {
     const devices = await driver.onPairListDevices();
 
     expect(devices).toEqual([]);
-    expect(driver.log.calledWithMatch('[Pair] Discovery complete: 0 unit(s) found in')).toBe(true);
-    expect(driver.log.getCalls().some((call) => String(call.args[0]).includes('[Pair] Unit '))).toBe(false);
+    const completeLog = findStructuredLog(driver.log, 'driver.pair.discovery.complete');
+    expect(completeLog?.unitCount).toBe(0);
+    expect(completeLog?.units).toEqual([]);
   });
 
   it('logs and rethrows discovery failures', async () => {
@@ -149,8 +160,8 @@ describe('Nordic driver (vitest)', () => {
     const driver = new DriverClass();
 
     await expect(driver.onPairListDevices()).rejects.toThrow('socket bind failed');
-    expect(driver.error.calledOnce).toBe(true);
-    expect(driver.error.firstCall.args[0]).toMatch(/^\[Pair\] Discovery failed after \d+ms:$/);
-    expect(driver.error.firstCall.args[1]).toBe(discoveryError);
+    const failureLog = findStructuredLog(driver.error, 'driver.pair.discovery.failed');
+    expect(failureLog?.msg).toBe('BACnet pairing discovery failed');
+    expect(failureLog?.error?.message).toBe('socket bind failed');
   });
 });

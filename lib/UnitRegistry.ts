@@ -8,6 +8,7 @@ import {
   AuthenticationError,
   HttpError,
 } from './flexitCloudClient';
+import { createRuntimeLogger, RuntimeLogger, LogFields } from './logging';
 
 // Helper to clamp values
 function clamp(n: number, min: number, max: number) {
@@ -658,10 +659,7 @@ interface FanModeWriteContext {
   comfortButtonKey: string;
 }
 
-interface RegistryLogger {
-  log(...args: any[]): void;
-  error(...args: any[]): void;
-}
+type RegistryLogger = RuntimeLogger;
 
 function formatErrorMessage(err: unknown): string {
   if (err instanceof Error) {
@@ -889,6 +887,9 @@ const POLL_REQUEST = buildPollRequest();
 export class UnitRegistry {
     private units: Map<string, UnitState> = new Map();
     private logger?: RegistryLogger;
+    private legacyLogger?: { log(...args: any[]): void; error(...args: any[]): void };
+    private fallbackLogger?: RegistryLogger;
+    private fallbackLoggerDevice?: FlexitDevice;
     private readonly dependencies: RegistryDependencies;
     private fanSetpointChangedHandler?: (event: FanSetpointChangedEvent) => void;
     private dehumidificationStateChangedHandler?: (event: DehumidificationStateChangedEvent) => void;
@@ -903,8 +904,16 @@ export class UnitRegistry {
       };
     }
 
-    setLogger(logger: RegistryLogger) {
-      this.logger = logger;
+    setLogger(logger: RegistryLogger | { log(...args: any[]): void; error(...args: any[]): void }) {
+      if (logger instanceof RuntimeLogger) {
+        this.logger = logger;
+        this.legacyLogger = undefined;
+      } else {
+        this.legacyLogger = logger;
+        this.logger = undefined;
+      }
+      this.fallbackLogger = undefined;
+      this.fallbackLoggerDevice = undefined;
       this.syncBacnetLogger();
     }
 
@@ -927,10 +936,9 @@ export class UnitRegistry {
     }
 
     private syncBacnetLogger() {
-      if (typeof setBacnetLogger === 'function') {
-        setBacnetLogger({
-          error: (...args: any[]) => this.error(...args),
-        });
+      const logger = this.getLogger();
+      if (typeof setBacnetLogger === 'function' && logger) {
+        setBacnetLogger(logger.child({ component: 'bacnet' }));
       }
     }
 
@@ -942,20 +950,77 @@ export class UnitRegistry {
       return undefined;
     }
 
+    private getLogger() {
+      if (this.logger) return this.logger;
+      if (this.legacyLogger) {
+        if (!this.fallbackLogger) {
+          this.fallbackLogger = createRuntimeLogger(this.legacyLogger, { component: 'registry' });
+        }
+        return this.fallbackLogger;
+      }
+      const device = this.getAnyDevice();
+      if (!device) return undefined;
+      if (!this.fallbackLogger || this.fallbackLoggerDevice !== device) {
+        this.fallbackLogger = createRuntimeLogger(device, { component: 'registry' });
+        this.fallbackLoggerDevice = device;
+      }
+      return this.fallbackLogger;
+    }
+
     private log(...args: any[]) {
-      if (this.logger?.log) {
-        this.logger.log(...args);
+      if (this.legacyLogger) {
+        this.legacyLogger.log(...args);
         return;
       }
-      this.getAnyDevice()?.log(...args);
+      if (!this.logger) {
+        this.getAnyDevice()?.log(...args);
+        return;
+      }
+      const logger = this.getLogger();
+      if (!logger) return;
+      const { msg, error, fields } = this.normalizeLegacyLogArguments(args);
+      if (error !== undefined) {
+        logger.error('registry.legacy.info_with_error', msg, error, fields);
+        return;
+      }
+      logger.info('registry.legacy.info', msg, fields);
     }
 
     private error(...args: any[]) {
-      if (this.logger?.error) {
-        this.logger.error(...args);
+      if (this.legacyLogger) {
+        this.legacyLogger.error(...args);
         return;
       }
-      this.getAnyDevice()?.error(...args);
+      if (!this.logger) {
+        this.getAnyDevice()?.error(...args);
+        return;
+      }
+      const logger = this.getLogger();
+      if (!logger) return;
+      const { msg, error, fields } = this.normalizeLegacyLogArguments(args);
+      logger.error('registry.legacy.error', msg, error, fields);
+    }
+
+    private normalizeLegacyLogArguments(args: any[]) {
+      const [first, ...rest] = args;
+      const msg = typeof first === 'string'
+        ? first
+        : 'Registry log emitted without a string message';
+      let error: unknown = typeof first === 'string' ? rest[0] : rest[0];
+      const details: unknown[] = typeof first === 'string'
+        ? rest.slice(1)
+        : [first, ...rest.slice(1)];
+      if (error === undefined && typeof first !== 'string') {
+        error = first;
+        details.length = 0;
+      }
+      const fields: LogFields = {};
+      if (details.length === 1) {
+        fields.details = details[0] as any;
+      } else if (details.length > 1) {
+        fields.details = details as any;
+      }
+      return { msg, error, fields };
     }
 
     private logDetachedPromiseError(
@@ -1011,6 +1076,13 @@ export class UnitRegistry {
           heatingCoilStateInitialized: false,
         };
         this.units.set(unitId, unit);
+        this.getLogger()?.info('registry.unit.registered', 'Registered BACnet unit with registry', {
+          unitId,
+          transport: 'bacnet',
+          ip,
+          bacnetPort,
+          serial,
+        });
 
         // Start polling immediately
         this.pollUnit(unitId);
@@ -1080,6 +1152,11 @@ export class UnitRegistry {
           heatingCoilStateInitialized: false,
         };
         this.units.set(unitId, unit);
+        this.getLogger()?.info('registry.unit.registered', 'Registered cloud unit with registry', {
+          unitId,
+          transport: 'cloud',
+          plantId: config.plantId,
+        });
 
         this.startCloudPolling(unit);
       }
@@ -1123,6 +1200,11 @@ export class UnitRegistry {
 
     private startCloudPolling(unit: UnitState) {
       const { unitId } = unit;
+      this.getLogger()?.info('registry.cloud_polling.started', 'Started cloud polling loop', {
+        unitId,
+        plantId: unit.cloud?.plantId,
+        intervalMs: CLOUD_POLL_INTERVAL_MS,
+      });
       this.cloudPollUnit(unit).catch((err) => {
         this.log(`[UnitRegistry] Cloud poll failed for ${unitId}:`, err);
       });
@@ -1145,6 +1227,18 @@ export class UnitRegistry {
             unit.cloud.client.destroy();
           }
           this.units.delete(unitId);
+          if (this.fallbackLoggerDevice === device) {
+            this.fallbackLogger = undefined;
+            this.fallbackLoggerDevice = undefined;
+          }
+          this.getLogger()?.info(
+            'registry.unit.unregistered',
+            'Removed unit from registry after last device was deleted',
+            {
+              unitId,
+              transport: unit.transport,
+            },
+          );
         }
       }
     }
@@ -2051,7 +2145,15 @@ export class UnitRegistry {
     }
 
     private handlePollSuccess(unit: UnitState) {
+      const previousFailureCount = unit.consecutiveFailures;
       unit.consecutiveFailures = 0;
+      if (unit.transport === 'cloud' && previousFailureCount > 0) {
+        this.getLogger()?.info('registry.cloud_poll.recovered', 'Cloud poll recovered', {
+          unitId: unit.unitId,
+          plantId: unit.cloud?.plantId,
+          previousFailureCount,
+        });
+      }
       if (!unit.available) {
         unit.available = true;
         const location = unit.transport === 'cloud' ? 'cloud' : unit.ip;

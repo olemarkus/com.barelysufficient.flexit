@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import sinon from 'sinon';
 import { createFlexitAppClass } from '../lib/createAppClass';
+import { findStructuredLog } from './logging_test_utils';
 
 class MockHomeyApp {
   homey: any;
@@ -496,9 +497,15 @@ describe('App flow registration', () => {
     });
     await Promise.resolve();
 
-    expect(app.error.calledWith('Failed to trigger fan setpoint changed flow:', sinon.match.any)).toBe(true);
-    expect(app.error.calledWith('Failed to trigger dehumidification state flow:', sinon.match.any)).toBe(true);
-    expect(app.error.calledWith('Failed to trigger heating coil state flow:', sinon.match.any)).toBe(true);
+    expect(
+      findStructuredLog(app.error, 'app.flow.trigger.fan_setpoint_changed.failed')?.error?.message,
+    ).toBe('fan trigger failed');
+    expect(
+      findStructuredLog(app.error, 'app.flow.trigger.dehumidification_state.failed')?.error?.message,
+    ).toBe('dehumidification trigger failed');
+    expect(
+      findStructuredLog(app.error, 'app.flow.trigger.heating_coil_state.failed')?.error?.message,
+    ).toBe('coil trigger failed');
   });
 
   it('logs uncaughtException and unhandledRejection through global handlers', async () => {
@@ -517,7 +524,7 @@ describe('App flow registration', () => {
     uncaughtHandler(uncaught);
     rejectionHandler(rejection, Promise.resolve());
 
-    expect(app.error.calledWith('Uncaught Exception:', uncaught)).toBe(true);
-    expect(app.error.calledWith('Unhandled Rejection:', rejection)).toBe(true);
+    expect(findStructuredLog(app.error, 'app.process.uncaught_exception')?.error?.message).toBe('uncaught');
+    expect(findStructuredLog(app.error, 'app.process.unhandled_rejection')?.error?.message).toBe('rejection');
   });
 });

@@ -1,7 +1,10 @@
 import sinon from 'sinon';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createRuntimeLogger, RuntimeLogger } from '../lib/logging';
+import { findStructuredLog } from './logging_test_utils';
 
 class MockCloudBaseDevice {
+  private runtimeLogger?: RuntimeLogger;
   initSharedCapabilities = sinon.stub().resolves();
   registerSharedCapabilityListeners = sinon.stub();
   getData = sinon.stub().returns({ unitId: 'unit-1', plantId: 'plant-1' });
@@ -11,6 +14,18 @@ class MockCloudBaseDevice {
   setUnavailable = sinon.stub().resolves();
   log = sinon.stub();
   error = sinon.stub();
+
+  getLogger() {
+    if (!this.runtimeLogger) {
+      this.runtimeLogger = createRuntimeLogger(this, {
+        component: 'device',
+        transport: 'cloud',
+        unitId: 'unit-1',
+        plantId: 'plant-1',
+      });
+    }
+    return this.runtimeLogger;
+  }
 }
 
 function createAuthenticationErrorConstructor(): typeof Error {
@@ -145,7 +160,9 @@ describe('Nordic cloud device (vitest)', () => {
     await device.onInit();
 
     expect(nordicCloudDeviceMocks.lastClient.restoreToken.called).toBe(false);
-    expect(device.error.calledOnceWithExactly('Cloud refresh token not found in device store')).toBe(true);
+    expect(
+      findStructuredLog(device.error, 'device.token_restore.missing_refresh_token')?.msg,
+    ).toBe('Cloud refresh token was not found in device store');
     expect(device.setUnavailable.calledOnceWithExactly(
       'Cloud credentials missing. Please repair the device.',
     )).toBe(true);
@@ -170,7 +187,8 @@ describe('Nordic cloud device (vitest)', () => {
 
     await device.onInit();
 
-    expect(device.error.calledOnceWithExactly('Cloud authentication failed:', 'expired token')).toBe(true);
+    const authLog = findStructuredLog(device.error, 'device.cloud_auth.failed');
+    expect(authLog?.error?.message).toBe('expired token');
     expect(device.setUnavailable.calledOnceWithExactly(
       'Cloud authentication failed. Please repair the device.',
     )).toBe(true);
@@ -193,7 +211,7 @@ describe('Nordic cloud device (vitest)', () => {
 
     await device.onInit();
 
-    expect(device.error.calledOnceWithExactly('Failed to register with Registry:', failure)).toBe(true);
+    expect(findStructuredLog(device.error, 'device.registry.register.failed')?.error?.message).toBe('register failed');
     expect(device.setUnavailable.calledOnceWithExactly(
       'Failed to initialize cloud connection.',
     )).toBe(true);
@@ -235,8 +253,14 @@ describe('Nordic cloud device (vitest)', () => {
     });
     await flushMicrotasks();
 
-    expect(device.error.calledWithMatch('Failed to persist cloud access token:')).toBe(true);
-    expect(device.error.calledWithMatch('Failed to persist cloud refresh token:')).toBe(true);
-    expect(device.error.calledWithMatch('Failed to persist cloud token expiry:')).toBe(true);
+    expect(
+      findStructuredLog(device.error, 'device.token_persist.access.failed')?.error?.message,
+    ).toBe('access failed');
+    expect(
+      findStructuredLog(device.error, 'device.token_persist.refresh.failed')?.error?.message,
+    ).toBe('refresh failed');
+    expect(
+      findStructuredLog(device.error, 'device.token_persist.expiry.failed')?.error?.message,
+    ).toBe('expiry failed');
   });
 });

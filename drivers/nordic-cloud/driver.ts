@@ -1,8 +1,21 @@
 import Homey from 'homey';
 import { FlexitCloudClient, CloudToken } from '../../lib/flexitCloudClient';
 import { Registry } from '../../lib/UnitRegistry';
+import { createRuntimeLogger, RuntimeLogger, runWithLogContext } from '../../lib/logging';
 
 export = class FlexitNordicCloudDriver extends Homey.Driver {
+  private runtimeLogger?: RuntimeLogger;
+
+  private getLogger() {
+    if (!this.runtimeLogger) {
+      this.runtimeLogger = createRuntimeLogger(this, {
+        component: 'driver',
+        transport: 'cloud',
+      });
+    }
+    return this.runtimeLogger;
+  }
+
   private resolveRepairToken(device: any, token: CloudToken): CloudToken {
     if (token.refreshToken) {
       return token;
@@ -21,24 +34,32 @@ export = class FlexitNordicCloudDriver extends Homey.Driver {
 
   async onInit() {
     const appVersion = this.homey?.manifest?.version ?? this.manifest?.version ?? 'unknown';
-    this.log(`Flexit Nordic Cloud driver init (app v${appVersion})`);
+    this.getLogger().info('driver.init', 'Flexit Nordic cloud driver initialized', { appVersion });
   }
 
   async onPair(session: any) {
     let pairedToken: CloudToken | null = null;
+    const logger = this.getLogger().child({ pairing: true });
 
     session.setHandler(
       'login',
       async (data: { username: string; password: string }) => {
-        const client = new FlexitCloudClient();
+        const client = new FlexitCloudClient({
+          logger: logger.child({ component: 'cloud_client' }),
+        });
         try {
-          pairedToken = await client.authenticateWithPassword(
+          pairedToken = await runWithLogContext({ operation: 'pair-login' }, () => client.authenticateWithPassword(
             data.username,
             data.password,
-          );
+          ));
+          logger.info('driver.pair.login.succeeded', 'Cloud pairing authentication succeeded');
           return true;
         } catch (err) {
-          this.error('[Pair] Cloud authentication failed:', err);
+          logger.error(
+            'driver.pair.login.failed',
+            'Cloud pairing authentication failed',
+            err,
+          );
           throw new Error('Authentication failed. Check your credentials.');
         }
       },
@@ -50,11 +71,21 @@ export = class FlexitNordicCloudDriver extends Homey.Driver {
       }
       const token = pairedToken;
 
-      const client = new FlexitCloudClient();
+      const client = new FlexitCloudClient({
+        logger: logger.child({ component: 'cloud_client' }),
+      });
       client.restoreToken(token);
-      const plants = await client.findPlants();
+      const plants = await runWithLogContext({ operation: 'pair-list-devices' }, () => client.findPlants());
 
-      this.log(`[Pair] Found ${plants.length} plant(s) in Flexit cloud`);
+      logger.info('driver.pair.devices.listed', 'Listed cloud plants for pairing', {
+        plantCount: plants.length,
+        plants: plants.map((plant) => ({
+          plantId: plant.id,
+          name: plant.name,
+          serialNumber: plant.serialNumber,
+          isOnline: plant.isOnline,
+        })),
+      });
 
       return plants.map((plant) => ({
         name: plant.name || `Flexit ${plant.serialNumber || plant.id}`,
@@ -76,18 +107,21 @@ export = class FlexitNordicCloudDriver extends Homey.Driver {
   }
 
   async onRepair(session: any, device: any) {
+    const logger = this.getLogger().child({ repair: true });
     session.setHandler(
       'login',
       async (data: { username: string; password: string }) => {
-        const client = new FlexitCloudClient();
+        const client = new FlexitCloudClient({
+          logger: logger.child({ component: 'cloud_client' }),
+        });
         let token: CloudToken;
         try {
-          token = await client.authenticateWithPassword(
+          token = await runWithLogContext({ operation: 'repair-login' }, () => client.authenticateWithPassword(
             data.username,
             data.password,
-          );
+          ));
         } catch (err) {
-          this.error('[Repair] Cloud authentication failed:', err);
+          logger.error('driver.repair.login.failed', 'Cloud repair authentication failed', err);
           throw new Error('Authentication failed. Check your credentials.');
         }
 
@@ -104,26 +138,50 @@ export = class FlexitNordicCloudDriver extends Homey.Driver {
         if (isRegistered) {
           Registry.restoreCloudAuth(unitId, token);
         } else {
-          this.log(`[Repair] Unit ${unitId} not in registry, registering`);
-          const repairClient = new FlexitCloudClient();
+          logger.info('driver.repair.registry.registering', 'Repairing cloud device by re-registering it', {
+            unitId,
+            plantId,
+          });
+          const repairClient = new FlexitCloudClient({
+            logger: logger.child({ component: 'cloud_client', unitId, plantId }),
+          });
           repairClient.restoreToken(repairedToken);
           const activeClient = Registry.registerCloud(unitId, device, { plantId, client: repairClient });
           activeClient.onTokenRefreshed((t: CloudToken) => {
             device.setStoreValue('cloudAccessToken', t.accessToken).catch((err: any) => {
-              this.error('[Repair] Failed to persist cloud access token:', err);
+              logger.error(
+                'driver.repair.token_persist.access.failed',
+                'Failed to persist repaired cloud access token',
+                err,
+                { unitId, plantId },
+              );
             });
             if (t.refreshToken) {
               device.setStoreValue('cloudRefreshToken', t.refreshToken).catch((err: any) => {
-                this.error('[Repair] Failed to persist cloud refresh token:', err);
+                logger.error(
+                  'driver.repair.token_persist.refresh.failed',
+                  'Failed to persist repaired cloud refresh token',
+                  err,
+                  { unitId, plantId },
+                );
               });
             }
             device.setStoreValue('cloudTokenExpiresAt', t.expiresAt).catch((err: any) => {
-              this.error('[Repair] Failed to persist cloud token expiry:', err);
+              logger.error(
+                'driver.repair.token_persist.expiry.failed',
+                'Failed to persist repaired cloud token expiry',
+                err,
+                { unitId, plantId },
+              );
             });
           });
         }
 
-        this.log(`[Repair] Successfully re-authenticated device ${unitId}`);
+        logger.info('driver.repair.login.succeeded', 'Cloud device repair authentication succeeded', {
+          unitId,
+          plantId,
+          restoredExistingRegistration: isRegistered,
+        });
         return true;
       },
     );
