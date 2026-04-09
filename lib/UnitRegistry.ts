@@ -4,7 +4,9 @@ import { discoverFlexitUnits } from './flexitDiscovery';
 import {
   FlexitCloudClient,
   bacnetObjectToCloudPath,
+  cloudPathToBacnetObject,
   AuthenticationError,
+  HttpError,
 } from './flexitCloudClient';
 
 // Helper to clamp values
@@ -175,6 +177,8 @@ const REDISCOVERY_INTERVAL_MS = 60_000;
 const MAX_BACNET_CONSECUTIVE_FAILURES = 3;
 const MAX_CLOUD_CONSECUTIVE_FAILURES = 3;
 const DEFAULT_WRITE_TIMEOUT_MS = 5_000;
+const CLOUD_VERIFY_RETRY_DELAY_MS = 750;
+const CLOUD_VERIFY_MAX_ATTEMPTS = 3;
 const EXTRACT_AIR_TEMPERATURE_PRIMARY_INSTANCE = 59;
 const EXTRACT_AIR_TEMPERATURE_ALT_INSTANCE = 95;
 
@@ -582,6 +586,7 @@ interface UnitState {
   serial: string;
   transport: 'bacnet' | 'cloud';
   cloud?: CloudTransportConfig;
+  unsupportedCloudPollPaths: Set<string>;
   devices: Set<FlexitDevice>;
   pollInterval: ReturnType<typeof setInterval> | null;
   rediscoverInterval: ReturnType<typeof setInterval> | null;
@@ -656,7 +661,27 @@ interface FanModeWriteContext {
 interface RegistryLogger {
   log(...args: any[]): void;
   error(...args: any[]): void;
-  warn?(...args: any[]): void;
+}
+
+function formatErrorMessage(err: unknown): string {
+  if (err instanceof Error) {
+    return err.message;
+  }
+  if (typeof err === 'string') {
+    return err;
+  }
+  if (typeof err === 'object' && err !== null) {
+    return JSON.stringify(err);
+  }
+  return String(err);
+}
+
+function formatCloudPathForLog(path: string): string {
+  const objectId = cloudPathToBacnetObject(path);
+  if (!Number.isFinite(objectId.type) || !Number.isFinite(objectId.instance)) {
+    return path;
+  }
+  return `${path} (${objectId.type}:${objectId.instance})`;
 }
 
 interface RegistryDependencies {
@@ -925,18 +950,6 @@ export class UnitRegistry {
       this.getAnyDevice()?.log(...args);
     }
 
-    private warn(...args: any[]) {
-      if (this.logger?.warn) {
-        this.logger.warn(...args);
-        return;
-      }
-      if (this.logger?.log) {
-        this.logger.log(...args);
-        return;
-      }
-      this.getAnyDevice()?.log(...args);
-    }
-
     private error(...args: any[]) {
       if (this.logger?.error) {
         this.logger.error(...args);
@@ -965,6 +978,7 @@ export class UnitRegistry {
           unitId,
           serial,
           transport: 'bacnet' as const,
+          unsupportedCloudPollPaths: new Set(),
           devices: new Set(),
           pollInterval: null,
           rediscoverInterval: null,
@@ -1033,6 +1047,7 @@ export class UnitRegistry {
           serial: '',
           transport: 'cloud' as const,
           cloud: config,
+          unsupportedCloudPollPaths: new Set(),
           devices: new Set(),
           pollInterval: null,
           rediscoverInterval: null,
@@ -1109,11 +1124,11 @@ export class UnitRegistry {
     private startCloudPolling(unit: UnitState) {
       const { unitId } = unit;
       this.cloudPollUnit(unit).catch((err) => {
-        this.warn(`[UnitRegistry] Cloud poll failed for ${unitId}:`, err);
+        this.log(`[UnitRegistry] Cloud poll failed for ${unitId}:`, err);
       });
       unit.pollInterval = setInterval(() => {
         this.cloudPollUnit(unit).catch((err) => {
-          this.warn(`[UnitRegistry] Cloud poll failed for ${unitId}:`, err);
+          this.log(`[UnitRegistry] Cloud poll failed for ${unitId}:`, err);
         });
       }, CLOUD_POLL_INTERVAL_MS);
     }
@@ -1507,8 +1522,15 @@ export class UnitRegistry {
 
       await this.cloudPollUnit(unit);
 
-      const verifiedValue = unit.probeValues.get(objectKey(objectId.type, objectId.instance));
-      const verifiedEnabled = resolveFreeCoolingEnabled(verifiedValue);
+      const verifiedEnabled = await this.cloudReadBooleanWithRetry(
+        unit,
+        {
+          objectId,
+          resolve: resolveFreeCoolingEnabled,
+          expectedValue: expectedEnabled,
+          label,
+        },
+      );
       if (verifiedEnabled !== expectedEnabled) {
         throw new Error(
           `Failed to verify ${label} via cloud: expected ${expectedEnabled}, got ${String(verifiedEnabled)}`,
@@ -1536,12 +1558,18 @@ export class UnitRegistry {
 
       await this.cloudPollUnit(unit);
 
-      const verifiedValue = unit.probeValues.get(objectKey(objectId.type, objectId.instance));
-      if (verifiedValue === undefined || !Number.isFinite(verifiedValue)) {
+      const normalizedVerifiedValue = await this.cloudReadNumericWithRetry(
+        unit,
+        {
+          objectId,
+          normalize,
+          expectedValue,
+          label,
+        },
+      );
+      if (normalizedVerifiedValue === undefined) {
         throw new Error(`Failed to verify ${label} via cloud: no value returned`);
       }
-
-      const normalizedVerifiedValue = normalize(verifiedValue);
       if (!valuesMatch(normalizedVerifiedValue, expectedValue)) {
         throw new Error(
           `Failed to verify ${label} via cloud: expected ${expectedValue}, got ${normalizedVerifiedValue}`,
@@ -1549,6 +1577,92 @@ export class UnitRegistry {
       }
 
       await this.syncSettingAfterWrite(unit, settingKey, normalizedVerifiedValue);
+    }
+
+    private async cloudReadDatapointValue(
+      unit: UnitState,
+      objectId: { type: number; instance: number },
+    ): Promise<number | undefined> {
+      if (!unit.cloud) return undefined;
+      const { plantId, client } = unit.cloud;
+      const path = bacnetObjectToCloudPath(objectId.type, objectId.instance);
+      const values = await client.readDatapoints(plantId, [path]);
+      const fullPath = `${plantId}${path}`;
+      const entry = values[fullPath] ?? values[path];
+      const value = entry?.value?.value;
+      if (typeof value !== 'number' || Number.isNaN(value)) return undefined;
+      unit.probeValues.set(objectKey(objectId.type, objectId.instance), value);
+      return value;
+    }
+
+    private async cloudReadBooleanWithRetry(
+      unit: UnitState,
+      config: {
+        objectId: { type: number; instance: number };
+        resolve: (value: number | undefined) => boolean | undefined;
+        expectedValue: boolean;
+        label: string;
+      },
+    ): Promise<boolean | undefined> {
+      const {
+        objectId, resolve, expectedValue, label,
+      } = config;
+      let resolvedValue = resolve(unit.probeValues.get(objectKey(objectId.type, objectId.instance)));
+      for (let attempt = 1; attempt <= CLOUD_VERIFY_MAX_ATTEMPTS; attempt++) {
+        if (resolvedValue === expectedValue) return resolvedValue;
+        if (attempt > 1) {
+          this.log(
+            `[UnitRegistry] Cloud verify retry ${attempt}/${CLOUD_VERIFY_MAX_ATTEMPTS}`
+            + ` for ${label} on ${unit.unitId}`,
+          );
+          await new Promise((resolveDelay) => setTimeout(resolveDelay, CLOUD_VERIFY_RETRY_DELAY_MS));
+        }
+        const directValue = await this.cloudReadDatapointValue(unit, objectId);
+        resolvedValue = resolve(directValue);
+      }
+      return resolvedValue;
+    }
+
+    private async cloudReadNumericWithRetry(
+      unit: UnitState,
+      config: {
+        objectId: { type: number; instance: number };
+        normalize: (value: unknown) => number;
+        expectedValue: number;
+        label: string;
+      },
+    ): Promise<number | undefined> {
+      const {
+        objectId, normalize, expectedValue, label,
+      } = config;
+      let cachedValue = unit.probeValues.get(objectKey(objectId.type, objectId.instance));
+      let normalizedVerifiedValue = (
+        cachedValue === undefined || !Number.isFinite(cachedValue)
+          ? undefined
+          : normalize(cachedValue)
+      );
+      for (let attempt = 1; attempt <= CLOUD_VERIFY_MAX_ATTEMPTS; attempt++) {
+        if (
+          normalizedVerifiedValue !== undefined
+          && valuesMatch(normalizedVerifiedValue, expectedValue)
+        ) {
+          return normalizedVerifiedValue;
+        }
+        if (attempt > 1) {
+          this.log(
+            `[UnitRegistry] Cloud verify retry ${attempt}/${CLOUD_VERIFY_MAX_ATTEMPTS}`
+            + ` for ${label} on ${unit.unitId}`,
+          );
+          await new Promise((resolveDelay) => setTimeout(resolveDelay, CLOUD_VERIFY_RETRY_DELAY_MS));
+        }
+        cachedValue = await this.cloudReadDatapointValue(unit, objectId);
+        normalizedVerifiedValue = (
+          cachedValue === undefined || !Number.isFinite(cachedValue)
+            ? undefined
+            : normalize(cachedValue)
+        );
+      }
+      return normalizedVerifiedValue;
     }
 
     private async syncSettingAfterWrite(
@@ -1650,14 +1764,14 @@ export class UnitRegistry {
         this.log(`[UnitRegistry] Verified filter change interval ${verifiedHours}h for ${unitId}`);
         const verifiedMonths = filterIntervalHoursToMonths(
           verifiedHours,
-          (message) => this.warn(message),
+          (message) => this.log(message),
         );
         for (const device of unit.devices) {
           this.updateDeviceSettings(device, {
             [FILTER_CHANGE_INTERVAL_MONTHS_SETTING]: verifiedMonths,
             [FILTER_CHANGE_INTERVAL_HOURS_LEGACY_SETTING]: verifiedHours,
           }).catch((err) => {
-            this.warn(`[UnitRegistry] Failed to sync filter settings for ${unitId}:`, err);
+            this.log(`[UnitRegistry] Failed to sync filter settings for ${unitId}:`, err);
           });
         }
 
@@ -1708,7 +1822,7 @@ export class UnitRegistry {
           this.updateDeviceSettings(device, {
             [FIREPLACE_DURATION_SETTING]: verifiedMinutes,
           }).catch((err) => {
-            this.warn(`[UnitRegistry] Failed to sync fireplace duration setting for ${unitId}:`, err);
+            this.log(`[UnitRegistry] Failed to sync fireplace duration setting for ${unitId}:`, err);
           });
         }
 
@@ -1795,7 +1909,7 @@ export class UnitRegistry {
             [settingsForMode.supply]: verifiedSupply,
             [settingsForMode.exhaust]: verifiedExhaust,
           }).catch((err) => {
-            this.warn(`[UnitRegistry] Failed to sync ${mode} fan settings for ${unitId}:`, err);
+            this.log(`[UnitRegistry] Failed to sync ${mode} fan settings for ${unitId}:`, err);
           });
         }
 
@@ -1808,7 +1922,7 @@ export class UnitRegistry {
       if (!unit) return;
       if (unit.transport === 'cloud') {
         this.cloudPollUnit(unit).catch((err) => {
-          this.warn(`[UnitRegistry] Cloud poll failed for ${unitId}:`, err);
+          this.log(`[UnitRegistry] Cloud poll failed for ${unitId}:`, err);
         });
         return;
       }
@@ -1838,7 +1952,7 @@ export class UnitRegistry {
           }
           unit.pollInFlight = false;
           if (err) {
-            this.warn(`[UnitRegistry] Poll failed for ${unit.unitId}:`, err);
+            this.log(`[UnitRegistry] Poll failed for ${unit.unitId}:`, err);
             this.handlePollFailure(unit);
             return;
           }
@@ -1894,7 +2008,7 @@ export class UnitRegistry {
     private reconcileObservedWriteStatus(unit: UnitState, key: string, value: number, pollTime: number) {
       const pending = unit.pendingWriteErrors.get(key);
       if (pending && pending.value !== null && valuesMatch(value, pending.value)) {
-        this.warn(`[UnitRegistry] Write error cleared for ${key}: now ${value} (was code ${pending.code})`);
+        this.log(`[UnitRegistry] Write error cleared for ${key}: now ${value} (was code ${pending.code})`);
         unit.pendingWriteErrors.delete(key);
       }
       this.reconcileVentilationWriteContext(unit, key, value, pollTime);
@@ -1906,7 +2020,7 @@ export class UnitRegistry {
       if (!context) return;
 
       if (context.value !== value && pollTime - context.at < 60000) {
-        this.warn(
+        this.log(
           `[UnitRegistry] Ventilation mode mismatch after write: expected ${context.value}`
           + ` for '${context.mode}', got ${value}`,
         );
@@ -1922,7 +2036,7 @@ export class UnitRegistry {
       unit.consecutiveFailures++;
       if (unit.consecutiveFailures >= MAX_BACNET_CONSECUTIVE_FAILURES && unit.available) {
         unit.available = false;
-        this.warn(
+        this.log(
           `[UnitRegistry] Unit ${unit.unitId} marked unavailable after`
           + ` ${unit.consecutiveFailures} consecutive failures`,
         );
@@ -1974,7 +2088,7 @@ export class UnitRegistry {
         const rediscoveredIp = String(match.ip || '').trim();
         const rediscoveredPort = normalizeBacnetPort(match.bacnetPort);
         if (!rediscoveredIp || rediscoveredPort === undefined) {
-          this.warn(
+          this.log(
             `[UnitRegistry] Ignoring invalid rediscovered endpoint for ${unit.unitId}:`
             + ` ${rediscoveredIp || '<empty>'}:${String(match.bacnetPort)}`,
           );
@@ -2143,7 +2257,7 @@ export class UnitRegistry {
         try {
           normalized = normalizeFanProfilePercent(profileValue, mode, fan);
         } catch (error) {
-          this.warn(`[UnitRegistry] Invalid current fan setpoint ${mode}.${fan}:`, error);
+          this.log(`[UnitRegistry] Invalid current fan setpoint ${mode}.${fan}:`, error);
           continue;
         }
 
@@ -2177,7 +2291,7 @@ export class UnitRegistry {
       try {
         this.fanSetpointChangedHandler(event);
       } catch (error) {
-        this.warn('[UnitRegistry] Failed to handle fan setpoint changed callback:', error);
+        this.log('[UnitRegistry] Failed to handle fan setpoint changed callback:', error);
       }
     }
 
@@ -2208,7 +2322,7 @@ export class UnitRegistry {
       try {
         this.dehumidificationStateChangedHandler(event);
       } catch (error) {
-        this.warn('[UnitRegistry] Failed to handle dehumidification state changed callback:', error);
+        this.log('[UnitRegistry] Failed to handle dehumidification state changed callback:', error);
       }
     }
 
@@ -2236,7 +2350,7 @@ export class UnitRegistry {
       try {
         this.freeCoolingStateChangedHandler(event);
       } catch (error) {
-        this.warn('[UnitRegistry] Failed to handle free cooling state changed callback:', error);
+        this.log('[UnitRegistry] Failed to handle free cooling state changed callback:', error);
       }
     }
 
@@ -2269,7 +2383,7 @@ export class UnitRegistry {
       try {
         this.heatingCoilStateChangedHandler(event);
       } catch (error) {
-        this.warn('[UnitRegistry] Failed to handle heating coil state changed callback:', error);
+        this.log('[UnitRegistry] Failed to handle heating coil state changed callback:', error);
       }
     }
 
@@ -2314,7 +2428,7 @@ export class UnitRegistry {
       const normalizedIp = String(unit.ip || '').trim();
       const normalizedPort = normalizeBacnetPort(unit.bacnetPort);
       if (!normalizedIp || normalizedPort === undefined) {
-        this.warn(
+        this.log(
           `[UnitRegistry] Skipping connection settings sync for ${unit.unitId};`
           + ` invalid endpoint ${normalizedIp || '<empty>'}:${String(unit.bacnetPort)}`,
         );
@@ -2331,7 +2445,7 @@ export class UnitRegistry {
           [BACNET_IP_SETTING]: normalizedIp,
           [BACNET_PORT_SETTING]: String(normalizedPort),
         }).catch((err) => {
-          this.warn(
+          this.log(
             `[UnitRegistry] Failed to sync connection settings for ${device.getData().unitId}:`,
             err,
           );
@@ -2359,7 +2473,7 @@ export class UnitRegistry {
       if (Object.keys(updates).length === 0) return;
 
       this.updateDeviceSettings(device, updates).catch((err) => {
-        this.warn(`[UnitRegistry] Failed to sync target temperature settings for ${device.getData().unitId}:`, err);
+        this.log(`[UnitRegistry] Failed to sync target temperature settings for ${device.getData().unitId}:`, err);
       });
     }
 
@@ -2409,7 +2523,7 @@ export class UnitRegistry {
       if (Object.keys(updates).length === 0) return;
 
       this.updateDeviceSettings(device, updates).catch((err) => {
-        this.warn(
+        this.log(
           `[UnitRegistry] Failed to sync free cooling settings for ${device.getData().unitId}:`,
           err,
         );
@@ -2428,7 +2542,7 @@ export class UnitRegistry {
           const normalized = Math.round(nextValue);
           const range = fanProfilePercentRange(mode, fan);
           if (normalized < range.min || normalized > range.max) {
-            this.warn(
+            this.log(
               `[UnitRegistry] Ignoring out-of-range ${mode} ${fan} fan profile value`
               + ` ${nextValue} from ${device.getData().unitId}`,
             );
@@ -2446,7 +2560,7 @@ export class UnitRegistry {
       if (Object.keys(updates).length === 0) return;
 
       this.updateDeviceSettings(device, updates).catch((err) => {
-        this.warn(`[UnitRegistry] Failed to sync fan profile settings for ${device.getData().unitId}:`, err);
+        this.log(`[UnitRegistry] Failed to sync fan profile settings for ${device.getData().unitId}:`, err);
       });
     }
 
@@ -2457,7 +2571,7 @@ export class UnitRegistry {
       try {
         normalizedRuntime = normalizeFireplaceDurationMinutes(runtimeValue);
       } catch (error) {
-        this.warn(
+        this.log(
           `[UnitRegistry] Ignoring out-of-range fireplace duration ${runtimeValue}`
           + ` from ${device.getData().unitId}:`,
           error,
@@ -2472,7 +2586,7 @@ export class UnitRegistry {
       this.updateDeviceSettings(device, {
         [FIREPLACE_DURATION_SETTING]: normalizedRuntime,
       }).catch((err) => {
-        this.warn(`[UnitRegistry] Failed to sync fireplace duration setting for ${device.getData().unitId}:`, err);
+        this.log(`[UnitRegistry] Failed to sync fireplace duration setting for ${device.getData().unitId}:`, err);
       });
     }
 
@@ -2482,7 +2596,7 @@ export class UnitRegistry {
       const normalizedHours = Math.round(filterLimit);
       const normalizedMonths = filterIntervalHoursToMonths(
         normalizedHours,
-        (message) => this.warn(message),
+        (message) => this.log(message),
       );
       const currentMonths = Number(device.getSetting(FILTER_CHANGE_INTERVAL_MONTHS_SETTING));
       const currentHours = Number(device.getSetting(FILTER_CHANGE_INTERVAL_HOURS_LEGACY_SETTING));
@@ -2494,7 +2608,7 @@ export class UnitRegistry {
         [FILTER_CHANGE_INTERVAL_MONTHS_SETTING]: normalizedMonths,
         [FILTER_CHANGE_INTERVAL_HOURS_LEGACY_SETTING]: normalizedHours,
       }).catch((err) => {
-        this.warn(`[UnitRegistry] Failed to sync filter interval settings for ${device.getData().unitId}:`, err);
+        this.log(`[UnitRegistry] Failed to sync filter interval settings for ${device.getData().unitId}:`, err);
       });
     }
 
@@ -2505,7 +2619,7 @@ export class UnitRegistry {
       if (unit.deferredMode === 'fireplace' && !tempOpActive && data.rapid_active !== 1) {
         unit.deferredMode = undefined;
         unit.deferredSince = undefined;
-        this.warn(`[UnitRegistry] Retrying deferred fireplace for ${unit.unitId}`);
+        this.log(`[UnitRegistry] Retrying deferred fireplace for ${unit.unitId}`);
         this.logDetachedPromiseError(
           this.setFanMode(unit.unitId, 'fireplace'),
           `[UnitRegistry] Deferred fireplace retry failed for ${unit.unitId}:`,
@@ -2600,14 +2714,14 @@ export class UnitRegistry {
         if (unit.lastMismatchKey === mismatchKey) return;
         unit.lastMismatchKey = mismatchKey;
         const delay = data.comfort_delay ?? 'unknown';
-        this.warn(`[UnitRegistry] Away pending for ${unit.unitId}: delay active (configured ${delay} min)`);
+        this.log(`[UnitRegistry] Away pending for ${unit.unitId}: delay active (configured ${delay} min)`);
         return;
       }
 
       const mismatchKey = `${expectedMode}->${mode}`;
       if (unit.lastMismatchKey === mismatchKey) return;
       unit.lastMismatchKey = mismatchKey;
-      this.warn(
+      this.log(
         `[UnitRegistry] Mode mismatch for ${unit.unitId}: expected '${expectedMode}' got '${mode}'`
         + ` (comfort=${formatModeSignalValue(data.comfort_button)}`
         + ` vent=${formatModeSignalValue(data.ventilation_mode)}`
@@ -2692,7 +2806,7 @@ export class UnitRegistry {
       if (active === undefined) {
         const firstReadError = readResults.find((result) => result.status === 'rejected');
         if (firstReadError?.status === 'rejected') {
-          this.warn(
+          this.log(
             `[UnitRegistry] Failed to bootstrap dehumidification state for ${unitId}:`,
             firstReadError.reason,
           );
@@ -2735,7 +2849,7 @@ export class UnitRegistry {
           mergedData.free_cooling_actual_mode = modeValue;
         } catch (error) {
           if (!('free_cooling_actual_mode' in mergedData)) {
-            this.warn(
+            this.log(
               `[UnitRegistry] Failed to bootstrap free cooling state for ${unitId}:`,
               error,
             );
@@ -2767,7 +2881,7 @@ export class UnitRegistry {
         return enabled;
       } catch (error) {
         if (unit.heatingCoilStateInitialized && typeof unit.heatingCoilEnabled === 'boolean') {
-          this.warn(
+          this.log(
             `[UnitRegistry] Falling back to cached heating coil state for ${unitId} after read error:`,
             error,
           );
@@ -2909,7 +3023,7 @@ export class UnitRegistry {
           await this.applyFireplaceMode(context, fireplaceRuntime, temporaryRapidActive);
           return;
         default:
-          this.warn(`[UnitRegistry] Unsupported fan mode '${mode}' for ${unit.unitId}`);
+          this.log(`[UnitRegistry] Unsupported fan mode '${mode}' for ${unit.unitId}`);
       }
     }
 
@@ -2962,7 +3076,7 @@ export class UnitRegistry {
         if (update.value !== null) {
           unit.pendingWriteErrors.set(writeKey, { value: update.value, code });
         }
-        this.warn(
+        this.log(
           `[UnitRegistry] Write returned Code:37 for ${writeKey};`
           + ' will verify on next poll.',
         );
@@ -2974,13 +3088,13 @@ export class UnitRegistry {
       if (unsupportedObject) {
         unit.lastWriteValues.set(writeKey, { value: update.value, at: now });
         if (NEVER_BLOCK_KEYS.has(writeKey)) {
-          this.warn(
+          this.log(
             `[UnitRegistry] Write unsupported for ${writeKey},`
             + ' but will keep retrying.',
           );
         } else {
           unit.blockedWrites.add(writeKey);
-          this.warn(
+          this.log(
             `[UnitRegistry] Disabling writes for ${writeKey}`
             + ' (unsupported object on unit).',
           );
@@ -2991,13 +3105,13 @@ export class UnitRegistry {
       if (message.includes('Code:40') || message.includes('Code:9')) {
         unit.lastWriteValues.set(writeKey, { value: update.value, at: now });
         if (NEVER_BLOCK_KEYS.has(writeKey)) {
-          this.warn(
+          this.log(
             `[UnitRegistry] Write denied for ${writeKey},`
             + ' but will keep retrying.',
           );
         } else {
           unit.blockedWrites.add(writeKey);
-          this.warn(
+          this.log(
             `[UnitRegistry] Disabling writes for ${writeKey}`
             + ' due to device error.',
           );
@@ -3017,7 +3131,7 @@ export class UnitRegistry {
       const { unit } = context;
       const writeKey = objectKey(update.objectId.type, update.objectId.instance);
       if (unit.blockedWrites.has(writeKey)) {
-        this.warn(`[UnitRegistry] Skipping write ${writeKey} (write access denied previously)`);
+        this.log(`[UnitRegistry] Skipping write ${writeKey} (write access denied previously)`);
         return false;
       }
 
@@ -3150,7 +3264,7 @@ export class UnitRegistry {
     private async applyHighMode(context: FanModeWriteContext) {
       const comfortOk = await this.writeComfort(context, 1);
       if (context.unit.blockedWrites.has(context.ventilationModeKey)) {
-        this.warn('[UnitRegistry] Ventilation mode write blocked; cannot set high mode.');
+        this.log('[UnitRegistry] Ventilation mode write blocked; cannot set high mode.');
         return;
       }
       if (comfortOk) {
@@ -3290,20 +3404,25 @@ export class UnitRegistry {
     private async executeCloudPoll(unit: UnitState) {
       if (!unit.cloud) return;
 
-      const { plantId, client } = unit.cloud;
+      const { plantId } = unit.cloud;
 
       const paths = POLL_REQUEST.map((req: any) => {
         const objId = req.objectId;
         return bacnetObjectToCloudPath(objId.type, objId.instance);
-      });
+      }).filter((path) => !unit.unsupportedCloudPollPaths.has(path));
+
+      if (paths.length === 0) {
+        this.stopCloudPollingDueToNoSupportedDatapoints(unit);
+        return;
+      }
 
       let values: Record<string, any>;
       try {
-        values = await client.readDatapoints(plantId, paths);
+        values = await this.readCloudPollDatapoints(unit, plantId, paths);
       } catch (err) {
         unit.pollInFlight = false;
         if (err instanceof AuthenticationError) {
-          this.warn(`[UnitRegistry] Cloud auth failed for ${unit.unitId}: ${(err as Error).message}`);
+          this.log(`[UnitRegistry] Cloud auth failed for ${unit.unitId}: ${(err as Error).message}`);
           unit.available = false;
           if (unit.pollInterval) {
             clearInterval(unit.pollInterval);
@@ -3317,6 +3436,11 @@ export class UnitRegistry {
           }
           return;
         }
+        this.error(
+          `[UnitRegistry] Cloud readDatapoints failed for ${unit.unitId}`
+          + ` (plant ${plantId}, ${paths.length} datapoints): ${formatErrorMessage(err)}`,
+          err,
+        );
         this.handleCloudPollFailure(unit);
         return;
       }
@@ -3333,11 +3457,77 @@ export class UnitRegistry {
       }
     }
 
+    private stopCloudPollingDueToNoSupportedDatapoints(unit: UnitState) {
+      unit.pollInFlight = false;
+      unit.available = false;
+      if (unit.pollInterval) {
+        clearInterval(unit.pollInterval);
+        unit.pollInterval = null;
+      }
+      this.error(
+        `[UnitRegistry] Cloud poll stopped for ${unit.unitId}: no supported datapoints remain`,
+      );
+      for (const device of unit.devices) {
+        this.logDetachedPromiseError(
+          device.setUnavailable('Cloud polling stopped: no supported datapoints remain.'),
+          `[UnitRegistry] Failed to set device unavailable for ${unit.unitId}:`,
+        );
+      }
+    }
+
+    private async readCloudPollDatapoints(
+      unit: UnitState,
+      plantId: string,
+      paths: string[],
+    ): Promise<Record<string, any>> {
+      if (!unit.cloud) return {};
+      const { client } = unit.cloud;
+      try {
+        return await client.readDatapoints(plantId, paths);
+      } catch (err) {
+        if (!(err instanceof HttpError) || err.status !== 404) {
+          throw err;
+        }
+        if (paths.length === 1) {
+          const [path] = paths;
+          unit.unsupportedCloudPollPaths.add(path);
+          this.error(
+            `[UnitRegistry] Cloud datapoint ${formatCloudPathForLog(path)} returned 404`
+            + ` for ${unit.unitId} (plant ${plantId}); excluding it from future polls`
+            + ' until we have a cloud-compatible read path for it',
+          );
+          throw new Error(
+            `[UnitRegistry] Cloud poll for ${unit.unitId} (plant ${plantId})`
+            + ` has no remaining supported datapoints after excluding ${formatCloudPathForLog(path)}`,
+          );
+        }
+
+        const midpoint = Math.floor(paths.length / 2);
+        const firstHalf = await this.readCloudPollDatapoints(
+          unit,
+          plantId,
+          paths.slice(0, midpoint),
+        );
+        const secondHalf = await this.readCloudPollDatapoints(
+          unit,
+          plantId,
+          paths.slice(midpoint),
+        );
+        const datapoints = { ...firstHalf, ...secondHalf };
+        if (Object.keys(datapoints).length === 0) {
+          throw new Error(
+            `[UnitRegistry] Cloud poll for ${unit.unitId} (plant ${plantId}) returned no datapoints`,
+          );
+        }
+        return datapoints;
+      }
+    }
+
     private handleCloudPollFailure(unit: UnitState) {
       unit.consecutiveFailures++;
       if (unit.consecutiveFailures >= MAX_CLOUD_CONSECUTIVE_FAILURES && unit.available) {
         unit.available = false;
-        this.warn(
+        this.log(
           `[UnitRegistry] Cloud unit ${unit.unitId} marked unavailable after`
           + ` ${unit.consecutiveFailures} consecutive failures`,
         );
@@ -3393,12 +3583,23 @@ export class UnitRegistry {
       const path = bacnetObjectToCloudPath(objectId.type, objectId.instance);
 
       try {
-        return await client.writeDatapoint(plantId, path, value);
+        const success = await client.writeDatapoint(plantId, path, value);
+        if (!success) {
+          this.error(
+            `[UnitRegistry] Cloud writeDatapoint returned unsuccessful response for ${unit.unitId}`
+            + ` (plant ${plantId}, path ${path}, value ${String(value)})`,
+          );
+        }
+        return success;
       } catch (err) {
         if (err instanceof AuthenticationError) {
           throw err;
         }
-        this.error(`[UnitRegistry] Cloud write failed for ${unit.unitId}:`, err);
+        this.error(
+          `[UnitRegistry] Cloud writeDatapoint failed for ${unit.unitId}`
+          + ` (plant ${plantId}, path ${path}, value ${String(value)}): ${formatErrorMessage(err)}`,
+          err,
+        );
         return false;
       }
     }
@@ -3446,14 +3647,14 @@ export class UnitRegistry {
 
       const months = filterIntervalHoursToMonths(
         intervalHours,
-        (message) => this.warn(message),
+        (message) => this.log(message),
       );
       for (const device of unit.devices) {
         this.updateDeviceSettings(device, {
           [FILTER_CHANGE_INTERVAL_MONTHS_SETTING]: months,
           [FILTER_CHANGE_INTERVAL_HOURS_LEGACY_SETTING]: intervalHours,
         }).catch((err) => {
-          this.warn(`[UnitRegistry] Failed to sync filter settings for ${unit.unitId}:`, err);
+          this.log(`[UnitRegistry] Failed to sync filter settings for ${unit.unitId}:`, err);
         });
       }
 
@@ -3478,7 +3679,7 @@ export class UnitRegistry {
         this.updateDeviceSettings(device, {
           [FIREPLACE_DURATION_SETTING]: durationMinutes,
         }).catch((err) => {
-          this.warn(
+          this.log(
             `[UnitRegistry] Failed to sync fireplace duration setting for ${unit.unitId}:`,
             err,
           );
@@ -3513,7 +3714,7 @@ export class UnitRegistry {
           [settingsForMode.supply]: supplyPercent,
           [settingsForMode.exhaust]: exhaustPercent,
         }).catch((err) => {
-          this.warn(`[UnitRegistry] Failed to sync ${mode} fan settings for ${unit.unitId}:`, err);
+          this.log(`[UnitRegistry] Failed to sync ${mode} fan settings for ${unit.unitId}:`, err);
         });
       }
 
@@ -3612,7 +3813,7 @@ export class UnitRegistry {
           }
           break;
         default:
-          this.warn(
+          this.log(
             `[UnitRegistry] Unsupported cloud fan mode '${mode}' for ${unit.unitId}`,
           );
           return;
