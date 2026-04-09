@@ -7,6 +7,7 @@ import { UnitRegistry } from '../lib/UnitRegistry.ts';
 import {
   FlexitCloudClient,
   AuthenticationError,
+  HttpError,
   bacnetObjectToCloudPath,
   cloudPathToBacnetObject,
 } from '../lib/flexitCloudClient.ts';
@@ -141,8 +142,10 @@ function makeMockCloudClient(options: {
   sensorValues?: Array<{ type: number; instance: number; value: number }>;
   writeSuccess?: boolean;
   authFails?: boolean;
+  unsupportedReadPaths?: string[];
 }) {
   const sensorValues = [...(options.sensorValues ?? defaultSensorValues())];
+  const unsupportedReadPaths = new Set(options.unsupportedReadPaths ?? []);
 
   const updateSensorValue = (path: string, value: number | string | null) => {
     const { type, instance } = cloudPathToBacnetObject(path);
@@ -163,7 +166,12 @@ function makeMockCloudClient(options: {
       },
     ]),
     readDatapoints: sinon.stub().callsFake(
-      async (plantId: string, _paths: string[]) => buildCloudSensorResponse(plantId, sensorValues),
+      async (plantId: string, paths: string[]) => {
+        if (paths.some((path) => unsupportedReadPaths.has(path))) {
+          throw new HttpError(404, 'Not Found');
+        }
+        return buildCloudSensorResponse(plantId, sensorValues);
+      },
     ),
     writeDatapoint: sinon.stub().callsFake(async (_plantId: string, path: string, value: number | string | null) => {
       const success = options.writeSuccess ?? true;
@@ -345,6 +353,47 @@ describe('Cloud transport – UnitRegistry integration', () => {
     await sleep(100);
 
     expect(mockClient.readDatapoints.callCount).to.be.greaterThanOrEqual(1);
+  });
+
+  it('chunks oversized cloud poll reads before sending requests', async () => {
+    registry.registerCloud(UNIT_ID, mock.device, {
+      plantId: PLANT_ID,
+      client: mockClient,
+    });
+
+    await sleep(100);
+
+    expect(mockClient.readDatapoints.callCount).toBeGreaterThanOrEqual(2);
+    const requestedBatchSizes = mockClient.readDatapoints.getCalls().map((call: any) => call.args[1].length);
+    expect(requestedBatchSizes.every((size: number) => size <= 24)).toBe(true);
+  });
+
+  it('excludes unsupported cloud datapoints after a 404 and continues polling', async () => {
+    const unsupportedPath = bacnetObjectToCloudPath(48, 318);
+    const partiallySupportedClient = makeMockCloudClient({
+      unsupportedReadPaths: [unsupportedPath],
+    });
+
+    registry.registerCloud(UNIT_ID, mock.device, {
+      plantId: PLANT_ID,
+      client: partiallySupportedClient,
+    });
+    await sleep(100);
+
+    const unit = (registry as any).units.get(UNIT_ID);
+    expect(unit.unsupportedCloudPollPaths.has(unsupportedPath)).toBe(true);
+    expect(unit.consecutiveFailures).toBe(0);
+    expect(mock.device.setUnavailable.called).toBe(false);
+    expect(mock.device.setCapabilityValue.called).toBe(true);
+
+    partiallySupportedClient.readDatapoints.resetHistory();
+    (registry as any).pollUnit(UNIT_ID);
+    await sleep(100);
+
+    expect(partiallySupportedClient.readDatapoints.called).toBe(true);
+    const requestedPaths = partiallySupportedClient.readDatapoints.firstCall.args[1];
+    expect(requestedPaths).not.toContain(unsupportedPath);
+    expect(unit.pollInterval).not.toBe(null);
   });
 
   it('populates capabilities from cloud poll', async () => {

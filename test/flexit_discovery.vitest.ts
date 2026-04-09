@@ -1,6 +1,7 @@
 import { EventEmitter } from 'events';
 import sinon from 'sinon';
 import { afterEach, describe, expect, it } from 'vitest';
+import { findStructuredLog } from './logging_test_utils';
 import {
   discoverFlexitUnits,
   listIPv4Interfaces,
@@ -59,6 +60,33 @@ describe('flexitDiscovery (vitest)', () => {
   it('returns no discovered units when the requested interface is unavailable', async () => {
     const createSocket = sinon.stub();
     const log = sinon.stub();
+    const error = sinon.stub();
+    installDiscoveryDependencies({
+      networkInterfaces: {
+        eth0: [{ family: 'IPv4', internal: false, address: '192.0.2.10' }],
+      },
+      createSocket,
+    });
+
+    const units = await discoverFlexitUnits({
+      interfaceAddress: '198.51.100.9',
+      timeoutMs: 0,
+      log,
+      error,
+    });
+
+    expect(units).toEqual([]);
+    expect(createSocket.called).toBe(false);
+    const selectionLog = findStructuredLog(log, 'discovery.interfaces.selected');
+    expect(selectionLog?.availableInterfaces).toEqual(['eth0=192.0.2.10']);
+    expect(selectionLog?.requestedInterfaceAddress).toBe('198.51.100.9');
+    expect(selectionLog?.selectedInterfaces).toEqual([]);
+    expect(findStructuredLog(log, 'discovery.interfaces.none_selected')?.interfaceAddress).toBe('198.51.100.9');
+  });
+
+  it('keeps structured discovery logging enabled when only a log callback is provided', async () => {
+    const createSocket = sinon.stub();
+    const log = sinon.stub();
     installDiscoveryDependencies({
       networkInterfaces: {
         eth0: [{ family: 'IPv4', internal: false, address: '192.0.2.10' }],
@@ -74,10 +102,7 @@ describe('flexitDiscovery (vitest)', () => {
 
     expect(units).toEqual([]);
     expect(createSocket.called).toBe(false);
-    expect(log.calledWithExactly('[Discovery] Available IPv4 interfaces: eth0=192.0.2.10')).toBe(true);
-    expect(log.calledWithExactly('[Discovery] Requested interface address: 198.51.100.9')).toBe(true);
-    expect(log.calledWithExactly('[Discovery] Selected interfaces: none')).toBe(true);
-    expect(log.calledWithExactly('[Discovery] No candidate interfaces available for discovery')).toBe(true);
+    expect(findStructuredLog(log, 'discovery.interfaces.none_selected')?.interfaceAddress).toBe('198.51.100.9');
   });
 
   it('logs interface selection, reply parsing, and per-interface failures while discovering', async () => {
@@ -173,7 +198,8 @@ describe('flexitDiscovery (vitest)', () => {
     expect(txSocket.send.calledOnce).toBe(true);
     expect(rxSocket.close.calledOnce).toBe(true);
     expect(txSocket.close.calledOnce).toBe(true);
-    expect(log.calledWithExactly('[Discovery] Available IPv4 interfaces: eth0=192.0.2.10, eth1=192.0.2.11')).toBe(true);
-    expect(log.calledWithExactly('[Discovery] Selected interfaces: eth0=192.0.2.10, eth1=192.0.2.11')).toBe(true);
+    const selectionLog = findStructuredLog(log, 'discovery.interfaces.selected');
+    expect(selectionLog?.availableInterfaces).toEqual(['eth0=192.0.2.10', 'eth1=192.0.2.11']);
+    expect(selectionLog?.selectedInterfaces).toEqual(['eth0=192.0.2.10', 'eth1=192.0.2.11']);
   });
 });

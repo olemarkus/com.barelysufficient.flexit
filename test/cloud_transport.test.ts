@@ -363,6 +363,19 @@ describe('Cloud transport – UnitRegistry integration', () => {
     expect(mockClient.readDatapoints.callCount).to.be.greaterThanOrEqual(1);
   });
 
+  it('chunks oversized cloud poll reads before sending requests', async () => {
+    registry.registerCloud(UNIT_ID, mock.device, {
+      plantId: PLANT_ID,
+      client: mockClient,
+    });
+
+    await sleep(100);
+
+    expect(mockClient.readDatapoints.callCount).to.be.greaterThanOrEqual(2);
+    const requestedBatchSizes = mockClient.readDatapoints.getCalls().map((call: any) => call.args[1].length);
+    expect(requestedBatchSizes.every((size: number) => size <= 24)).to.equal(true);
+  });
+
   it('populates capabilities from cloud poll', async () => {
     registry.registerCloud(UNIT_ID, mock.device, {
       plantId: PLANT_ID,
@@ -708,6 +721,7 @@ describe('Cloud transport – UnitRegistry integration', () => {
 
     const unit = (registry as any).units.get(UNIT_ID);
     expect(unit.unsupportedCloudPollPaths.has(unsupportedPath)).to.equal(true);
+    expect(unit.consecutiveFailures).to.equal(0);
 
     partiallySupportedClient.readDatapoints.resetHistory();
     (registry as any).pollUnit(UNIT_ID);

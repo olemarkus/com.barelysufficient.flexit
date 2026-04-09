@@ -1,6 +1,7 @@
 import sinon from 'sinon';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createFlexitAppClass } from '../lib/createAppClass';
+import { findStructuredLog } from './logging_test_utils';
 
 class MockHomeyApp {
   homey: any;
@@ -166,7 +167,11 @@ describe('App flow registration (vitest)', () => {
     uncaughtHandler(uncaught);
     rejectionHandler(rejection, Promise.resolve());
 
-    expect(app.error.calledWith('Uncaught Exception:', uncaught)).toBe(true);
-    expect(app.error.calledWith('Unhandled Rejection:', rejection)).toBe(true);
+    const uncaughtLog = findStructuredLog(app.error, 'app.process.uncaught_exception');
+    const rejectionLog = findStructuredLog(app.error, 'app.process.unhandled_rejection');
+    expect(uncaughtLog?.msg).toBe('Unhandled process exception');
+    expect(uncaughtLog?.error?.message).toBe('uncaught');
+    expect(rejectionLog?.msg).toBe('Unhandled promise rejection');
+    expect(rejectionLog?.error?.message).toBe('rejection');
   });
 });

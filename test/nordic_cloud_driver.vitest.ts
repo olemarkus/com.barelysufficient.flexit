@@ -1,5 +1,6 @@
 import sinon from 'sinon';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { findStructuredLog } from './logging_test_utils';
 
 class MockHomeyDriver {
   log = sinon.stub();
@@ -72,7 +73,9 @@ describe('Nordic cloud driver (vitest)', () => {
 
     await driver.onInit();
 
-    expect(driver.log.calledOnceWithExactly('Flexit Nordic Cloud driver init (app v1.2.3)')).toBe(true);
+    const log = findStructuredLog(driver.log, 'driver.init');
+    expect(log?.msg).toBe('Flexit Nordic cloud driver initialized');
+    expect(log?.appVersion).toBe('1.2.3');
   });
 
   it('falls back to the driver manifest version or unknown during initialization', async () => {
@@ -82,7 +85,7 @@ describe('Nordic cloud driver (vitest)', () => {
 
     await manifestDriver.onInit();
 
-    expect(manifestDriver.log.calledWithExactly('Flexit Nordic Cloud driver init (app v0.9.0)')).toBe(true);
+    expect(findStructuredLog(manifestDriver.log, 'driver.init')?.appVersion).toBe('0.9.0');
 
     const unknownDriver = new DriverClass();
     unknownDriver.homey = {};
@@ -90,7 +93,7 @@ describe('Nordic cloud driver (vitest)', () => {
 
     await unknownDriver.onInit();
 
-    expect(unknownDriver.log.calledWithExactly('Flexit Nordic Cloud driver init (app vunknown)')).toBe(true);
+    expect(findStructuredLog(unknownDriver.log, 'driver.init')?.appVersion).toBe('unknown');
   });
 
   it('requires a successful cloud login before listing paired devices', async () => {
@@ -148,7 +151,8 @@ describe('Nordic cloud driver (vitest)', () => {
 
     expect(loginResult).toBe(true);
     expect(listClient.restoreToken.calledOnceWithExactly(pairedToken)).toBe(true);
-    expect(driver.log.calledOnceWithExactly('[Pair] Found 2 plant(s) in Flexit cloud')).toBe(true);
+    const listedLog = findStructuredLog(driver.log, 'driver.pair.devices.listed');
+    expect(listedLog?.plantCount).toBe(2);
     expect(devices).toEqual([
       {
         name: 'Living Room',
@@ -211,7 +215,8 @@ describe('Nordic cloud driver (vitest)', () => {
 
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).message).toBe('Authentication failed. Check your credentials.');
-    expect(driver.error.calledOnceWithExactly('[Pair] Cloud authentication failed:', authFailure)).toBe(true);
+    const failureLog = findStructuredLog(driver.error, 'driver.pair.login.failed');
+    expect(failureLog?.error?.message).toBe('bad credentials');
   });
 
   it('restores cloud auth for registered devices during repair without re-registering them', async () => {
@@ -371,9 +376,15 @@ describe('Nordic cloud driver (vitest)', () => {
     expect(device.setStoreValue.calledWithExactly('cloudAccessToken', 'callback-access-token')).toBe(true);
     expect(device.setStoreValue.calledWithExactly('cloudRefreshToken', 'callback-refresh-token')).toBe(true);
     expect(device.setStoreValue.calledWithExactly('cloudTokenExpiresAt', 1234)).toBe(true);
-    expect(driver.error.calledWithMatch('[Repair] Failed to persist cloud access token:')).toBe(true);
-    expect(driver.error.calledWithMatch('[Repair] Failed to persist cloud refresh token:')).toBe(true);
-    expect(driver.error.calledWithMatch('[Repair] Failed to persist cloud token expiry:')).toBe(true);
+    expect(
+      findStructuredLog(driver.error, 'driver.repair.token_persist.access.failed')?.error?.message,
+    ).toBe('access failed');
+    expect(
+      findStructuredLog(driver.error, 'driver.repair.token_persist.refresh.failed')?.error?.message,
+    ).toBe('refresh failed');
+    expect(
+      findStructuredLog(driver.error, 'driver.repair.token_persist.expiry.failed')?.error?.message,
+    ).toBe('expiry failed');
   });
 
   it('rejects repair when an unregistered device has no refresh token to restore', async () => {
@@ -457,6 +468,6 @@ describe('Nordic cloud driver (vitest)', () => {
 
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).message).toBe('Authentication failed. Check your credentials.');
-    expect(driver.error.calledOnceWithExactly('[Repair] Cloud authentication failed:', authFailure)).toBe(true);
+    expect(findStructuredLog(driver.error, 'driver.repair.login.failed')?.error?.message).toBe('repair auth failed');
   });
 });
