@@ -479,6 +479,17 @@ export function normalizeFreeCoolingMinOnTimeSeconds(value: unknown): number {
   return rounded;
 }
 
+function tryNormalizeValue(
+  value: unknown,
+  normalize: (input: unknown) => number,
+): number | undefined {
+  try {
+    return normalize(value);
+  } catch {
+    return undefined;
+  }
+}
+
 export function normalizeFireplaceDurationMinutes(value: unknown): number {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) {
@@ -1282,9 +1293,12 @@ export class UnitRegistry {
 
       const normalizedValue = normalizeFreeCoolingTemperature(value);
       const currentValue = unit.probeValues.get(FREE_COOLING_TEMPERATURE_SETPOINT_KEY);
+      const normalizedCurrentValue = currentValue !== undefined
+        ? tryNormalizeValue(currentValue, normalizeFreeCoolingTemperature)
+        : undefined;
       if (
-        currentValue !== undefined
-        && valuesMatch(normalizeFreeCoolingTemperature(currentValue), normalizedValue)
+        normalizedCurrentValue !== undefined
+        && valuesMatch(normalizedCurrentValue, normalizedValue)
       ) {
         this.log(
           `[UnitRegistry] Skipping free cooling setpoint write — already ${normalizedValue}`
@@ -1309,9 +1323,12 @@ export class UnitRegistry {
 
       const normalizedValue = normalizeFreeCoolingTemperature(value);
       const currentValue = unit.probeValues.get(FREE_COOLING_OUTSIDE_TEMPERATURE_LIMIT_KEY);
+      const normalizedCurrentValue = currentValue !== undefined
+        ? tryNormalizeValue(currentValue, normalizeFreeCoolingTemperature)
+        : undefined;
       if (
-        currentValue !== undefined
-        && valuesMatch(normalizeFreeCoolingTemperature(currentValue), normalizedValue)
+        normalizedCurrentValue !== undefined
+        && valuesMatch(normalizedCurrentValue, normalizedValue)
       ) {
         this.log(
           `[UnitRegistry] Skipping free cooling outside limit write — already ${normalizedValue}`
@@ -1336,9 +1353,12 @@ export class UnitRegistry {
 
       const normalizedValue = normalizeFreeCoolingMinOnTimeSeconds(value);
       const currentValue = unit.probeValues.get(FREE_COOLING_MIN_ON_TIME_KEY);
+      const normalizedCurrentValue = currentValue !== undefined
+        ? tryNormalizeValue(currentValue, normalizeFreeCoolingMinOnTimeSeconds)
+        : undefined;
       if (
-        currentValue !== undefined
-        && valuesMatch(normalizeFreeCoolingMinOnTimeSeconds(currentValue), normalizedValue)
+        normalizedCurrentValue !== undefined
+        && valuesMatch(normalizedCurrentValue, normalizedValue)
       ) {
         this.log(
           '[UnitRegistry] Skipping free cooling minimum on-time write — already'
@@ -2378,7 +2398,8 @@ export class UnitRegistry {
         const rawValue = data[dataKey];
         if (rawValue === undefined || !Number.isFinite(rawValue)) continue;
 
-        const normalized = normalize(rawValue);
+        const normalized = tryNormalizeValue(rawValue, normalize);
+        if (normalized === undefined) continue;
         const current = Number(device.getSetting(settingKey));
         if (!Number.isFinite(current) || !valuesMatch(current, normalized)) {
           updates[settingKey] = normalized;

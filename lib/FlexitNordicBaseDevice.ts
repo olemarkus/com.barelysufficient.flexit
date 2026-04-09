@@ -309,36 +309,19 @@ export abstract class FlexitNordicBaseDevice extends Homey.Device {
     },
   ) {
     if (!changed) return;
-    const { settingKey, label, update } = config;
-
-    const requestedValue = Number(newSettings[settingKey]);
-    if (!Number.isFinite(requestedValue)) {
-      throw new Error(`${label} must be numeric.`);
-    }
-    if (
-      requestedValue < MIN_FREE_COOLING_TEMPERATURE_C
-      || requestedValue > MAX_FREE_COOLING_TEMPERATURE_C
-    ) {
-      throw new Error(
-        `${label} must be between ${MIN_FREE_COOLING_TEMPERATURE_C}`
-        + ` and ${MAX_FREE_COOLING_TEMPERATURE_C} degC.`,
-      );
-    }
-
-    const normalizedRequestedValue = normalizeFreeCoolingTemperature(requestedValue);
-    const currentValue = Number(this.getSetting(settingKey));
-    if (
-      Number.isFinite(currentValue)
-      && Math.abs(currentValue - normalizedRequestedValue) < SETTING_SYNC_TOLERANCE
-    ) return;
-
-    try {
-      this.log(`Updating ${label} to ${normalizedRequestedValue} for unit ${unitId}`);
-      await update(normalizedRequestedValue);
-    } catch (error) {
-      this.error(`Failed to update ${label}:`, error);
-      throw new Error(`Failed to update ${label} on the unit.`);
-    }
+    await this.maybeHandleNumericSetting(unitId, newSettings, changed, {
+      ...config,
+      normalize: normalizeFreeCoolingTemperature,
+      validate: (requestedValue, label) => {
+        if (requestedValue < MIN_FREE_COOLING_TEMPERATURE_C
+          || requestedValue > MAX_FREE_COOLING_TEMPERATURE_C) {
+          throw new Error(
+            `${label} must be between ${MIN_FREE_COOLING_TEMPERATURE_C}`
+            + ` and ${MAX_FREE_COOLING_TEMPERATURE_C} degC.`,
+          );
+        }
+      },
+    });
   }
 
   private async maybeHandleFreeCoolingMinOnTimeSetting(
@@ -346,35 +329,67 @@ export abstract class FlexitNordicBaseDevice extends Homey.Device {
     newSettings: Record<string, unknown>,
     changed: boolean,
   ) {
+    await this.maybeHandleNumericSetting(unitId, newSettings, changed, {
+      settingKey: FREE_COOLING_MIN_ON_TIME_SECONDS_SETTING,
+      label: 'free cooling minimum on-time',
+      normalize: normalizeFreeCoolingMinOnTimeSeconds,
+      validate: (requestedValue) => {
+        if (requestedValue < MIN_FREE_COOLING_MIN_ON_TIME_SECONDS
+          || requestedValue > MAX_FREE_COOLING_MIN_ON_TIME_SECONDS) {
+          throw new Error(
+            `Free cooling minimum on-time must be between ${MIN_FREE_COOLING_MIN_ON_TIME_SECONDS}`
+            + ` and ${MAX_FREE_COOLING_MIN_ON_TIME_SECONDS} seconds.`,
+          );
+        }
+      },
+      update: (nextValue) => Registry.setFreeCoolingMinOnTimeSeconds(unitId, nextValue),
+      formatValue: (nextValue) => `${nextValue}s`,
+    });
+  }
+
+  private async maybeHandleNumericSetting(
+    unitId: string,
+    newSettings: Record<string, unknown>,
+    changed: boolean,
+    config: {
+      settingKey: string;
+      label: string;
+      normalize: (value: unknown) => number;
+      validate?: (requestedValue: number, label: string) => void;
+      update: (value: number) => Promise<void>;
+      formatValue?: (value: number) => string;
+    },
+  ) {
     if (!changed) return;
 
-    const requestedValue = Number(newSettings[FREE_COOLING_MIN_ON_TIME_SECONDS_SETTING]);
-    if (!Number.isFinite(requestedValue)) {
-      throw new Error('Free cooling minimum on-time must be numeric.');
-    }
-    if (
-      requestedValue < MIN_FREE_COOLING_MIN_ON_TIME_SECONDS
-      || requestedValue > MAX_FREE_COOLING_MIN_ON_TIME_SECONDS
-    ) {
-      throw new Error(
-        `Free cooling minimum on-time must be between ${MIN_FREE_COOLING_MIN_ON_TIME_SECONDS}`
-        + ` and ${MAX_FREE_COOLING_MIN_ON_TIME_SECONDS} seconds.`,
-      );
-    }
+    const {
+      settingKey,
+      label,
+      normalize,
+      validate,
+      update,
+      formatValue = (value) => `${value}`,
+    } = config;
 
-    const normalizedRequestedValue = normalizeFreeCoolingMinOnTimeSeconds(requestedValue);
-    const currentValue = Number(this.getSetting(FREE_COOLING_MIN_ON_TIME_SECONDS_SETTING));
+    const requestedValue = Number(newSettings[settingKey]);
+    if (!Number.isFinite(requestedValue)) {
+      throw new Error(`${label} must be numeric.`);
+    }
+    validate?.(requestedValue, label);
+
+    const normalizedRequestedValue = normalize(requestedValue);
+    const currentValue = Number(this.getSetting(settingKey));
     if (
       Number.isFinite(currentValue)
       && Math.abs(currentValue - normalizedRequestedValue) < SETTING_SYNC_TOLERANCE
     ) return;
 
     try {
-      this.log(`Updating free cooling minimum on-time to ${normalizedRequestedValue}s for unit ${unitId}`);
-      await Registry.setFreeCoolingMinOnTimeSeconds(unitId, normalizedRequestedValue);
+      this.log(`Updating ${label} to ${formatValue(normalizedRequestedValue)} for unit ${unitId}`);
+      await update(normalizedRequestedValue);
     } catch (error) {
-      this.error('Failed to update free cooling minimum on-time:', error);
-      throw new Error('Failed to update free cooling minimum on-time on the unit.');
+      this.error(`Failed to update ${label}:`, error);
+      throw new Error(`Failed to update ${label} on the unit.`);
     }
   }
 

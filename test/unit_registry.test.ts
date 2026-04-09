@@ -1375,6 +1375,31 @@ describe('UnitRegistry', () => {
     expect(mockDevice.setCapabilityValue.calledWith('free_cooling_active', false)).to.equal(true);
   });
 
+  it('ignores invalid polled free cooling setting values during settings sync', () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    const unit = { unitId: 'test_unit', devices: new Set([mockDevice]) };
+    expect(() => {
+      (registry as any).distributeData(unit, {
+        free_cooling_enabled: 1,
+        free_cooling_temperature_setpoint: 99,
+        free_cooling_outside_temperature_limit: -10,
+        free_cooling_min_on_time_seconds: 999999,
+        free_cooling_actual_mode: 10,
+      });
+    }).to.not.throw();
+
+    expect(mockDevice.setSettings.calledWithMatch({
+      free_cooling_enabled: true,
+    })).to.equal(true);
+    const syncedKeys = mockDevice.setSettings.getCalls()
+      .flatMap((call) => Object.keys(call.args[0] ?? {}));
+    expect(syncedKeys.includes('free_cooling_extract_temp_setpoint')).to.equal(false);
+    expect(syncedKeys.includes('free_cooling_outside_temp_limit')).to.equal(false);
+    expect(syncedKeys.includes('free_cooling_min_on_time_seconds')).to.equal(false);
+  });
+
   it('falls back to slope request when dehumidification fan control is unavailable', () => {
     const mockDevice = makeMockDevice();
     registry.register('test_unit', mockDevice);
@@ -1553,6 +1578,53 @@ describe('UnitRegistry', () => {
     expect(writeArgs[1]).to.deep.equal({ type: 2, instance: 2071 });
     expect(writeArgs[3][0].value).to.equal(24.5);
     expect(writeArgs[4].priority).to.equal(13);
+  });
+
+  it('does not let stale cached free cooling probe values block numeric writes', async () => {
+    const mockDevice = makeMockDevice();
+    mockClient.readPropertyMultiple.resetBehavior();
+    mockClient.readPropertyMultiple.callsFake((_ip: string, request: any[], cb: any) => {
+      const requestedObjects = request
+        .map((entry) => `${entry?.objectId?.type}:${entry?.objectId?.instance}`)
+        .sort()
+        .join(',');
+
+      if (requestedObjects === '2:1934') {
+        cb(null, { values: [makeReadObject(BACNET_ENUMS.ObjectType.ANALOG_VALUE, 1934, 16.5)] });
+        return;
+      }
+      if (requestedObjects === '2:2071') {
+        cb(null, { values: [makeReadObject(BACNET_ENUMS.ObjectType.ANALOG_VALUE, 2071, 24.5)] });
+        return;
+      }
+      if (requestedObjects === '48:296') {
+        cb(null, { values: [makeReadObject(BACNET_ENUMS.ObjectType.POSITIVE_INTEGER_VALUE, 296, 1200)] });
+        return;
+      }
+      cb(null, { values: [] });
+    });
+
+    registry.register('test_unit', mockDevice);
+
+    const unit = (registry as any).units.get('test_unit');
+    unit.probeValues.set('2:1934', -5);
+    unit.probeValues.set('2:2071', 99);
+    unit.probeValues.set('48:296', 999999);
+
+    await registry.setFreeCoolingTemperatureSetpoint('test_unit', 24.5);
+    await registry.setFreeCoolingOutsideTemperatureLimit('test_unit', 16.5);
+    await registry.setFreeCoolingMinOnTimeSeconds('test_unit', 1200);
+
+    expect(mockClient.writeProperty.callCount).to.equal(3);
+    expect(mockDevice.setSettings.calledWithMatch({
+      free_cooling_extract_temp_setpoint: 24.5,
+    })).to.equal(true);
+    expect(mockDevice.setSettings.calledWithMatch({
+      free_cooling_outside_temp_limit: 16.5,
+    })).to.equal(true);
+    expect(mockDevice.setSettings.calledWithMatch({
+      free_cooling_min_on_time_seconds: 1200,
+    })).to.equal(true);
   });
 
   it('marks BACnet device unavailable after 3 consecutive poll failures', () => {
