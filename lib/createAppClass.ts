@@ -1,3 +1,5 @@
+import { createRuntimeLogger, RuntimeLogger, runWithLogContext } from './logging';
+
 type HomeyAppBase = new (...args: any[]) => {
   homey: any;
   log: (...args: any[]) => void;
@@ -24,14 +26,25 @@ export function createFlexitAppClass({
   installSourceMapSupport();
 
   return class App extends HomeyApp {
-    async onInit() {
-      this.log('Flexit Nordic app init');
+    private runtimeLogger?: RuntimeLogger;
 
-      registry.setLogger({
-        log: (...args: any[]) => this.log(...args),
-        warn: (...args: any[]) => this.log(...args),
-        error: (...args: any[]) => this.error(...args),
-      });
+    private getLogger() {
+      if (!this.runtimeLogger) {
+        this.runtimeLogger = createRuntimeLogger(this, {
+          component: 'app',
+        });
+      }
+      return this.runtimeLogger;
+    }
+
+    async onInit() {
+      const logger = this.getLogger();
+      logger.info('app.init', 'Flexit Nordic app initialized');
+
+      registry.setLogger(createRuntimeLogger(this, {
+        component: 'registry',
+        scope: 'app',
+      }));
 
       this.registerFanSetpointChangedFlowTrigger();
       this.registerHeatingCoilStateFlowTrigger();
@@ -48,10 +61,18 @@ export function createFlexitAppClass({
 
     private registerGlobalErrorHandlers() {
       process.on('uncaughtException', (err) => {
-        this.error('Uncaught Exception:', err);
+        this.getLogger().error(
+          'app.process.uncaught_exception',
+          'Unhandled process exception',
+          err,
+        );
       });
       process.on('unhandledRejection', (reason, _promise) => {
-        this.error('Unhandled Rejection:', reason);
+        this.getLogger().error(
+          'app.process.unhandled_rejection',
+          'Unhandled promise rejection',
+          reason,
+        );
       });
     }
 
@@ -65,14 +86,25 @@ export function createFlexitAppClass({
       const supplyFanSetpointChangedCard = this.homey.flow.getDeviceTriggerCard('supply_fan_setpoint_changed');
       const extractFanSetpointChangedCard = this.homey.flow.getDeviceTriggerCard('extract_fan_setpoint_changed');
       registry.setFanSetpointChangedHandler((event: any) => {
-        const card = event.fan === 'supply'
-          ? supplyFanSetpointChangedCard
-          : extractFanSetpointChangedCard;
-        card.trigger(
-          event.device,
-          { setpoint_percent: event.setpointPercent },
-        ).catch((error: unknown) => {
-          this.error('Failed to trigger fan setpoint changed flow:', error);
+        runWithLogContext({
+          unitId: this.resolveUnitId(event.device),
+          fan: event.fan,
+          mode: event.mode,
+        }, () => {
+          const card = event.fan === 'supply'
+            ? supplyFanSetpointChangedCard
+            : extractFanSetpointChangedCard;
+          card.trigger(
+            event.device,
+            { setpoint_percent: event.setpointPercent },
+          ).catch((error: unknown) => {
+            this.getLogger().error(
+              'app.flow.trigger.fan_setpoint_changed.failed',
+              'Failed to trigger fan setpoint changed flow',
+              error,
+              { setpointPercent: event.setpointPercent },
+            );
+          });
         });
       });
     }
@@ -81,14 +113,23 @@ export function createFlexitAppClass({
       const heatingCoilTurnedOnCard = this.homey.flow.getDeviceTriggerCard('heating_coil_turned_on');
       const heatingCoilTurnedOffCard = this.homey.flow.getDeviceTriggerCard('heating_coil_turned_off');
       registry.setHeatingCoilStateChangedHandler((event: any) => {
-        const card = event.enabled
-          ? heatingCoilTurnedOnCard
-          : heatingCoilTurnedOffCard;
-        card.trigger(
-          event.device,
-          {},
-        ).catch((error: unknown) => {
-          this.error('Failed to trigger heating coil state flow:', error);
+        runWithLogContext({
+          unitId: this.resolveUnitId(event.device),
+          enabled: event.enabled,
+        }, () => {
+          const card = event.enabled
+            ? heatingCoilTurnedOnCard
+            : heatingCoilTurnedOffCard;
+          card.trigger(
+            event.device,
+            {},
+          ).catch((error: unknown) => {
+            this.getLogger().error(
+              'app.flow.trigger.heating_coil_state.failed',
+              'Failed to trigger heating coil state flow',
+              error,
+            );
+          });
         });
       });
     }
@@ -97,14 +138,23 @@ export function createFlexitAppClass({
       const dehumidificationActivatedCard = this.homey.flow.getDeviceTriggerCard('dehumidification_activated');
       const dehumidificationDeactivatedCard = this.homey.flow.getDeviceTriggerCard('dehumidification_deactivated');
       registry.setDehumidificationStateChangedHandler((event: any) => {
-        const card = event.active
-          ? dehumidificationActivatedCard
-          : dehumidificationDeactivatedCard;
-        card.trigger(
-          event.device,
-          {},
-        ).catch((error: unknown) => {
-          this.error('Failed to trigger dehumidification state flow:', error);
+        runWithLogContext({
+          unitId: this.resolveUnitId(event.device),
+          active: event.active,
+        }, () => {
+          const card = event.active
+            ? dehumidificationActivatedCard
+            : dehumidificationDeactivatedCard;
+          card.trigger(
+            event.device,
+            {},
+          ).catch((error: unknown) => {
+            this.getLogger().error(
+              'app.flow.trigger.dehumidification_state.failed',
+              'Failed to trigger dehumidification state flow',
+              error,
+            );
+          });
         });
       });
     }
@@ -113,14 +163,23 @@ export function createFlexitAppClass({
       const freeCoolingActivatedCard = this.homey.flow.getDeviceTriggerCard('free_cooling_activated');
       const freeCoolingDeactivatedCard = this.homey.flow.getDeviceTriggerCard('free_cooling_deactivated');
       registry.setFreeCoolingStateChangedHandler((event: any) => {
-        const card = event.active
-          ? freeCoolingActivatedCard
-          : freeCoolingDeactivatedCard;
-        card.trigger(
-          event.device,
-          {},
-        ).catch((error: unknown) => {
-          this.error('Failed to trigger free cooling state flow:', error);
+        runWithLogContext({
+          unitId: this.resolveUnitId(event.device),
+          active: event.active,
+        }, () => {
+          const card = event.active
+            ? freeCoolingActivatedCard
+            : freeCoolingDeactivatedCard;
+          card.trigger(
+            event.device,
+            {},
+          ).catch((error: unknown) => {
+            this.getLogger().error(
+              'app.flow.trigger.free_cooling_state.failed',
+              'Failed to trigger free cooling state flow',
+              error,
+            );
+          });
         });
       });
     }

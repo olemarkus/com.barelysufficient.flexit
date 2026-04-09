@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import sinon from 'sinon';
+import { findStructuredLog } from './logging_test_utils';
 
 const EXHAUST_TEMP_CAPABILITY = 'measure_temperature.exhaust';
 const DEHUMIDIFICATION_ACTIVE_CAPABILITY = 'dehumidification_active';
@@ -212,9 +213,9 @@ describe('Nordic device', () => {
 
     await device.onInit();
 
-    expect(device.error.called).toBe(true);
-    expect(device.error.firstCall.args[0]).toBe(`Failed adding capability '${EXHAUST_TEMP_CAPABILITY}':`);
-    expect(device.error.firstCall.args[1]).toBe(err);
+    const failureLog = findStructuredLog(device.error, 'device.capability.add.failed');
+    expect(failureLog?.capability).toBe(EXHAUST_TEMP_CAPABILITY);
+    expect(failureLog?.error?.message).toBe('add failed');
     expect(registryStub.register.calledOnceWithExactly('test_unit', device)).toBe(true);
   });
 
@@ -266,11 +267,9 @@ describe('Nordic device', () => {
     expect(thrown?.message).toBe(
       'Failed writing setpoint 21.5 for Test Nordic (unit test_unit): registry write failed',
     );
-    const failureLog = device.error.getCalls().find((call: any) => (
-      String(call.args[0]).includes("Capability 'target_temperature' writing setpoint 21.5 failed after")
-    ));
-    expect(failureLog).not.toBe(undefined);
-    expect(failureLog?.args[1]).toBe(failure);
+    const failureLog = findStructuredLog(device.error, 'device.capability.failed');
+    expect(failureLog?.capability).toBe('target_temperature');
+    expect(failureLog?.error?.message).toBe('registry write failed');
   });
 
   it('surfaces descriptive timeout messages for capability writes', async () => {
@@ -298,11 +297,9 @@ describe('Nordic device', () => {
       'Timed out writing setpoint 16 for Test Nordic (unit test_unit, ip 192.168.88.32);'
       + ' the BACnet unit did not respond in time.',
     );
-    const failureLog = device.error.getCalls().find((call: any) => (
-      String(call.args[0]).includes("Capability 'target_temperature' writing setpoint 16 failed after")
-    ));
-    expect(failureLog).not.toBe(undefined);
-    expect(failureLog?.args[1]).toBe(failure);
+    const failureLog = findStructuredLog(device.error, 'device.capability.failed');
+    expect(failureLog?.capability).toBe('target_temperature');
+    expect(failureLog?.error?.code).toBe('ERR_TIMEOUT');
   });
 
   it('surfaces object-like thrown values with structured details', async () => {
@@ -328,11 +325,9 @@ describe('Nordic device', () => {
       'Failed writing setpoint 19 for Test Nordic (unit test_unit):'
       + ' {"reason":"device busy","retryable":true}',
     );
-    const failureLog = device.error.getCalls().find((call: any) => (
-      String(call.args[0]).includes("Capability 'target_temperature' writing setpoint 19 failed after")
-    ));
-    expect(failureLog).not.toBe(undefined);
-    expect(failureLog?.args[1]).toBe(failure);
+    const failureLog = findStructuredLog(device.error, 'device.capability.failed');
+    expect(failureLog?.capability).toBe('target_temperature');
+    expect(failureLog?.error?.details).toEqual(failure);
   });
 
   it('logs slow capability writes before callers time out', async () => {
@@ -357,21 +352,17 @@ describe('Nordic device', () => {
       expect(device.error.called).toBe(false);
 
       await clock.tickAsync(1);
-      const pendingLog = device.error.getCalls().find((call: any) => (
-        String(call.args[0]).includes(
-          "Capability 'target_temperature' writing setpoint 21.5 is still pending after 5000ms",
-        )
-      ));
-      expect(pendingLog).not.toBe(undefined);
+      const pendingLog = findStructuredLog(device.error, 'device.capability.slow');
+      expect(pendingLog?.capability).toBe('target_temperature');
+      expect(pendingLog?.elapsedMs).toBe(5000);
 
       resolveWrite?.();
       await clock.tickAsync(0);
       await listenerPromise;
 
-      const completionLog = device.log.getCalls().find((call: any) => (
-        String(call.args[0]).includes("Capability 'target_temperature' writing setpoint 21.5 completed after 5000ms")
-      ));
-      expect(completionLog).not.toBe(undefined);
+      const completionLog = findStructuredLog(device.log, 'device.capability.completed_after_warning');
+      expect(completionLog?.capability).toBe('target_temperature');
+      expect(completionLog?.elapsedMs).toBe(5000);
     } finally {
       clock.restore();
     }
@@ -394,17 +385,6 @@ describe('Nordic device', () => {
       const targetListener = device.registerCapabilityListener.firstCall.args[1];
       await targetListener(21.5);
 
-      const pendingLog = device.error.getCalls().find((call: any) => (
-        String(call.args[0]).includes(
-          "Capability 'target_temperature' writing setpoint 21.5 is still pending after 6000ms",
-        )
-      ));
-      expect(pendingLog).not.toBe(undefined);
-
-      const completionLog = device.log.getCalls().find((call: any) => (
-        String(call.args[0]).includes("Capability 'target_temperature' writing setpoint 21.5 completed after 6000ms")
-      ));
-      expect(completionLog).not.toBe(undefined);
       expect(setTimeoutStub.called).toBe(true);
       expect(clearTimeoutStub.called).toBe(true);
     } finally {
@@ -441,14 +421,9 @@ describe('Nordic device', () => {
 
     await device.onInit();
 
-    expect(device.error.called).toBe(true);
-    expect(
-      device.error.calledWith(
-        'Failed to normalize legacy connection settings:',
-        normalizationError,
-        { bacnetPort: '47808' },
-      ),
-    ).toBe(true);
+    const failureLog = findStructuredLog(device.error, 'device.settings.legacy_connection_normalize.failed');
+    expect(failureLog?.updates).toEqual({ bacnetPort: '47808' });
+    expect(failureLog?.error?.message).toBe('settings unavailable');
     expect(registryStub.register.calledOnceWithExactly('test_unit', device)).toBe(true);
   });
 
@@ -740,11 +715,7 @@ describe('Nordic device', () => {
 
       expect(registryStub.setFireplaceVentilationDuration.calledOnceWithExactly('test_unit', 30)).toBe(true);
       expect(device.setSettings.calledOnceWithExactly({ fireplace_duration_minutes: 30 })).toBe(true);
-      expect(
-        device.error.calledWithMatch(
-          'Failed to apply deferred registry settings:',
-        ),
-      ).toBe(false);
+      expect(findStructuredLog(device.error, 'device.registry_settings.deferred_apply.failed')).toBe(undefined);
     } finally {
       clock.restore();
     }

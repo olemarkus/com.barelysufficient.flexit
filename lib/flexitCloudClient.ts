@@ -1,4 +1,5 @@
 /* eslint-disable max-classes-per-file */
+import { RuntimeLogger } from './logging';
 /**
  * Flexit Cloud API client.
  * Communicates with the Flexit ClimatixIC cloud API (https://api.climatixic.com).
@@ -52,12 +53,20 @@ export class AuthenticationError extends Error {
 
 export class HttpError extends Error {
   readonly status: number;
+  readonly statusText: string;
 
   constructor(status: number, statusText: string) {
     super(`HTTP ${status}: ${statusText}`);
     this.name = 'HttpError';
     this.status = status;
+    this.statusText = statusText;
   }
+}
+
+interface CloudRequestLogContext {
+  endpoint?: string;
+  requestedDatapointCount?: number;
+  requestedPointsSample?: string[];
 }
 
 /**
@@ -88,17 +97,51 @@ export function cloudPathToBacnetObject(path: string): { type: number; instance:
   };
 }
 
+function getEndpointFromUrl(url: string): string {
+  try {
+    return new URL(url).pathname;
+  } catch (_error) {
+    return url;
+  }
+}
+
+function formatCloudPointForLog(path: string): string {
+  const { type, instance } = cloudPathToBacnetObject(path);
+  if (!Number.isFinite(type) || !Number.isFinite(instance)) return path;
+  return `${type}:${instance}`;
+}
+
+function buildCloudRequestLogContext(
+  paths?: string[],
+): CloudRequestLogContext {
+  const safePaths = paths ?? [];
+  return {
+    requestedDatapointCount: safePaths.length,
+    requestedPointsSample: safePaths.slice(0, 5).map(formatCloudPointForLog),
+  };
+}
+
 export class FlexitCloudClient {
   private token: CloudToken | null = null;
   private _tokenRefreshCallbacks: ((token: CloudToken) => void)[] = [];
+  private readonly logger?: RuntimeLogger;
+
+  constructor(options?: { logger?: RuntimeLogger }) {
+    this.logger = options?.logger;
+  }
 
   // -------------------------------------------------------------------
   // HTTP helpers
   // -------------------------------------------------------------------
 
-  private async fetchJson(url: string, options: RequestInit = {}): Promise<any> {
+  private async fetchJson(
+    url: string,
+    options: RequestInit = {},
+    logContext: CloudRequestLogContext = {},
+  ): Promise<any> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    const startedAt = Date.now();
 
     try {
       const response = await fetch(url, {
@@ -113,6 +156,17 @@ export class FlexitCloudClient {
         throw new HttpError(response.status, response.statusText);
       }
       return await response.json();
+    } catch (error) {
+      this.logger?.error('cloud.http.request.error', 'Cloud API request failed', error, {
+        endpoint: logContext.endpoint ?? getEndpointFromUrl(url),
+        method: options.method ?? 'GET',
+        elapsedMs: Date.now() - startedAt,
+        ...(error instanceof HttpError
+          ? { status: error.status, statusText: error.statusText }
+          : {}),
+        ...logContext,
+      });
+      throw error;
     } finally {
       clearTimeout(timeout);
     }
@@ -121,6 +175,7 @@ export class FlexitCloudClient {
   private async authenticatedFetch(
     url: string,
     options: RequestInit = {},
+    logContext: CloudRequestLogContext = {},
   ): Promise<any> {
     const accessToken = await this.ensureToken();
     return this.fetchJson(url, {
@@ -130,7 +185,7 @@ export class FlexitCloudClient {
         Authorization: `Bearer ${accessToken}`,
         ...(options.headers as Record<string, string> || {}),
       },
-    });
+    }, logContext);
   }
 
   // -------------------------------------------------------------------
@@ -145,6 +200,7 @@ export class FlexitCloudClient {
     username: string,
     password: string,
   ): Promise<CloudToken> {
+    this.logger?.info('cloud.auth.password.start', 'Starting cloud password authentication');
     const body = `grant_type=password&username=${encodeURIComponent(username)}`
       + `&password=${encodeURIComponent(password)}&include_refresh_token=true`;
 
@@ -162,6 +218,10 @@ export class FlexitCloudClient {
       refreshToken: data.refresh_token ?? null,
       expiresAt: Date.now() + (data.expires_in * 1000),
     };
+    this.logger?.info('cloud.auth.password.succeeded', 'Cloud password authentication succeeded', {
+      hasRefreshToken: Boolean(this.token.refreshToken),
+      expiresAt: this.token.expiresAt,
+    });
     this.notifyTokenRefreshed();
     return this.token;
   }
@@ -171,6 +231,7 @@ export class FlexitCloudClient {
    * Throws AuthenticationError if the refresh token is invalid/expired.
    */
   async authenticateWithRefreshToken(refreshToken: string): Promise<CloudToken> {
+    this.logger?.info('cloud.auth.refresh.start', 'Starting cloud refresh-token authentication');
     const body = `grant_type=refresh_token&refresh_token=${encodeURIComponent(refreshToken)}`
       + '&include_refresh_token=true';
 
@@ -186,10 +247,14 @@ export class FlexitCloudClient {
       });
     } catch (err: any) {
       if (err instanceof HttpError && (err.status === 400 || err.status === 401)) {
+        this.logger?.error('cloud.auth.refresh.invalid', 'Cloud refresh token was rejected', err, {
+          status: err.status,
+        });
         throw new AuthenticationError(
           `Refresh token authentication failed: ${err.message}`,
         );
       }
+      this.logger?.error('cloud.auth.refresh.failed', 'Cloud refresh-token authentication failed', err);
       throw err;
     }
 
@@ -198,6 +263,10 @@ export class FlexitCloudClient {
       refreshToken: data.refresh_token ?? refreshToken,
       expiresAt: Date.now() + (data.expires_in * 1000),
     };
+    this.logger?.info('cloud.auth.refresh.succeeded', 'Cloud refresh-token authentication succeeded', {
+      hasRefreshToken: Boolean(this.token.refreshToken),
+      expiresAt: this.token.expiresAt,
+    });
     this.notifyTokenRefreshed();
     return this.token;
   }
@@ -208,6 +277,11 @@ export class FlexitCloudClient {
    */
   restoreToken(token: CloudToken) {
     this.token = { ...token };
+    this.logger?.info('cloud.token.restored', 'Restored cloud token from persisted device state', {
+      hasAccessToken: Boolean(token.accessToken),
+      hasRefreshToken: Boolean(token.refreshToken),
+      expiresAt: token.expiresAt,
+    });
   }
 
   private async ensureToken(): Promise<string> {
@@ -218,6 +292,9 @@ export class FlexitCloudClient {
       if (!this.token.refreshToken) {
         throw new AuthenticationError('Token expired and no refresh token available. Re-pair the device.');
       }
+      this.logger?.info('cloud.token.refresh_needed', 'Cloud token refresh is required before the next request', {
+        expiresAt: this.token.expiresAt,
+      });
       await this.authenticateWithRefreshToken(this.token.refreshToken);
     }
     return this.token!.accessToken;
@@ -242,6 +319,10 @@ export class FlexitCloudClient {
 
   private notifyTokenRefreshed() {
     if (this.token && this._tokenRefreshCallbacks.length > 0) {
+      this.logger?.info('cloud.token.refreshed', 'Notifying cloud token refresh subscribers', {
+        subscriberCount: this._tokenRefreshCallbacks.length,
+        expiresAt: this.token.expiresAt,
+      });
       const snapshot = { ...this.token };
       for (const cb of this._tokenRefreshCallbacks) cb(snapshot);
     }
@@ -252,13 +333,19 @@ export class FlexitCloudClient {
   // -------------------------------------------------------------------
 
   async findPlants(): Promise<CloudPlant[]> {
-    const data = await this.authenticatedFetch(PLANTS_URL);
-    return (data.items || []).map((item: any) => ({
+    const data = await this.authenticatedFetch(PLANTS_URL, {}, {
+      endpoint: '/Plants',
+    });
+    const plants = (data.items || []).map((item: any) => ({
       id: item.id,
       name: item.name || item.customerPlantId || item.id,
       serialNumber: item.serialNumber || item.customerPlantId || '',
       isOnline: item.isOnline === 'True' || item.isOnline === true,
     }));
+    this.logger?.info('cloud.plants.listed', 'Retrieved plants from cloud API', {
+      plantCount: plants.length,
+    });
+    return plants;
   }
 
   // -------------------------------------------------------------------
@@ -273,7 +360,11 @@ export class FlexitCloudClient {
       DataPoints: `${plantId}${path}`,
     }));
     const url = `${FILTER_URL}${encodeURIComponent(JSON.stringify(filter))}`;
-    const data = await this.authenticatedFetch(url);
+    const logContext = {
+      endpoint: '/DataPoints/Values',
+      ...buildCloudRequestLogContext(paths),
+    };
+    const data = await this.authenticatedFetch(url, {}, logContext);
     return data.values || {};
   }
 
@@ -293,16 +384,24 @@ export class FlexitCloudClient {
     const data = await this.authenticatedFetch(url, {
       method: 'PUT',
       body: JSON.stringify({ Value: valueStr }),
+    }, {
+      endpoint: '/DataPoints/:path',
+      requestedPointsSample: [formatCloudPointForLog(path)],
     });
 
-    if (data?.stateTexts) {
-      return data.stateTexts[fullPath] === 'Success';
-    }
-    // Some responses nest under error
-    if (data?.error?.stateTexts) {
-      return data.error.stateTexts[fullPath] === 'Success';
-    }
-    return false;
+    const success = data?.stateTexts
+      ? data.stateTexts[fullPath] === 'Success'
+      : data?.error?.stateTexts
+        ? data.error.stateTexts[fullPath] === 'Success'
+        : false;
+    this.logger?.info('cloud.datapoint.write', 'Wrote datapoint through cloud API', {
+      plantId,
+      path,
+      success,
+      value: valueStr,
+    });
+
+    return success;
   }
 
   // -------------------------------------------------------------------
@@ -312,5 +411,6 @@ export class FlexitCloudClient {
   destroy() {
     this.token = null;
     this._tokenRefreshCallbacks = [];
+    this.logger?.info('cloud.client.destroyed', 'Destroyed cloud client state');
   }
 }

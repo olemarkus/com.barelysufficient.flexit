@@ -1,4 +1,5 @@
 import Homey from 'homey';
+import { createRuntimeLogger, RuntimeLogger } from './logging';
 import {
   Registry,
   FlexitDevice,
@@ -60,6 +61,23 @@ export abstract class FlexitNordicBaseDevice extends Homey.Device {
   private settingsUpdateInProgress = false;
   private deferredRegistrySettings: Record<string, unknown> = {};
   private deferredFlushScheduled = false;
+  private runtimeLogger?: RuntimeLogger;
+
+  protected getLogBindings() {
+    const data = this.getData();
+    return {
+      component: 'device',
+      unitId: data.unitId,
+      deviceName: this.getName(),
+    };
+  }
+
+  protected getLogger() {
+    if (!this.runtimeLogger) {
+      this.runtimeLogger = createRuntimeLogger(this, this.getLogBindings());
+    }
+    return this.runtimeLogger;
+  }
 
   protected async initSharedCapabilities() {
     await this.setClass('airtreatment');
@@ -67,9 +85,11 @@ export abstract class FlexitNordicBaseDevice extends Homey.Device {
       if (this.hasCapability(capability)) continue;
       try {
         await this.addCapability(capability);
-        this.log(`Added missing capability '${capability}'`);
+        this.getLogger().info('device.capability.added', 'Added missing capability', { capability });
       } catch (e) {
-        this.error(`Failed adding capability '${capability}':`, e);
+        this.getLogger().error('device.capability.add.failed', 'Failed to add missing capability', e, {
+          capability,
+        });
       }
     }
   }
@@ -78,8 +98,13 @@ export abstract class FlexitNordicBaseDevice extends Homey.Device {
     this.registerCapabilityListener('target_temperature', async (value: number) => {
       const current = this.getCapabilityValue('target_temperature');
       if (normalizeTargetTemperature(current) === normalizeTargetTemperature(value)) {
-        this.log(
-          `Skipping setpoint write — already ${normalizeTargetTemperature(value)} for unit ${unitId}`,
+        this.getLogger().info(
+          'device.capability.target_temperature.skipped',
+          'Skipped target temperature write because value already matches',
+          {
+            unitId,
+            requestedValue: normalizeTargetTemperature(value),
+          },
         );
         return;
       }
@@ -88,7 +113,10 @@ export abstract class FlexitNordicBaseDevice extends Homey.Device {
         unitId,
         `writing setpoint ${value}`,
         async () => {
-          this.log(`Writing setpoint ${value} for unit ${unitId}`);
+          this.getLogger().info('device.capability.target_temperature.write', 'Writing target temperature setpoint', {
+            unitId,
+            requestedValue: value,
+          });
           await Registry.writeSetpoint(unitId, value);
         },
       );
@@ -100,7 +128,10 @@ export abstract class FlexitNordicBaseDevice extends Homey.Device {
         unitId,
         `setting fan mode '${value}'`,
         async () => {
-          this.log('Setting fan mode:', value);
+          this.getLogger().info('device.capability.fan_mode.write', 'Writing fan mode capability', {
+            unitId,
+            mode: String(value),
+          });
           await Registry.setFanMode(unitId, value);
         },
       );
@@ -112,7 +143,7 @@ export abstract class FlexitNordicBaseDevice extends Homey.Device {
         unitId,
         'resetting filter timer',
         async () => {
-          this.log(`Resetting filter timer for unit ${unitId}`);
+          this.getLogger().info('device.capability.filter_reset.write', 'Resetting filter timer', { unitId });
           await Registry.resetFilterTimer(unitId);
         },
       );
@@ -255,12 +286,23 @@ export abstract class FlexitNordicBaseDevice extends Homey.Device {
     ) return;
 
     try {
-      this.log(
-        `Updating ${mode} target temperature to ${normalizedRequestedValue}C for unit ${unitId}`,
-      );
+      this.getLogger().info('device.setting.target_temperature.write', 'Updating target temperature setting', {
+        unitId,
+        mode,
+        requestedValue: normalizedRequestedValue,
+      });
       await Registry.setTemperatureSetpoint(unitId, mode, normalizedRequestedValue);
     } catch (error) {
-      this.error(`Failed to update ${mode} target temperature:`, error);
+      this.getLogger().error(
+        'device.setting.target_temperature.failed',
+        'Failed to update target temperature setting',
+        error,
+        {
+          unitId,
+          mode,
+          requestedValue: normalizedRequestedValue,
+        },
+      );
       throw new Error(`Failed to update ${mode} target temperature on the unit.`);
     }
   }
@@ -290,10 +332,21 @@ export abstract class FlexitNordicBaseDevice extends Homey.Device {
     if (currentValue === requestedValue) return;
 
     try {
-      this.log(`Updating free cooling enabled=${requestedValue} for unit ${unitId}`);
+      this.getLogger().info('device.setting.free_cooling_enabled.write', 'Updating free cooling enabled setting', {
+        unitId,
+        requestedValue,
+      });
       await Registry.setFreeCoolingEnabled(unitId, requestedValue);
     } catch (error) {
-      this.error('Failed to update free cooling enabled:', error);
+      this.getLogger().error(
+        'device.setting.free_cooling_enabled.failed',
+        'Failed to update free cooling enabled setting',
+        error,
+        {
+          unitId,
+          requestedValue,
+        },
+      );
       throw new Error('Failed to update free cooling enabled on the unit.');
     }
   }
@@ -385,10 +438,20 @@ export abstract class FlexitNordicBaseDevice extends Homey.Device {
     ) return;
 
     try {
-      this.log(`Updating ${label} to ${formatValue(normalizedRequestedValue)} for unit ${unitId}`);
+      this.getLogger().info('device.setting.numeric.write', 'Updating numeric device setting', {
+        unitId,
+        settingKey,
+        label,
+        requestedValue: formatValue(normalizedRequestedValue),
+      });
       await update(normalizedRequestedValue);
     } catch (error) {
-      this.error(`Failed to update ${label}:`, error);
+      this.getLogger().error('device.setting.numeric.failed', 'Failed to update numeric device setting', error, {
+        unitId,
+        settingKey,
+        label,
+        requestedValue: formatValue(normalizedRequestedValue),
+      });
       throw new Error(`Failed to update ${label} on the unit.`);
     }
   }
@@ -439,10 +502,23 @@ export abstract class FlexitNordicBaseDevice extends Homey.Device {
     if (monthsInSync && hoursInSync) return;
 
     try {
-      this.log(`Updating filter change interval to ${requestedHours}h for unit ${unitId}`);
+      this.getLogger().info('device.setting.filter_interval.write', 'Updating filter change interval setting', {
+        unitId,
+        requestedHours,
+        requestedMonths,
+      });
       await Registry.setFilterChangeInterval(unitId, requestedHours);
     } catch (error) {
-      this.error('Failed to update filter change interval:', error);
+      this.getLogger().error(
+        'device.setting.filter_interval.failed',
+        'Failed to update filter change interval setting',
+        error,
+        {
+          unitId,
+          requestedHours,
+          requestedMonths,
+        },
+      );
       throw new Error('Failed to update filter change interval on the unit.');
     }
   }
@@ -474,13 +550,20 @@ export abstract class FlexitNordicBaseDevice extends Homey.Device {
     if (supplyInSync && exhaustInSync) return;
 
     try {
-      this.log(
-        `Updating ${mode} fan profile to supply=${normalizedSupply}%`
-        + ` exhaust=${normalizedExhaust}% for unit ${unitId}`,
-      );
+      this.getLogger().info('device.setting.fan_profile.write', 'Updating fan profile setting', {
+        unitId,
+        mode,
+        supplyPercent: normalizedSupply,
+        exhaustPercent: normalizedExhaust,
+      });
       await Registry.setFanProfileMode(unitId, mode, normalizedSupply, normalizedExhaust);
     } catch (error) {
-      this.error(`Failed to update ${mode} fan profile:`, error);
+      this.getLogger().error('device.setting.fan_profile.failed', 'Failed to update fan profile setting', error, {
+        unitId,
+        mode,
+        supplyPercent: normalizedSupply,
+        exhaustPercent: normalizedExhaust,
+      });
       throw new Error(`Failed to update ${mode} fan profile on the unit.`);
     }
   }
@@ -503,12 +586,21 @@ export abstract class FlexitNordicBaseDevice extends Homey.Device {
     ) return;
 
     try {
-      this.log(
-        `Updating fireplace duration to ${normalizedDurationMinutes} minutes for unit ${unitId}`,
-      );
+      this.getLogger().info('device.setting.fireplace_duration.write', 'Updating fireplace duration setting', {
+        unitId,
+        durationMinutes: normalizedDurationMinutes,
+      });
       await Registry.setFireplaceVentilationDuration(unitId, normalizedDurationMinutes);
     } catch (error) {
-      this.error('Failed to update fireplace duration:', error);
+      this.getLogger().error(
+        'device.setting.fireplace_duration.failed',
+        'Failed to update fireplace duration setting',
+        error,
+        {
+          unitId,
+          durationMinutes: normalizedDurationMinutes,
+        },
+      );
       throw new Error('Failed to update fireplace duration on the unit.');
     }
   }
@@ -543,7 +635,14 @@ export abstract class FlexitNordicBaseDevice extends Homey.Device {
         ...deferredSettings,
         ...this.deferredRegistrySettings,
       };
-      this.error('Failed to apply deferred registry settings:', error, deferredSettings);
+      this.getLogger().error(
+        'device.registry_settings.deferred_apply.failed',
+        'Failed to apply deferred registry settings',
+        error,
+        {
+          deferredSettings: deferredSettings as any,
+        },
+      );
     }
   }
 
@@ -553,7 +652,11 @@ export abstract class FlexitNordicBaseDevice extends Homey.Device {
     setTimeout(() => {
       this.deferredFlushScheduled = false;
       this.flushDeferredRegistrySettings().catch((error) => {
-        this.error('Unexpected deferred registry settings flush failure:', error);
+        this.getLogger().error(
+          'device.registry_settings.deferred_flush.failed',
+          'Unexpected deferred registry settings flush failure',
+          error,
+        );
       });
     }, 0);
   }
@@ -599,6 +702,6 @@ export abstract class FlexitNordicBaseDevice extends Homey.Device {
 
   async onDeleted() {
     Registry.unregister(this.getData().unitId, this as unknown as FlexitDevice);
-    this.log('Device deleted');
+    this.getLogger().info('device.deleted', 'Device deleted');
   }
 }

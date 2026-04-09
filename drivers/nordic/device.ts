@@ -8,8 +8,15 @@ const CONNECTION_LABEL_SETTING_KEYS = ['ip', 'bacnetPort', 'serial', 'mac'] as c
 const CAPABILITY_OPERATION_WARNING_MS = 5_000;
 
 export = class FlexitNordicDevice extends FlexitNordicBaseDevice {
+  protected getLogBindings() {
+    return {
+      ...super.getLogBindings(),
+      transport: 'bacnet',
+    };
+  }
+
   async onInit() {
-    this.log('Nordic device init', this.getName());
+    this.getLogger().info('device.init', 'BACnet device initialized');
     await this.initSharedCapabilities();
     await this.normalizeConnectionLabelSettings();
 
@@ -17,7 +24,7 @@ export = class FlexitNordicDevice extends FlexitNordicBaseDevice {
     try {
       Registry.register(unitId, this as unknown as FlexitDevice);
     } catch (e) {
-      this.error('Failed to register with Registry:', e);
+      this.getLogger().error('device.registry.register.failed', 'Failed to register BACnet device with registry', e);
     }
 
     this.registerSharedCapabilityListeners(unitId);
@@ -33,9 +40,11 @@ export = class FlexitNordicDevice extends FlexitNordicBaseDevice {
     let warningLogged = false;
     const warningTimer = setTimeout(() => {
       warningLogged = true;
-      this.error(
-        `Capability '${capability}' ${actionDescription} is still pending after ${Date.now() - startedAt}ms`
-        + ` for unit ${unitId}; external callers may time out before the BACnet write completes.`,
+      this.getLogger().error(
+        'device.capability.slow',
+        'BACnet capability action is still pending',
+        undefined,
+        { capability, actionDescription, elapsedMs: Date.now() - startedAt, unitId },
       );
     }, CAPABILITY_OPERATION_WARNING_MS);
 
@@ -44,15 +53,18 @@ export = class FlexitNordicDevice extends FlexitNordicBaseDevice {
       const elapsedMs = Date.now() - startedAt;
       if (!warningLogged && elapsedMs >= CAPABILITY_OPERATION_WARNING_MS) {
         warningLogged = true;
-        this.error(
-          `Capability '${capability}' ${actionDescription} is still pending after ${elapsedMs}ms`
-          + ` for unit ${unitId}; external callers may time out before the BACnet write completes.`,
+        this.getLogger().error(
+          'device.capability.slow',
+          'BACnet capability action exceeded the warning threshold before completion',
+          undefined,
+          { capability, actionDescription, elapsedMs, unitId },
         );
       }
       if (warningLogged) {
-        this.log(
-          `Capability '${capability}' ${actionDescription} completed after ${elapsedMs}ms`
-          + ` for unit ${unitId}`,
+        this.getLogger().info(
+          'device.capability.completed_after_warning',
+          'BACnet capability action completed after a slow-operation warning',
+          { capability, actionDescription, elapsedMs, unitId },
         );
       }
       return result;
@@ -61,10 +73,11 @@ export = class FlexitNordicDevice extends FlexitNordicBaseDevice {
       const surfacedError = this.buildCapabilityOperationError(
         unitId, actionDescription, error,
       );
-      this.error(
-        `Capability '${capability}' ${actionDescription} failed after ${elapsedMs}ms`
-        + ` for unit ${unitId}; returning error: ${surfacedError.message}`,
+      this.getLogger().error(
+        'device.capability.failed',
+        'BACnet capability action failed',
         error,
+        { capability, actionDescription, elapsedMs, unitId, surfacedError: surfacedError.message },
       );
       throw surfacedError;
     } finally {
@@ -136,9 +149,18 @@ export = class FlexitNordicDevice extends FlexitNordicBaseDevice {
 
     try {
       await this.setSettings(updates);
-      this.log('Normalized legacy connection settings:', updates);
+      this.getLogger().info(
+        'device.settings.legacy_connection_normalized',
+        'Normalized legacy BACnet connection settings',
+        { updates },
+      );
     } catch (error) {
-      this.error('Failed to normalize legacy connection settings:', error, updates);
+      this.getLogger().error(
+        'device.settings.legacy_connection_normalize.failed',
+        'Failed to normalize legacy BACnet connection settings',
+        error,
+        { updates },
+      );
     }
   }
 };

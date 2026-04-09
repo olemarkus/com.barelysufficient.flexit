@@ -3,11 +3,10 @@
  * binding the same port when you have multiple devices.
  */
 import Bacnet from 'bacstack';
+import { RuntimeLogger } from './logging';
 
 type BacnetClient = any;
-type BacnetLogger = {
-  error(...args: any[]): void;
-};
+type BacnetLogger = RuntimeLogger;
 type BacnetModule = {
   new (options: {
     port: number;
@@ -53,7 +52,10 @@ export function getBacnetClient(port: number): BacnetClient {
 
   // Prevent unhandled error events from crashing the app
   client.on('error', (err: any) => {
-    bacnetLogger?.error(`[BacnetClient:${p}] Error:`, err);
+    bacnetLogger?.error('bacnet.client.error', 'BACnet client emitted an error event', err, {
+      component: 'bacnet',
+      port: p,
+    });
   });
 
   clientsByPort.set(p, client);
