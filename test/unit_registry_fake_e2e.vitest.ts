@@ -767,6 +767,31 @@ describe('UnitRegistry fake-unit e2e', { timeout: 10000 }, () => {
     expect(device.getSetting('fireplace_duration_minutes')).toBe(27);
   });
 
+  it('writes high duration to PIV:293 with priority 13 and syncs setting', async () => {
+    const device = makeMockDevice(SERVER_BIND_ADDRESS, serverPort, 4380);
+    registry.register('test_unit', device);
+
+    await registry.setRapidVentilationDuration('test_unit', 60);
+    await waitFor(() => {
+      const runtime = state.readPresentValue(
+        OBJECT_TYPE.POSITIVE_INTEGER_VALUE,
+        293,
+        PROPERTY_ID.PRESENT_VALUE,
+      );
+      return runtime.ok && runtime.value.value === 60;
+    });
+
+    const runtimeWrite = writePresentValueSpy.getCalls().find((call: any) => (
+      call.args[0] === OBJECT_TYPE.POSITIVE_INTEGER_VALUE
+      && call.args[1] === 293
+      && call.args[2] === PROPERTY_ID.PRESENT_VALUE
+      && call.args[3] === 60
+      && call.args[4] === 13
+    ));
+    expect(runtimeWrite).not.toBe(undefined);
+    expect(device.getSetting('high_duration_minutes')).toBe(60);
+  });
+
   it('writes free cooling settings with priority 13 and syncs settings', async () => {
     const device = makeMockDevice(SERVER_BIND_ADDRESS, serverPort, 4380);
     registry.register('test_unit', device);

@@ -7,6 +7,7 @@ import {
   isFanProfileMode,
   normalizeFanProfilePercent,
   normalizeFireplaceDurationMinutes,
+  normalizeHighDurationMinutes,
 } from './lib/UnitRegistry';
 
 // NOTE: Homey expects CommonJS export for App/Driver/Device classes.
@@ -17,5 +18,6 @@ export = createFlexitAppClass({
   isFanProfileMode,
   normalizeFanProfilePercent,
   normalizeFireplaceDurationMinutes,
+  normalizeHighDurationMinutes,
   installSourceMapSupport: () => sourceMapSupport.install(),
 });

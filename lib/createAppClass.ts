@@ -12,6 +12,7 @@ type AppDependencies = {
   isFanProfileMode: (mode: unknown) => boolean;
   normalizeFanProfilePercent: (...args: any[]) => number;
   normalizeFireplaceDurationMinutes: (value: unknown) => number;
+  normalizeHighDurationMinutes: (value: unknown) => number;
   installSourceMapSupport: () => void;
 };
 
@@ -21,6 +22,7 @@ export function createFlexitAppClass({
   isFanProfileMode,
   normalizeFanProfilePercent,
   normalizeFireplaceDurationMinutes,
+  normalizeHighDurationMinutes,
   installSourceMapSupport,
 }: AppDependencies) {
   installSourceMapSupport();
@@ -53,6 +55,7 @@ export function createFlexitAppClass({
       this.registerGlobalErrorHandlers();
       this.registerFanProfileActionCard();
       this.registerFireplaceDurationActionCard();
+      this.registerHighDurationActionCard();
       this.registerHeatingCoilActionCards();
       this.registerHeatingCoilConditionCard();
       this.registerDehumidificationConditionCard();
@@ -218,6 +221,16 @@ export function createFlexitAppClass({
         const requestedMinutes = normalizeFireplaceDurationMinutes(args?.minutes);
         const unitId = this.resolveUnitId(args?.device);
         await registry.setFireplaceVentilationDuration(unitId, requestedMinutes);
+        return true;
+      });
+    }
+
+    private registerHighDurationActionCard() {
+      const setHighDurationCard = this.homey.flow.getActionCard('set_high_duration');
+      setHighDurationCard.registerRunListener(async (args: any) => {
+        const requestedMinutes = normalizeHighDurationMinutes(args?.minutes);
+        const unitId = this.resolveUnitId(args?.device);
+        await registry.setRapidVentilationDuration(unitId, requestedMinutes);
         return true;
       });
     }

@@ -1,0 +1,28 @@
+{
+  "title": {
+    "en": "Set high duration"
+  },
+  "titleFormatted": {
+    "en": "Set high duration to [[minutes]] minutes"
+  },
+  "hint": {
+    "en": "Updates the saved high (boost) ventilation runtime in minutes on the unit. Use 0 to keep high mode running until it is changed."
+  },
+  "args": [
+    {
+      "type": "device",
+      "name": "device",
+      "filter": "driver_id=nordic|nordic-cloud"
+    },
+    {
+      "name": "minutes",
+      "type": "number",
+      "title": {
+        "en": "Duration"
+      },
+      "min": 0,
+      "max": 360,
+      "step": 1
+    }
+  ]
+}

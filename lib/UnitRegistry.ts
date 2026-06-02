@@ -50,10 +50,13 @@ export const FREE_COOLING_TEMPERATURE_SETPOINT_SETTING = 'free_cooling_extract_t
 export const FREE_COOLING_OUTSIDE_TEMPERATURE_LIMIT_SETTING = 'free_cooling_outside_temp_limit';
 export const FREE_COOLING_MIN_ON_TIME_SECONDS_SETTING = 'free_cooling_min_on_time_seconds';
 export const FIREPLACE_DURATION_SETTING = 'fireplace_duration_minutes';
+export const HIGH_DURATION_SETTING = 'high_duration_minutes';
 const BACNET_IP_SETTING = 'ip';
 const BACNET_PORT_SETTING = 'bacnetPort';
 export const MIN_FIREPLACE_DURATION_MINUTES = 1;
 export const MAX_FIREPLACE_DURATION_MINUTES = 360;
+export const MIN_HIGH_DURATION_MINUTES = 0;
+export const MAX_HIGH_DURATION_MINUTES = 360;
 export const MIN_FREE_COOLING_TEMPERATURE_C = 10;
 export const MAX_FREE_COOLING_TEMPERATURE_C = 30;
 const FREE_COOLING_TEMPERATURE_STEP_C = 0.5;
@@ -247,6 +250,7 @@ const TARGET_TEMPERATURE_SETTING_KEYS: Record<TargetTemperatureMode, string> = {
   away: TARGET_TEMPERATURE_AWAY_SETTING,
 };
 const FIREPLACE_DURATION_DATA_KEY = 'fireplace_duration_minutes';
+const HIGH_DURATION_DATA_KEY = 'high_duration_minutes';
 
 const objectKey = (type: number, instance: number) => `${type}:${instance}`;
 const FIREPLACE_RUNTIME_KEY = objectKey(
@@ -510,6 +514,25 @@ export function normalizeFireplaceDurationMinutes(value: unknown): number {
     throw new Error(
       `Fireplace duration must be between ${MIN_FIREPLACE_DURATION_MINUTES}`
       + ` and ${MAX_FIREPLACE_DURATION_MINUTES} minutes`,
+    );
+  }
+  return rounded;
+}
+
+export function normalizeHighDurationMinutes(value: unknown): number {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    throw new Error('High duration must be numeric');
+  }
+
+  const rounded = Math.round(numeric);
+  if (
+    rounded < MIN_HIGH_DURATION_MINUTES
+    || rounded > MAX_HIGH_DURATION_MINUTES
+  ) {
+    throw new Error(
+      `High duration must be between ${MIN_HIGH_DURATION_MINUTES}`
+      + ` and ${MAX_HIGH_DURATION_MINUTES} minutes`,
     );
   }
   return rounded;
@@ -878,6 +901,10 @@ const POLL_VALUE_MAPPINGS: Record<string, (value: number, target: PollParseTarge
     BACNET_OBJECTS.fireplaceVentilationRuntime.type,
     BACNET_OBJECTS.fireplaceVentilationRuntime.instance,
   )]: mapPollValue(FIREPLACE_DURATION_DATA_KEY),
+  [objectKey(
+    BACNET_OBJECTS.rapidVentilationRuntime.type,
+    BACNET_OBJECTS.rapidVentilationRuntime.instance,
+  )]: mapPollValue(HIGH_DURATION_DATA_KEY),
   [objectKey(OBJECT_TYPE.BINARY_VALUE, 15)]: mapPollValue('rapid_active'),
   [objectKey(OBJECT_TYPE.BINARY_VALUE, 400)]: mapPollValue('fireplace_active'),
   [objectKey(OBJECT_TYPE.BINARY_VALUE, 574)]: mapPollValue('away_delay_active'),
@@ -1943,6 +1970,57 @@ export class UnitRegistry {
       });
     }
 
+    async setRapidVentilationDuration(unitId: string, requestedMinutes: number) {
+      this.log(`[UnitRegistry] Setting high duration to ${requestedMinutes} min for ${unitId}`);
+      const unit = this.units.get(unitId);
+      if (!unit) throw new Error('Unit not found');
+      if (unit.transport === 'cloud') return this.cloudSetRapidVentilationDuration(unit, requestedMinutes);
+
+      const durationMinutes = normalizeHighDurationMinutes(requestedMinutes);
+      const writeOptions: WriteOptions = {
+        maxSegments: BacnetEnums.MaxSegmentsAccepted.SEGMENTS_0,
+        maxApdu: BacnetEnums.MaxApduLengthAccepted.OCTETS_1476,
+        priority: DEFAULT_WRITE_PRIORITY,
+      };
+
+      return this.enqueueWrite(unit, async () => {
+        const context: FanModeWriteContext = {
+          unit,
+          mode: 'high_duration',
+          writeOptions,
+          client: this.dependencies.getBacnetClient(unit.bacnetPort),
+          ventilationModeKey: VENTILATION_MODE_KEY,
+          comfortButtonKey: COMFORT_BUTTON_KEY,
+        };
+
+        const writeOk = await this.writeUpdate(context, {
+          objectId: BACNET_OBJECTS.rapidVentilationRuntime,
+          tag: BacnetEnums.ApplicationTags.UNSIGNED_INTEGER,
+          value: durationMinutes,
+          priority: DEFAULT_WRITE_PRIORITY,
+        });
+        if (!writeOk) throw new Error('Failed to write high duration via PIV:293');
+
+        const verifiedValue = await this.readPresentValue(
+          context.client,
+          unit,
+          BACNET_OBJECTS.rapidVentilationRuntime,
+        );
+        const verifiedMinutes = normalizeHighDurationMinutes(verifiedValue);
+
+        this.log(`[UnitRegistry] Verified high duration ${verifiedMinutes} minutes for ${unitId}`);
+        for (const device of unit.devices) {
+          this.updateDeviceSettings(device, {
+            [HIGH_DURATION_SETTING]: verifiedMinutes,
+          }).catch((err) => {
+            this.log(`[UnitRegistry] Failed to sync high duration setting for ${unitId}:`, err);
+          });
+        }
+
+        this.pollUnit(unitId);
+      });
+    }
+
     async setFanProfileMode(
       unitId: string,
       mode: FanProfileMode,
@@ -2274,6 +2352,7 @@ export class UnitRegistry {
         this.syncFreeCoolingSettings(device, data);
         this.syncFanProfileSettings(device, data);
         this.syncFireplaceDurationSetting(device, data[FIREPLACE_DURATION_DATA_KEY]);
+        this.syncHighDurationSetting(device, data[HIGH_DURATION_DATA_KEY]);
         this.syncFilterIntervalSetting(device, data.filter_limit);
         const filterLife = this.computeFilterLife(data);
         if (filterLife !== undefined) this.setCapability(device, 'measure_hepa_filter', filterLife);
@@ -2708,6 +2787,32 @@ export class UnitRegistry {
         [FIREPLACE_DURATION_SETTING]: normalizedRuntime,
       }).catch((err) => {
         this.log(`[UnitRegistry] Failed to sync fireplace duration setting for ${device.getData().unitId}:`, err);
+      });
+    }
+
+    private syncHighDurationSetting(device: FlexitDevice, runtimeValue: number | undefined) {
+      if (runtimeValue === undefined || !Number.isFinite(runtimeValue)) return;
+
+      let normalizedRuntime: number;
+      try {
+        normalizedRuntime = normalizeHighDurationMinutes(runtimeValue);
+      } catch (error) {
+        this.log(
+          `[UnitRegistry] Ignoring out-of-range high duration ${runtimeValue}`
+          + ` from ${device.getData().unitId}:`,
+          error,
+        );
+        return;
+      }
+      const currentSettingValue = Number(device.getSetting(HIGH_DURATION_SETTING));
+      if (Number.isFinite(currentSettingValue) && Math.abs(currentSettingValue - normalizedRuntime) < 0.5) {
+        return;
+      }
+
+      this.updateDeviceSettings(device, {
+        [HIGH_DURATION_SETTING]: normalizedRuntime,
+      }).catch((err) => {
+        this.log(`[UnitRegistry] Failed to sync high duration setting for ${device.getData().unitId}:`, err);
       });
     }
 
@@ -3833,6 +3938,34 @@ export class UnitRegistry {
         }).catch((err) => {
           this.log(
             `[UnitRegistry] Failed to sync fireplace duration setting for ${unit.unitId}:`,
+            err,
+          );
+        });
+      }
+
+      await this.cloudPollUnit(unit);
+    }
+
+    private async cloudSetRapidVentilationDuration(
+      unit: UnitState,
+      requestedMinutes: number,
+    ) {
+      const durationMinutes = normalizeHighDurationMinutes(requestedMinutes);
+      this.log(`[UnitRegistry] Cloud: setting high duration to ${durationMinutes} min for ${unit.unitId}`);
+
+      const success = await this.cloudWriteDatapoint(
+        unit,
+        BACNET_OBJECTS.rapidVentilationRuntime,
+        durationMinutes,
+      );
+      if (!success) throw new Error('Failed to write high duration via cloud');
+
+      for (const device of unit.devices) {
+        this.updateDeviceSettings(device, {
+          [HIGH_DURATION_SETTING]: durationMinutes,
+        }).catch((err) => {
+          this.log(
+            `[UnitRegistry] Failed to sync high duration setting for ${unit.unitId}:`,
             err,
           );
         });

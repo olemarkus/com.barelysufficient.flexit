@@ -129,6 +129,7 @@ function defaultSensorValues(): Array<{ type: number; instance: number; value: n
 
     // Fireplace / rapid
     { type: OBJ.POSITIVE_INTEGER_VALUE, instance: 270, value: 10 }, // fireplace runtime
+    { type: OBJ.POSITIVE_INTEGER_VALUE, instance: 293, value: 10 }, // rapid/high runtime
     { type: OBJ.BINARY_VALUE, instance: 15, value: 0 }, // rapid active
     { type: OBJ.BINARY_VALUE, instance: 400, value: 0 }, // fireplace state
     { type: OBJ.ANALOG_VALUE, instance: 2005, value: 0 }, // remaining temp vent
@@ -592,6 +593,22 @@ describe('Cloud transport – UnitRegistry integration', () => {
     expect(rapidTriggerCall).toBe(undefined);
     expect(fireplaceTriggerCall).not.toBe(undefined);
     expect(resetTempVentCall).toBe(undefined);
+  });
+
+  it('writes high duration to PIV:293 via cloud', async () => {
+    registry.registerCloud(UNIT_ID, mock.device, {
+      plantId: PLANT_ID,
+      client: mockClient,
+    });
+    await sleep(50);
+
+    await registry.setRapidVentilationDuration(UNIT_ID, 60);
+
+    const calls = mockClient.writeDatapoint.getCalls();
+    const runtimeCall = calls.find(
+      (c: any) => c.args[1] === bacnetObjectToCloudPath(48, 293) && c.args[2] === 60,
+    );
+    expect(runtimeCall).not.toBe(undefined);
   });
 
   it('writes rapid then fireplace when switching temporary high to fireplace via cloud', async () => {

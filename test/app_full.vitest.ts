@@ -60,6 +60,17 @@ function createAppClass(registryStub: Record<string, any>, normalizeFanProfilePe
       }
       return rounded;
     },
+    normalizeHighDurationMinutes: (value: unknown) => {
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric)) {
+        throw new Error('High duration must be numeric');
+      }
+      const rounded = Math.round(numeric);
+      if (rounded < 0 || rounded > 360) {
+        throw new Error('High duration must be between 0 and 360 minutes');
+      }
+      return rounded;
+    },
     installSourceMapSupport: sinon.stub(),
   });
 }

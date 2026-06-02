@@ -76,5 +76,8 @@
   },
   "1.8.0": {
     "en": "Add support for configuring free cooling"
+  },
+  "1.9.0": {
+    "en": "Duration of the high (boost) ventilation mode can now be configured in device settings and through flows. Setting the duration to zero keeps high mode running until you change it."
   }
 }

@@ -849,6 +849,63 @@ describe('UnitRegistry', () => {
     expect(mockClient.writeProperty.called).to.equal(false);
   });
 
+  it('writes high duration to PIV:293 with priority 13 and verifies the value', async () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    mockClient.readPropertyMultiple.resetBehavior();
+    mockClient.readPropertyMultiple.callsFake((_ip: string, request: any[], cb: any) => {
+      const requestedObjects = request
+        .map((entry) => `${entry?.objectId?.type}:${entry?.objectId?.instance}`)
+        .sort()
+        .join(',');
+      if (requestedObjects === '48:293') {
+        cb(null, { values: [makeReadObject(BACNET_ENUMS.ObjectType.POSITIVE_INTEGER_VALUE, 293, 60)] });
+        return;
+      }
+      cb(null, { values: [] });
+    });
+
+    await registry.setRapidVentilationDuration('test_unit', 60);
+
+    const writeArgs = mockClient.writeProperty.firstCall.args;
+    expect(writeArgs[1]).to.deep.equal({ type: 48, instance: 293 });
+    expect(writeArgs[3][0].type).to.equal(BACNET_ENUMS.ApplicationTags.UNSIGNED_INTEGER);
+    expect(writeArgs[3][0].value).to.equal(60);
+    expect(writeArgs[4].priority).to.equal(13);
+    expect(mockDevice.setSettings.calledWithMatch({ high_duration_minutes: 60 })).to.equal(true);
+  });
+
+  it('accepts high duration of 0 and rejects values above 360 minutes', async () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    mockClient.readPropertyMultiple.resetBehavior();
+    mockClient.readPropertyMultiple.callsFake((_ip: string, request: any[], cb: any) => {
+      const requestedObjects = request
+        .map((entry) => `${entry?.objectId?.type}:${entry?.objectId?.instance}`)
+        .sort()
+        .join(',');
+      if (requestedObjects === '48:293') {
+        cb(null, { values: [makeReadObject(BACNET_ENUMS.ObjectType.POSITIVE_INTEGER_VALUE, 293, 0)] });
+        return;
+      }
+      cb(null, { values: [] });
+    });
+
+    await registry.setRapidVentilationDuration('test_unit', 0);
+    expect(mockDevice.setSettings.calledWithMatch({ high_duration_minutes: 0 })).to.equal(true);
+
+    let highError: Error | null = null;
+    try {
+      await registry.setRapidVentilationDuration('test_unit', 361);
+    } catch (error) {
+      highError = error as Error;
+    }
+    expect(highError).to.not.equal(null);
+    expect(highError?.message).to.equal('High duration must be between 0 and 360 minutes');
+  });
+
   it('writes high mode via ventilation mode when available', async () => {
     const mockDevice = makeMockDevice();
     registry.register('test_unit', mockDevice);
