@@ -47,6 +47,7 @@ describe('Nordic device', () => {
       resetFilterTimer: sinon.stub().resolves(),
       setFilterChangeInterval: sinon.stub().resolves(),
       setFireplaceVentilationDuration: sinon.stub().resolves(),
+      setRapidVentilationDuration: sinon.stub().resolves(),
       setFreeCoolingEnabled: sinon.stub().resolves(),
       setFreeCoolingTemperatureSetpoint: sinon.stub().resolves(),
       setFreeCoolingOutsideTemperatureLimit: sinon.stub().resolves(),
@@ -64,6 +65,7 @@ describe('Nordic device', () => {
       FREE_COOLING_OUTSIDE_TEMPERATURE_LIMIT_SETTING: 'free_cooling_outside_temp_limit',
       FREE_COOLING_MIN_ON_TIME_SECONDS_SETTING: 'free_cooling_min_on_time_seconds',
       FIREPLACE_DURATION_SETTING: 'fireplace_duration_minutes',
+      HIGH_DURATION_SETTING: 'high_duration_minutes',
       MIN_TARGET_TEMPERATURE_C: 10,
       MAX_TARGET_TEMPERATURE_C: 30,
       MIN_FREE_COOLING_TEMPERATURE_C: 10,
@@ -94,6 +96,17 @@ describe('Nordic device', () => {
         const rounded = Math.round(numeric);
         if (rounded < 1 || rounded > 360) {
           throw new Error('Fireplace duration must be between 1 and 360 minutes');
+        }
+        return rounded;
+      },
+      normalizeHighDurationMinutes: (value: unknown) => {
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric)) {
+          throw new Error('High duration must be numeric');
+        }
+        const rounded = Math.round(numeric);
+        if (rounded < 0 || rounded > 360) {
+          throw new Error('High duration must be between 0 and 360 minutes');
         }
         return rounded;
       },
@@ -685,6 +698,63 @@ describe('Nordic device', () => {
     expect(thrown).not.toBe(null);
     expect(thrown?.message).toContain('between 1 and 360 minutes');
     expect(registryStub.setFireplaceVentilationDuration.called).toBe(false);
+  });
+
+  it('writes changed high duration setting in minutes', async () => {
+    const device = new DeviceClass();
+    device.hasCapability.withArgs(EXHAUST_TEMP_CAPABILITY).returns(true);
+    device.hasCapability.withArgs(RESET_FILTER_CAPABILITY).returns(true);
+    device.getSetting.withArgs('high_duration_minutes').returns(0);
+    await device.onInit();
+
+    await device.onSettings({
+      newSettings: {
+        high_duration_minutes: 60,
+      },
+      changedKeys: ['high_duration_minutes'],
+    });
+
+    expect(registryStub.setRapidVentilationDuration.calledOnceWithExactly('test_unit', 60)).toBe(true);
+  });
+
+  it('writes high duration of 0 to keep high mode running until changed', async () => {
+    const device = new DeviceClass();
+    device.hasCapability.withArgs(EXHAUST_TEMP_CAPABILITY).returns(true);
+    device.hasCapability.withArgs(RESET_FILTER_CAPABILITY).returns(true);
+    device.getSetting.withArgs('high_duration_minutes').returns(45);
+    await device.onInit();
+
+    await device.onSettings({
+      newSettings: {
+        high_duration_minutes: 0,
+      },
+      changedKeys: ['high_duration_minutes'],
+    });
+
+    expect(registryStub.setRapidVentilationDuration.calledOnceWithExactly('test_unit', 0)).toBe(true);
+  });
+
+  it('rejects high duration outside supported range', async () => {
+    const device = new DeviceClass();
+    device.hasCapability.withArgs(EXHAUST_TEMP_CAPABILITY).returns(true);
+    device.hasCapability.withArgs(RESET_FILTER_CAPABILITY).returns(true);
+    await device.onInit();
+
+    let thrown: Error | null = null;
+    try {
+      await device.onSettings({
+        newSettings: {
+          high_duration_minutes: 361,
+        },
+        changedKeys: ['high_duration_minutes'],
+      });
+    } catch (error) {
+      thrown = error as Error;
+    }
+
+    expect(thrown).not.toBe(null);
+    expect(thrown?.message).toContain('between 0 and 360 minutes');
+    expect(registryStub.setRapidVentilationDuration.called).toBe(false);
   });
 
   it('defers registry setting updates until onSettings is complete', async () => {

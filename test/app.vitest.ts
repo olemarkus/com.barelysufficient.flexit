@@ -34,6 +34,7 @@ function createRegistryStub(overrides: Record<string, any> = {}) {
     setHeatingCoilStateChangedHandler: sinon.stub(),
     setFanProfileMode: sinon.stub().resolves(),
     setFireplaceVentilationDuration: sinon.stub().resolves(),
+    setRapidVentilationDuration: sinon.stub().resolves(),
     getDehumidificationActive: sinon.stub().resolves(true),
     getFreeCoolingActive: sinon.stub().resolves(true),
     setHeatingCoilEnabled: sinon.stub().resolves(),
@@ -60,6 +61,17 @@ function createAppClass(registryStub: Record<string, any>, normalizeFanProfilePe
       }
       return rounded;
     },
+    normalizeHighDurationMinutes: (value: unknown) => {
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric)) {
+        throw new Error('High duration must be numeric');
+      }
+      const rounded = Math.round(numeric);
+      if (rounded < 0 || rounded > 360) {
+        throw new Error('High duration must be between 0 and 360 minutes');
+      }
+      return rounded;
+    },
     installSourceMapSupport: sinon.stub(),
   });
 }
@@ -69,6 +81,7 @@ function createCards() {
     action: {
       setFanProfileMode: { registerRunListener: sinon.stub() },
       setFireplaceDuration: { registerRunListener: sinon.stub() },
+      setHighDuration: { registerRunListener: sinon.stub() },
       turnHeatingCoilOn: { registerRunListener: sinon.stub() },
       turnHeatingCoilOff: { registerRunListener: sinon.stub() },
       toggleHeatingCoilOnOff: { registerRunListener: sinon.stub() },
@@ -94,6 +107,7 @@ function createCards() {
 function wireCards(app: any, cards: ReturnType<typeof createCards>) {
   app.homey.flow.getActionCard.withArgs('set_fan_profile_mode').returns(cards.action.setFanProfileMode);
   app.homey.flow.getActionCard.withArgs('set_fireplace_duration').returns(cards.action.setFireplaceDuration);
+  app.homey.flow.getActionCard.withArgs('set_high_duration').returns(cards.action.setHighDuration);
   app.homey.flow.getActionCard.withArgs('turn_heating_coil_on').returns(cards.action.turnHeatingCoilOn);
   app.homey.flow.getActionCard.withArgs('turn_heating_coil_off').returns(cards.action.turnHeatingCoilOff);
   app.homey.flow.getActionCard.withArgs('toggle_heating_coil_onoff').returns(cards.action.toggleHeatingCoilOnOff);
@@ -149,6 +163,27 @@ describe('App flow registration (vitest)', () => {
 
     expect(fanProfileResult).toBe(true);
     expect(registryStub.setFanProfileMode.calledOnceWithExactly('unit-1', 'home', 70, 60)).toBe(true);
+  });
+
+  it('forwards the set high duration flow card to the registry', async () => {
+    const registryStub = createRegistryStub();
+    const cards = createCards();
+    const AppClass = createAppClass(registryStub);
+    const app = new AppClass();
+    wireCards(app, cards);
+
+    await app.onInit();
+
+    expect(app.homey.flow.getActionCard.calledWithExactly('set_high_duration')).toBe(true);
+
+    const highDurationListener = cards.action.setHighDuration.registerRunListener.firstCall.args[0];
+    const result = await highDurationListener({
+      device: { getData: () => ({ unitId: 'unit-1' }) },
+      minutes: 60,
+    });
+
+    expect(result).toBe(true);
+    expect(registryStub.setRapidVentilationDuration.calledOnceWithExactly('unit-1', 60)).toBe(true);
   });
 
   it('logs uncaughtException and unhandledRejection through global handlers', async () => {

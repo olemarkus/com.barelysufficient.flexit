@@ -6,6 +6,7 @@ import {
   FILTER_CHANGE_INTERVAL_MONTHS_SETTING,
   FILTER_CHANGE_INTERVAL_HOURS_LEGACY_SETTING,
   FIREPLACE_DURATION_SETTING,
+  HIGH_DURATION_SETTING,
   FREE_COOLING_ENABLED_SETTING,
   FREE_COOLING_TEMPERATURE_SETPOINT_SETTING,
   FREE_COOLING_OUTSIDE_TEMPERATURE_LIMIT_SETTING,
@@ -29,6 +30,7 @@ import {
   MIN_FREE_COOLING_MIN_ON_TIME_SECONDS,
   MAX_FREE_COOLING_MIN_ON_TIME_SECONDS,
   normalizeFireplaceDurationMinutes,
+  normalizeHighDurationMinutes,
   normalizeTargetTemperature,
   normalizeFreeCoolingTemperature,
   normalizeFreeCoolingMinOnTimeSeconds,
@@ -194,6 +196,7 @@ export abstract class FlexitNordicBaseDevice extends Homey.Device {
         FREE_COOLING_MIN_ON_TIME_SECONDS_SETTING,
       );
       const fireplaceDurationChanged = effectiveChangedKeys.includes(FIREPLACE_DURATION_SETTING);
+      const highDurationChanged = effectiveChangedKeys.includes(HIGH_DURATION_SETTING);
       const changedFanModes = this.getChangedFanModes(effectiveChangedKeys);
       if (
         !monthsChanged
@@ -205,6 +208,7 @@ export abstract class FlexitNordicBaseDevice extends Homey.Device {
         && !freeCoolingOutsideTemperatureLimitChanged
         && !freeCoolingMinOnTimeSecondsChanged
         && !fireplaceDurationChanged
+        && !highDurationChanged
         && changedFanModes.length === 0
       ) return;
 
@@ -246,6 +250,9 @@ export abstract class FlexitNordicBaseDevice extends Homey.Device {
       );
       await this.maybeHandleFireplaceDurationSetting(
         unitId, newSettings, fireplaceDurationChanged,
+      );
+      await this.maybeHandleHighDurationSetting(
+        unitId, newSettings, highDurationChanged,
       );
       for (const mode of changedFanModes) {
         await this.maybeHandleFanProfileModeSetting(unitId, mode, newSettings);
@@ -602,6 +609,43 @@ export abstract class FlexitNordicBaseDevice extends Homey.Device {
         },
       );
       throw new Error('Failed to update fireplace duration on the unit.');
+    }
+  }
+
+  private async maybeHandleHighDurationSetting(
+    unitId: string,
+    newSettings: Record<string, unknown>,
+    changed: boolean,
+  ) {
+    if (!changed) return;
+
+    const normalizedDurationMinutes = normalizeHighDurationMinutes(
+      newSettings[HIGH_DURATION_SETTING],
+    );
+
+    const currentDurationMinutes = Number(this.getSetting(HIGH_DURATION_SETTING));
+    if (
+      Number.isFinite(currentDurationMinutes)
+      && Math.abs(currentDurationMinutes - normalizedDurationMinutes) < SETTING_SYNC_TOLERANCE
+    ) return;
+
+    try {
+      this.getLogger().info('device.setting.high_duration.write', 'Updating high duration setting', {
+        unitId,
+        durationMinutes: normalizedDurationMinutes,
+      });
+      await Registry.setRapidVentilationDuration(unitId, normalizedDurationMinutes);
+    } catch (error) {
+      this.getLogger().error(
+        'device.setting.high_duration.failed',
+        'Failed to update high duration setting',
+        error,
+        {
+          unitId,
+          durationMinutes: normalizedDurationMinutes,
+        },
+      );
+      throw new Error('Failed to update high duration on the unit.');
     }
   }
 

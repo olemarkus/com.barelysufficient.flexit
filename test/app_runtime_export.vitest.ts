@@ -42,6 +42,7 @@ describe('app runtime export', () => {
       isFanProfileMode: unitRegistry.isFanProfileMode,
       normalizeFanProfilePercent: unitRegistry.normalizeFanProfilePercent,
       normalizeFireplaceDurationMinutes: unitRegistry.normalizeFireplaceDurationMinutes,
+      normalizeHighDurationMinutes: unitRegistry.normalizeHighDurationMinutes,
       installSourceMapSupport: expect.any(Function),
     });
 
