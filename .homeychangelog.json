@@ -76,5 +76,8 @@
   },
   "1.8.0": {
     "en": "Add support for configuring free cooling"
+  },
+  "1.9.0": {
+    "en": "Add support for setting high mode duration through settings and flow."
   }
 }
