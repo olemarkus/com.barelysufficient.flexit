@@ -9,6 +9,7 @@
 *.tsbuildinfo
 /.eslintcache
 .codex
+.claude/
 
 # Environment / local config
 /env.json

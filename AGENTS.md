@@ -40,6 +40,7 @@ When adding new BACnet points, update both the poll list and `distributeData` ma
 - Any feature touching BACnet behavior must include end-to-end coverage using the fake unit.
 - Run `npm run validate` after changes (lint + tests + `homey app validate`).
 - `README.txt` is app-store/user-facing only; no developer/test instructions.
+- `.homeychangelog.json` is human-maintained — agents must **never** edit it. Release notes are written by the maintainer during version bumps. (A local Claude Code PreToolUse hook also blocks edits to it.)
 - Commit messages: imperative present tense, concise. Body required for non-trivial changes.
 - Keep PR branches squashed to a single commit before merge/push unless requested otherwise.
 
