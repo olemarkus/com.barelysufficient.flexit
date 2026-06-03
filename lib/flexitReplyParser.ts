@@ -1,7 +1,13 @@
-import { getNordicModelFromSerial } from './flexitModel';
+import {
+  classifyFlexitSerial,
+  getModelFromSerial,
+  getSeriesLabel,
+  FlexitSeries,
+} from './flexitModel';
 
 export interface DiscoveredFlexitUnit {
   name: string;
+  series: FlexitSeries;
   model?: string;
   serial: string;
   serialNormalized: string;
@@ -9,12 +15,6 @@ export interface DiscoveredFlexitUnit {
   bacnetPort: number;
   mac?: string;
   fw?: string;
-}
-
-const NORDIC_SERIAL_PREFIXES = ['8001', '8002', '8003'];
-
-function isNordicSerial(serialNormalized: string) {
-  return NORDIC_SERIAL_PREFIXES.some((prefix) => serialNormalized.startsWith(prefix));
 }
 
 /**
@@ -35,8 +35,9 @@ export function parseFlexitReply(payload: Buffer, rinfoAddress: string): Discove
   if (!serialMatch) return null;
   const serial = serialMatch[0];
   const serialNormalized = serial.replace(/[^0-9]/g, '');
-  if (!isNordicSerial(serialNormalized)) return null;
-  const model = getNordicModelFromSerial(serialNormalized);
+  const series = classifyFlexitSerial(serialNormalized);
+  if (!series) return null;
+  const model = getModelFromSerial(serialNormalized, series);
 
   const endpointMatch = ascii.match(/\b(\d{1,3}(?:\.\d{1,3}){3}):(\d{2,5})\b/);
   const ip = endpointMatch?.[1] ?? rinfoAddress;
@@ -49,11 +50,11 @@ export function parseFlexitReply(payload: Buffer, rinfoAddress: string): Discove
   const friendlyName = tokens.find((t) => t.includes('_') && !t.includes('.') && !t.includes(':') && t.length >= 4)
     ?? tokens.find((t) => /^[A-Za-z][A-Za-z0-9_]{3,}$/.test(t) && !t.includes(':') && !t.includes('.'))
     ?? 'Flexit Unit';
-  const name = model ? `Nordic ${model}` : friendlyName;
+  const name = model ? `${getSeriesLabel(series)} ${model}` : friendlyName;
 
   const fw = ascii.match(/\bFW[:=]?[A-Za-z0-9._-]+\b/i)?.[0];
 
   return {
-    name, model: model ?? undefined, serial, serialNormalized, ip, bacnetPort, mac, fw,
+    name, series, model: model ?? undefined, serial, serialNormalized, ip, bacnetPort, mac, fw,
   };
 }

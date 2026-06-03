@@ -189,6 +189,39 @@ describe('Nordic cloud driver (vitest)', () => {
     ]);
   });
 
+  it('keeps plants with unrecognized serials in the Nordic cloud pairing list', async () => {
+    const pairedToken = {
+      accessToken: 'paired-access-token',
+      refreshToken: 'paired-refresh-token',
+      expiresAt: Date.now() + 86_400_000,
+    };
+    const authClient = {
+      authenticateWithPassword: sinon.stub().resolves(pairedToken),
+    };
+    const listClient = {
+      restoreToken: sinon.stub(),
+      findPlants: sinon.stub().resolves([
+        { id: 'plant-1', name: 'Nordic', serialNumber: '800131-000001' },
+        { id: 'plant-2', name: 'Unrecognized', serialNumber: '900501-000001' },
+      ]),
+    };
+    setCloudDriverMocks({ clients: [authClient, listClient] });
+    vi.resetModules();
+    const mod = await import('../drivers/nordic-cloud/driver.ts');
+    DriverClass = mod.default ?? mod;
+
+    const driver = new DriverClass();
+    const session = createSession();
+    await driver.onPair(session);
+    await session.handlers.get('login')({ username: 'user@example.com', password: 'secret' });
+    const devices = await session.handlers.get('list_devices')();
+
+    expect(devices.map((device: any) => device.data.plantId)).toEqual(['plant-1', 'plant-2']);
+    const listedLog = findStructuredLog(driver.log, 'driver.pair.devices.listed');
+    expect(listedLog?.plantCount).toBe(2);
+    expect(listedLog?.matchedCount).toBe(2);
+  });
+
   it('surfaces pairing authentication failures with a user-facing error', async () => {
     const authFailure = new Error('bad credentials');
     const authClient = {
