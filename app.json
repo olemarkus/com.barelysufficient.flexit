@@ -281,6 +281,25 @@
     "actions": [
       {
         "title": {
+          "en": "Activate temporary high"
+        },
+        "titleFormatted": {
+          "en": "Activate temporary high"
+        },
+        "hint": {
+          "en": "Starts a temporary high (boost) that runs for the saved high duration and then returns to the previous mode, like pressing the high button on the unit. Set the duration with the \"Set high duration\" action."
+        },
+        "args": [
+          {
+            "type": "device",
+            "name": "device",
+            "filter": "driver_id=nordic|nordic-cloud"
+          }
+        ],
+        "id": "activate_temporary_high"
+      },
+      {
+        "title": {
           "en": "Set fan profile for mode"
         },
         "titleFormatted": {
