@@ -3503,7 +3503,7 @@ export class UnitRegistry {
       cookerAlreadyActive: boolean,
     ) {
       if (!cookerAlreadyActive) {
-        await this.writeCookerHood(context, 1);
+        await this.writeCookerHood(context, COOKER_HOOD_ON);
       }
     }
 
@@ -4034,11 +4034,25 @@ export class UnitRegistry {
     private async cloudSetFanMode(unit: UnitState, mode: string) {
       this.log(`[UnitRegistry] Cloud: setting fan mode to '${mode}' for ${unit.unitId}`);
 
+      // Cooker Hood is not controllable over the cloud transport. The ClimatixIC API
+      // forbids relinquishing BV:402 (HTTP 403 at any priority), so once the point is
+      // commanded the unit cannot be returned to the physical cooker-hood switch over
+      // the cloud — it strands in cooker mode until a BACnet relinquish or power cycle.
+      // The cloud driver therefore only *tracks* cooker (reported when the physical
+      // switch activates it); it never actively enters or exits it. Full cooker control
+      // lives in the BACnet driver, which can issue the relinquish on the LAN.
+      if (mode === 'cooker') {
+        this.log(
+          '[UnitRegistry] Cloud: Cooker Hood cannot be set over the cloud connection'
+          + ` (controlled by the physical cooker hood switch); ignoring request for ${unit.unitId}.`,
+        );
+        return;
+      }
+
       const fireplaceActive = (unit.probeValues.get(FIREPLACE_ACTIVE_KEY) ?? 0) === 1;
       const operationMode = Math.round(unit.probeValues.get(OPERATION_MODE_KEY) ?? NaN);
       const fireplaceAlreadyActive = fireplaceActive
         || operationMode === OPERATION_MODE_VALUES.FIREPLACE;
-      const cookerAlreadyActive = operationMode === OPERATION_MODE_VALUES.COOKER_HOOD;
       const rapidActive = (unit.probeValues.get(RAPID_ACTIVE_KEY) ?? 0) === 1;
       const temporaryRapidActive = rapidActive || operationMode === OPERATION_MODE_VALUES.TEMPORARY_HIGH;
 
@@ -4067,9 +4081,6 @@ export class UnitRegistry {
           unit, BACNET_OBJECTS.rapidVentilationTrigger, TRIGGER_VALUE,
         );
       }
-      if (mode !== 'cooker' && cookerAlreadyActive) {
-        await this.cloudWriteDatapoint(unit, BACNET_OBJECTS.cookerHood, null);
-      }
 
       switch (mode) {
         case 'home':
@@ -4089,13 +4100,6 @@ export class UnitRegistry {
           break;
         case 'fireplace':
           await this.cloudWriteFireplaceMode(unit, temporaryRapidActive);
-          break;
-        case 'cooker':
-          if (!cookerAlreadyActive) {
-            await this.cloudWriteDatapoint(
-              unit, BACNET_OBJECTS.cookerHood, COOKER_HOOD_ON,
-            );
-          }
           break;
         default:
           this.log(

@@ -1006,7 +1006,9 @@ describe('Cloud transport – UnitRegistry integration', () => {
     expect(hasUpdatedFanSetting).to.equal(true);
   });
 
-  it('writes fan mode cooker via cloud', async () => {
+  it('does not enter cooker mode via cloud (cooker is not cloud-controllable)', async () => {
+    // The ClimatixIC API forbids relinquishing BV:402, so cooker would strand the unit.
+    // The cloud driver only tracks cooker; selecting it is a no-op (no datapoint write).
     registry.registerCloud(UNIT_ID, mock.device, {
       plantId: PLANT_ID,
       client: mockClient,
@@ -1015,10 +1017,32 @@ describe('Cloud transport – UnitRegistry integration', () => {
 
     await registry.setFanMode(UNIT_ID, 'cooker');
 
-    const [, path, value] = mockClient.writeDatapoint.firstCall.args;
-    // cooker writes to cookerHood (BV:402) = 1
-    expect(path).to.equal(bacnetObjectToCloudPath(5, 402));
-    expect(value).to.equal(1);
+    expect(mockClient.writeDatapoint.called).to.equal(false);
+  });
+
+  it('does not relinquish cooker (BV:402) when leaving cooker mode via cloud', async () => {
+    // Leaving cooker must not fire the forbidden BV:402 relinquish/write — that 403s and
+    // strands the unit. The cloud may still set the requested base mode (comfort/vent).
+    const sensorValues = defaultSensorValues().map((entry) => ({ ...entry }));
+    const operationMode = sensorValues.find((entry) => entry.type === OBJ.MULTI_STATE_VALUE && entry.instance === 361);
+    if (!operationMode) {
+      throw new Error('Expected default sensor values for cooker exit test');
+    }
+    operationMode.value = 5; // unit currently reports cooker hood active
+
+    mockClient = makeMockCloudClient({ sensorValues });
+    registry.registerCloud(UNIT_ID, mock.device, {
+      plantId: PLANT_ID,
+      client: mockClient,
+    });
+    await sleep(50);
+
+    await registry.setFanMode(UNIT_ID, 'home');
+
+    const cookerWrite = mockClient.writeDatapoint.getCalls().find(
+      (c) => c.args[1] === bacnetObjectToCloudPath(5, 402),
+    );
+    expect(cookerWrite).to.equal(undefined);
   });
 
   it('uses cloud-specific unavailable message on poll failure, not BACnet rediscovery', async () => {
