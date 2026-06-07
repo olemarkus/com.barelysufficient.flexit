@@ -79,5 +79,8 @@
   },
   "1.9.0": {
     "en": "Add support for setting high mode duration through settings and flow."
+  },
+  "1.9.1": {
+    "en": "Make cooker mode noop for cloud driver as cloud driver is not able to unset cooker mode."
   }
 }
