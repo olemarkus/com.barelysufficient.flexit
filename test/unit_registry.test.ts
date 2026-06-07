@@ -930,6 +930,41 @@ describe('UnitRegistry', () => {
     expect(ventilation[4].priority).to.equal(13);
   });
 
+  it('activates temporary high by triggering the rapid ventilation object MSV:357', async () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    await registry.activateTemporaryHigh('test_unit');
+
+    const calls = mockClient.writeProperty.getCalls().map((call: any) => call.args);
+    const callsByObject = new Map<string, any[]>(calls.map((args: any) => [JSON.stringify(args[1]), args]));
+
+    const trigger = callsByObject.get(JSON.stringify({ type: 19, instance: 357 })) as any[] | undefined;
+
+    expect(trigger).to.not.equal(undefined);
+    if (!trigger) throw new Error('Expected rapid ventilation trigger write');
+
+    expect(trigger[3][0].type).to.equal(BACNET_ENUMS.ApplicationTags.UNSIGNED_INTEGER);
+    expect(trigger[3][0].value).to.equal(2); // TRIGGER
+    expect(trigger[4].priority).to.equal(13);
+  });
+
+  it('leaves an already running temporary high untouched instead of toggling it off', async () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    const unit = (registry as any).units.get('test_unit');
+    unit.probeValues.set('19:361', 7); // operation_mode temporary high
+
+    await registry.activateTemporaryHigh('test_unit');
+
+    const triggerWritten = mockClient.writeProperty.getCalls().some(
+      (call: any) => JSON.stringify(call.args[1]) === JSON.stringify({ type: 19, instance: 357 }),
+    );
+
+    expect(triggerWritten).to.equal(false);
+  });
+
   it('writes cooker hood mode via BV:402 with priority 13', async () => {
     const mockDevice = makeMockDevice();
     registry.register('test_unit', mockDevice);

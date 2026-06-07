@@ -56,6 +56,7 @@ export function createFlexitAppClass({
       this.registerFanProfileActionCard();
       this.registerFireplaceDurationActionCard();
       this.registerHighDurationActionCard();
+      this.registerTemporaryHighActionCard();
       this.registerHeatingCoilActionCards();
       this.registerHeatingCoilConditionCard();
       this.registerDehumidificationConditionCard();
@@ -231,6 +232,15 @@ export function createFlexitAppClass({
         const requestedMinutes = normalizeHighDurationMinutes(args?.minutes);
         const unitId = this.resolveUnitId(args?.device);
         await registry.setRapidVentilationDuration(unitId, requestedMinutes);
+        return true;
+      });
+    }
+
+    private registerTemporaryHighActionCard() {
+      const activateTemporaryHighCard = this.homey.flow.getActionCard('activate_temporary_high');
+      activateTemporaryHighCard.registerRunListener(async (args: any) => {
+        const unitId = this.resolveUnitId(args?.device);
+        await registry.activateTemporaryHigh(unitId);
         return true;
       });
     }

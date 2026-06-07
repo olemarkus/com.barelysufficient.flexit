@@ -35,6 +35,7 @@ function createRegistryStub(overrides: Record<string, any> = {}) {
     setFanProfileMode: sinon.stub().resolves(),
     setFireplaceVentilationDuration: sinon.stub().resolves(),
     setRapidVentilationDuration: sinon.stub().resolves(),
+    activateTemporaryHigh: sinon.stub().resolves(),
     getDehumidificationActive: sinon.stub().resolves(true),
     getFreeCoolingActive: sinon.stub().resolves(true),
     setHeatingCoilEnabled: sinon.stub().resolves(),
@@ -82,6 +83,7 @@ function createCards() {
       setFanProfileMode: { registerRunListener: sinon.stub() },
       setFireplaceDuration: { registerRunListener: sinon.stub() },
       setHighDuration: { registerRunListener: sinon.stub() },
+      activateTemporaryHigh: { registerRunListener: sinon.stub() },
       turnHeatingCoilOn: { registerRunListener: sinon.stub() },
       turnHeatingCoilOff: { registerRunListener: sinon.stub() },
       toggleHeatingCoilOnOff: { registerRunListener: sinon.stub() },
@@ -108,6 +110,7 @@ function wireCards(app: any, cards: ReturnType<typeof createCards>) {
   app.homey.flow.getActionCard.withArgs('set_fan_profile_mode').returns(cards.action.setFanProfileMode);
   app.homey.flow.getActionCard.withArgs('set_fireplace_duration').returns(cards.action.setFireplaceDuration);
   app.homey.flow.getActionCard.withArgs('set_high_duration').returns(cards.action.setHighDuration);
+  app.homey.flow.getActionCard.withArgs('activate_temporary_high').returns(cards.action.activateTemporaryHigh);
   app.homey.flow.getActionCard.withArgs('turn_heating_coil_on').returns(cards.action.turnHeatingCoilOn);
   app.homey.flow.getActionCard.withArgs('turn_heating_coil_off').returns(cards.action.turnHeatingCoilOff);
   app.homey.flow.getActionCard.withArgs('toggle_heating_coil_onoff').returns(cards.action.toggleHeatingCoilOnOff);
@@ -184,6 +187,26 @@ describe('App flow registration (vitest)', () => {
 
     expect(result).toBe(true);
     expect(registryStub.setRapidVentilationDuration.calledOnceWithExactly('unit-1', 60)).toBe(true);
+  });
+
+  it('forwards the activate temporary high flow card to the registry', async () => {
+    const registryStub = createRegistryStub();
+    const cards = createCards();
+    const AppClass = createAppClass(registryStub);
+    const app = new AppClass();
+    wireCards(app, cards);
+
+    await app.onInit();
+
+    expect(app.homey.flow.getActionCard.calledWithExactly('activate_temporary_high')).toBe(true);
+
+    const temporaryHighListener = cards.action.activateTemporaryHigh.registerRunListener.firstCall.args[0];
+    const result = await temporaryHighListener({
+      device: { getData: () => ({ unitId: 'unit-1' }) },
+    });
+
+    expect(result).toBe(true);
+    expect(registryStub.activateTemporaryHigh.calledOnceWithExactly('unit-1')).toBe(true);
   });
 
   it('logs uncaughtException and unhandledRejection through global handlers', async () => {

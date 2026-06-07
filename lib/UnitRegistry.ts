@@ -2021,6 +2021,44 @@ export class UnitRegistry {
       });
     }
 
+    async activateTemporaryHigh(unitId: string) {
+      this.log(`[UnitRegistry] Activating temporary high for ${unitId}`);
+      const unit = this.units.get(unitId);
+      if (!unit) throw new Error('Unit not found');
+      if (unit.transport === 'cloud') return this.cloudActivateTemporaryHigh(unit);
+
+      const writeOptions: WriteOptions = {
+        maxSegments: BacnetEnums.MaxSegmentsAccepted.SEGMENTS_0,
+        maxApdu: BacnetEnums.MaxApduLengthAccepted.OCTETS_1476,
+        priority: DEFAULT_WRITE_PRIORITY,
+      };
+
+      return this.enqueueWrite(unit, async () => {
+        if (this.isTemporaryRapidActive(unit)) {
+          this.log(`[UnitRegistry] Temporary high already active for ${unitId}, skipping trigger.`);
+          return;
+        }
+
+        const context: FanModeWriteContext = {
+          unit,
+          mode: 'high',
+          writeOptions,
+          client: this.dependencies.getBacnetClient(unit.bacnetPort),
+          ventilationModeKey: VENTILATION_MODE_KEY,
+          comfortButtonKey: COMFORT_BUTTON_KEY,
+        };
+
+        await this.writeRapidTrigger(context, TRIGGER_VALUE);
+        this.pollUnit(unitId);
+      });
+    }
+
+    private isTemporaryRapidActive(unit: UnitState) {
+      const rapidActive = (unit.probeValues.get(RAPID_ACTIVE_KEY) ?? 0) === 1;
+      const operationMode = Math.round(unit.probeValues.get(OPERATION_MODE_KEY) ?? NaN);
+      return rapidActive || operationMode === OPERATION_MODE_VALUES.TEMPORARY_HIGH;
+    }
+
     async setFanProfileMode(
       unitId: string,
       mode: FanProfileMode,
@@ -3195,8 +3233,7 @@ export class UnitRegistry {
       };
 
       const operationMode = Math.round(unit.probeValues.get(OPERATION_MODE_KEY) ?? NaN);
-      const rapidActive = (unit.probeValues.get(RAPID_ACTIVE_KEY) ?? 0) === 1;
-      const temporaryRapidActive = rapidActive || operationMode === OPERATION_MODE_VALUES.TEMPORARY_HIGH;
+      const temporaryRapidActive = this.isTemporaryRapidActive(unit);
       const fireplaceActive = (unit.probeValues.get(FIREPLACE_ACTIVE_KEY) ?? 0) === 1;
       const fireplaceModeReported = operationMode === OPERATION_MODE_VALUES.FIREPLACE;
       const fireplaceAlreadyActive = fireplaceActive || fireplaceModeReported;
@@ -3974,6 +4011,23 @@ export class UnitRegistry {
       await this.cloudPollUnit(unit);
     }
 
+    private async cloudActivateTemporaryHigh(unit: UnitState) {
+      if (this.isTemporaryRapidActive(unit)) {
+        this.log(`[UnitRegistry] Cloud: temporary high already active for ${unit.unitId}, skipping.`);
+        return;
+      }
+
+      this.log(`[UnitRegistry] Cloud: activating temporary high for ${unit.unitId}`);
+      const success = await this.cloudWriteDatapoint(
+        unit,
+        BACNET_OBJECTS.rapidVentilationTrigger,
+        TRIGGER_VALUE,
+      );
+      if (!success) throw new Error('Failed to activate temporary high via cloud');
+
+      await this.cloudPollUnit(unit);
+    }
+
     private async cloudSetFanProfileMode(
       unit: UnitState,
       mode: FanProfileMode,
@@ -4053,8 +4107,7 @@ export class UnitRegistry {
       const operationMode = Math.round(unit.probeValues.get(OPERATION_MODE_KEY) ?? NaN);
       const fireplaceAlreadyActive = fireplaceActive
         || operationMode === OPERATION_MODE_VALUES.FIREPLACE;
-      const rapidActive = (unit.probeValues.get(RAPID_ACTIVE_KEY) ?? 0) === 1;
-      const temporaryRapidActive = rapidActive || operationMode === OPERATION_MODE_VALUES.TEMPORARY_HIGH;
+      const temporaryRapidActive = this.isTemporaryRapidActive(unit);
 
       if (mode !== 'fireplace') {
         unit.deferredMode = undefined;

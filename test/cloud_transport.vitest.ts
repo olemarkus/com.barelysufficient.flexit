@@ -478,6 +478,44 @@ describe('Cloud transport – UnitRegistry integration', () => {
     expect(ventCall).not.toBe(undefined);
   });
 
+  it('activates temporary high via cloud by triggering the rapid ventilation object', async () => {
+    registry.registerCloud(UNIT_ID, mock.device, {
+      plantId: PLANT_ID,
+      client: mockClient,
+    });
+    await sleep(50);
+
+    await registry.activateTemporaryHigh(UNIT_ID);
+
+    const triggerCall = mockClient.writeDatapoint.getCalls().find(
+      (c: any) => c.args[1] === bacnetObjectToCloudPath(19, 357) && c.args[2] === 2,
+    );
+    expect(triggerCall).not.toBe(undefined);
+  });
+
+  it('leaves a running temporary high untouched via cloud', async () => {
+    const sensorValues = defaultSensorValues().map((entry) => ({ ...entry }));
+    const operationMode = sensorValues.find((entry) => entry.type === OBJ.MULTI_STATE_VALUE && entry.instance === 361);
+    if (!operationMode) {
+      throw new Error('Expected operation mode sensor value for temporary high skip test');
+    }
+    operationMode.value = 7; // TEMPORARY_HIGH already active
+
+    mockClient = makeMockCloudClient({ sensorValues });
+    registry.registerCloud(UNIT_ID, mock.device, {
+      plantId: PLANT_ID,
+      client: mockClient,
+    });
+    await sleep(50);
+
+    await registry.activateTemporaryHigh(UNIT_ID);
+
+    const triggerCall = mockClient.writeDatapoint.getCalls().find(
+      (c: any) => c.args[1] === bacnetObjectToCloudPath(19, 357) && c.args[2] === 2,
+    );
+    expect(triggerCall).toBe(undefined);
+  });
+
   it('cancels fireplace before writing home mode via cloud', async () => {
     const sensorValues = defaultSensorValues().map((entry) => ({ ...entry }));
     const ventilationMode = sensorValues.find((entry) => entry.type === OBJ.MULTI_STATE_VALUE && entry.instance === 42);
