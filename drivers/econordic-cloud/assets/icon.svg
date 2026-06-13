@@ -1,0 +1,92 @@
+<!--?xml version="1.0" encoding="UTF-8"?-->
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="960" viewBox="0 0 960 960">
+  <!-- Homey driver icon: monochrome, transparent bg, right-side angle -->
+  <g fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" transform="translate(960 0) scale(-1 1)">
+
+    <!-- ===== OUTLINE (40) ===== -->
+    <g stroke-width="40">
+      <!-- Single outer silhouette keeps the boundary bold without stacked strokes -->
+      <path d="M45 886 L760 925 L940 836 L940 200 L185 161 L45 196 Z"></path>
+    </g>
+
+    <!-- ===== DETAILS (20) ===== -->
+    <g stroke-width="20">
+      <!-- Structural inner edges -->
+      <path d="M45 196 L760 235"></path>
+      <path d="M760 235 L760 925"></path>
+      <path d="M760 235 L940 200"></path>
+
+      <!-- Side handles (reverted to earlier recessed style) -->
+      <path d="M80 385 L126 387.4 L126 697.4 L80 695 Z"></path>
+      <path d="M96 440 L110 440.7 L110 640.7 L96 640 Z"></path>
+      <path d="M679 385 L725 387.4 L725 697.4 L679 695 Z"></path>
+      <path d="M695 440 L709 440.7 L709 640.7 L695 640 Z"></path>
+    </g>
+
+    <!-- ===== MINOR (10) ===== -->
+    <g stroke-width="10">
+      <!-- Front panel details: two subtle vertical seams -->
+      <path d="M140 201.2 L140 891.2"></path>
+      <path d="M665 229.8 L665 919.8"></path>
+
+      <!-- Side handle marks -->
+      <path d="M96 410 L110 410.7"></path>
+      <path d="M695 410 L709 410.7"></path>
+    </g>
+
+    <!-- ===== TOP PORTS (clear duct connectors) ===== -->
+    <g>
+      <g stroke-width="12">
+        <!-- Unified top deck so connectors read as mounted on the panel -->
+        <path d="M155 188 L745 219 L885 175 L295 144 Z"></path>
+      </g>
+      <g stroke-width="20">
+        <!-- Four air-duct connectors in staggered 2x2 placement -->
+        <ellipse cx="355" cy="154" rx="74" ry="20"></ellipse>
+        <ellipse cx="705" cy="173" rx="74" ry="20"></ellipse>
+        <ellipse cx="245" cy="178" rx="74" ry="20"></ellipse>
+        <ellipse cx="595" cy="197" rx="74" ry="20"></ellipse>
+
+        <!-- Small center cap -->
+        <ellipse cx="485" cy="176" rx="24" ry="8"></ellipse>
+      </g>
+      <g stroke-width="10">
+        <ellipse cx="355" cy="154" rx="54" ry="12"></ellipse>
+        <ellipse cx="705" cy="173" rx="54" ry="12"></ellipse>
+        <ellipse cx="245" cy="178" rx="54" ry="12"></ellipse>
+        <ellipse cx="595" cy="197" rx="54" ry="12"></ellipse>
+        <ellipse cx="485" cy="176" rx="16" ry="5"></ellipse>
+      </g>
+    </g>
+    <!-- ===== BADGE: cloud, centered and aligned to front-face perspective ===== -->
+    <g fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round"
+       transform="matrix(1 0.05454545 0 1 287 452)">
+      <g transform="translate(115 105) scale(1.65) translate(-115 -105)">
+        <g stroke-width="12">
+          <rect x="0" y="0" width="230" height="210" rx="26" ry="26"></rect>
+        </g>
+
+        <g stroke-width="14">
+          <path d="M58 114
+                   C41 114 28 102 28 86
+                   C28 71 39 59 54 57
+                   C61 35 84 22 109 22
+                   C132 22 152 33 162 52
+                   C167 50 173 49 178 49
+                   C200 49 216 65 216 86
+                   C216 102 203 114 186 114 Z"></path>
+
+          <path d="M88 134 L88 176"></path>
+          <path d="M88 176 L74 162"></path>
+          <path d="M88 176 L102 162"></path>
+
+          <path d="M142 176 L142 134"></path>
+          <path d="M142 134 L128 148"></path>
+          <path d="M142 134 L156 148"></path>
+        </g>
+      </g>
+    </g>
+
+
+  </g>
+</svg>

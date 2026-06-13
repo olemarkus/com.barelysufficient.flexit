@@ -68,6 +68,7 @@ describe('Nordic driver (vitest)', () => {
     discoverStub.resolves([
       {
         name: 'Nordic S4 REL',
+        series: 'nordic',
         serialNormalized: '800131000001',
         ip: '192.0.2.10',
         bacnetPort: 47808,
@@ -90,12 +91,15 @@ describe('Nordic driver (vitest)', () => {
     expect(startLog?.timeoutMs).toBe(5000);
     const completeLog = findStructuredLog(driver.log, 'driver.pair.discovery.complete');
     expect(completeLog?.unitCount).toBe(1);
+    expect(completeLog?.matchedCount).toBe(1);
     expect(completeLog?.units).toEqual([
       {
         unitId: '800131000001',
         serial: '800131-000001',
+        series: 'nordic',
         ip: '192.0.2.10',
         bacnetPort: 47808,
+        matchesDriver: true,
         status: 'new',
       },
     ]);
@@ -120,6 +124,7 @@ describe('Nordic driver (vitest)', () => {
     discoverStub.resolves([
       {
         name: 'Nordic S4 REL',
+        series: 'nordic',
         serialNormalized: '800131000001',
         ip: '192.0.2.10',
         bacnetPort: 47808,
@@ -140,6 +145,40 @@ describe('Nordic driver (vitest)', () => {
 
     const completeLog = findStructuredLog(driver.log, 'driver.pair.discovery.complete');
     expect(completeLog?.units?.[0]?.status).toBe('already_added');
+  });
+
+  it('excludes discovered units from other series and surfaces them in the log', async () => {
+    discoverStub.resolves([
+      {
+        name: 'Nordic S4 REL',
+        series: 'nordic',
+        serialNormalized: '800131000001',
+        ip: '192.0.2.10',
+        bacnetPort: 47808,
+        serial: '800131-000001',
+        mac: '02:00:00:00:00:01',
+      },
+      {
+        name: 'EcoNordic WH4',
+        series: 'econordic',
+        serialNormalized: '900501000001',
+        ip: '192.0.2.20',
+        bacnetPort: 47808,
+        serial: '900501-000001',
+        mac: '02:00:00:00:00:02',
+      },
+    ]);
+    const driver = new DriverClass();
+
+    const devices = await driver.onPairListDevices();
+
+    expect(devices).toHaveLength(1);
+    expect(devices[0].data.unitId).toBe('800131000001');
+    const completeLog = findStructuredLog(driver.log, 'driver.pair.discovery.complete');
+    expect(completeLog?.unitCount).toBe(2);
+    expect(completeLog?.matchedCount).toBe(1);
+    const econordicEntry = completeLog?.units?.find((u: any) => u.unitId === '900501000001');
+    expect(econordicEntry?.matchesDriver).toBe(false);
   });
 
   it('returns an empty pairing list without unit status logs when discovery finds nothing', async () => {

@@ -9,6 +9,7 @@ describe('flexitReplyParser (vitest)', () => {
     expect(parsed).not.toBe(null);
     if (!parsed) return;
     expect(parsed.serialNormalized.startsWith('8001')).toBe(true);
+    expect(parsed.series).toBe('nordic');
     expect(parsed.ip).toBe('192.0.2.10');
     expect(parsed.bacnetPort).toBe(47808);
     expect(parsed.model).toBe('S4 REL');
