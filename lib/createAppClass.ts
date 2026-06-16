@@ -16,6 +16,21 @@ type AppDependencies = {
   installSourceMapSupport: () => void;
 };
 
+const WIDGET_DRIVER_IDS = ['nordic', 'nordic-cloud'] as const;
+
+type WidgetDevice = {
+  id?: unknown;
+  driver?: { id?: unknown };
+  getId?: () => unknown;
+  getName?: () => string;
+  getAvailable?: () => boolean;
+  getData?: () => {
+    id?: unknown;
+    unitId?: unknown;
+    driverId?: unknown;
+  };
+};
+
 export function createFlexitAppClass({
   HomeyApp,
   registry,
@@ -84,6 +99,121 @@ export function createFlexitAppClass({
       const unitId = String(device?.getData?.()?.unitId ?? '').trim();
       if (!unitId) throw new Error('Device unitId is missing.');
       return unitId;
+    }
+
+    getVentilationModesWidgetStatus(deviceId?: unknown) {
+      const device = this.resolveWidgetDevice(deviceId);
+      if (!device) {
+        return {
+          state: 'no_device',
+          message: 'Select a Flexit ventilation device.',
+          devices: this.getWidgetDeviceOptions(),
+        };
+      }
+
+      const identity = this.getWidgetDeviceIdentity(device);
+      if (!identity) {
+        return {
+          state: 'unavailable',
+          generatedAt: new Date().toISOString(),
+          message: 'Ventilation status is not available yet.',
+        };
+      }
+
+      try {
+        return {
+          state: 'ready',
+          generatedAt: new Date().toISOString(),
+          device: identity,
+          ...registry.getModeWidgetSnapshot(identity.unitId),
+        };
+      } catch (error) {
+        this.getLogger().error(
+          'app.widget.ventilation_modes.status.failed',
+          'Failed to read ventilation modes widget status',
+          error,
+          { unitId: identity.unitId },
+        );
+        return {
+          state: 'unavailable',
+          generatedAt: new Date().toISOString(),
+          device: identity,
+          message: 'Ventilation status is not available yet.',
+        };
+      }
+    }
+
+    private resolveWidgetDevice(deviceId: unknown): WidgetDevice | undefined {
+      const devices = this.getWidgetDevices();
+      const requestedId = this.normalizeWidgetDeviceId(deviceId);
+      if (!requestedId) return devices.length === 1 ? devices[0] : undefined;
+      return devices.find((device) => this.widgetDeviceMatches(device, requestedId));
+    }
+
+    private getWidgetDevices(): WidgetDevice[] {
+      const devices: WidgetDevice[] = [];
+      for (const driverId of WIDGET_DRIVER_IDS) {
+        try {
+          const driver = this.homey.drivers.getDriver(driverId);
+          devices.push(...driver.getDevices());
+        } catch (error) {
+          this.getLogger().error(
+            'app.widget.ventilation_modes.driver_lookup.failed',
+            'Failed to enumerate widget devices for driver',
+            error,
+            { driverId },
+          );
+        }
+      }
+      return devices;
+    }
+
+    private normalizeWidgetDeviceId(deviceId: unknown): string {
+      const first = Array.isArray(deviceId) ? deviceId[0] : deviceId;
+      return String(first ?? '').trim();
+    }
+
+    private widgetDeviceMatches(device: WidgetDevice, requestedId: string): boolean {
+      return this.getWidgetDeviceCandidateIds(device).includes(requestedId);
+    }
+
+    private getWidgetDeviceCandidateIds(device: WidgetDevice): string[] {
+      const data = device.getData?.() ?? {};
+      return [
+        device.getId?.(),
+        device.id,
+        data.id,
+        data.unitId,
+      ].map((value) => String(value ?? '').trim()).filter(Boolean);
+    }
+
+    private getWidgetDeviceIdentity(device: WidgetDevice) {
+      const data = device.getData?.() ?? {};
+      const unitId = String(data.unitId ?? data.id ?? '').trim();
+      if (!unitId) return undefined;
+      return {
+        id: this.getWidgetDeviceCandidateIds(device)[0] ?? unitId,
+        unitId,
+        name: device.getName?.() ?? 'Flexit ventilation',
+        driverId: this.getWidgetDeviceDriverId(device, data),
+        available: device.getAvailable?.() ?? true,
+      };
+    }
+
+    private getWidgetDeviceDriverId(
+      device: WidgetDevice,
+      data: ReturnType<NonNullable<WidgetDevice['getData']>>,
+    ) {
+      return String(device.driver?.id ?? data.driverId ?? '').trim() || undefined;
+    }
+
+    private getWidgetDeviceOptions() {
+      const options = [];
+      for (const device of this.getWidgetDevices()) {
+        const identity = this.getWidgetDeviceIdentity(device);
+        if (identity) options.push(identity);
+      }
+      return options;
     }
 
     private registerFanSetpointChangedFlowTrigger() {

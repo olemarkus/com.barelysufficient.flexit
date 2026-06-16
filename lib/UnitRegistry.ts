@@ -286,6 +286,21 @@ const TEMP_VENT_REMAINING_KEY = objectKey(OBJECT_TYPE.ANALOG_VALUE, 2005);
 const RAPID_REMAINING_KEY = objectKey(OBJECT_TYPE.ANALOG_VALUE, 2031);
 const FIREPLACE_REMAINING_KEY = objectKey(OBJECT_TYPE.ANALOG_VALUE, 2038);
 const MODE_RF_INPUT_KEY = objectKey(OBJECT_TYPE.ANALOG_VALUE, 2125);
+const SUPPLY_TEMPERATURE_KEY = objectKey(OBJECT_TYPE.ANALOG_INPUT, 4);
+const OUTDOOR_TEMPERATURE_KEY = objectKey(OBJECT_TYPE.ANALOG_INPUT, 1);
+const EXHAUST_TEMPERATURE_KEY = objectKey(OBJECT_TYPE.ANALOG_INPUT, 11);
+const EXTRACT_TEMPERATURE_PRIMARY_KEY = objectKey(
+  OBJECT_TYPE.ANALOG_INPUT,
+  EXTRACT_AIR_TEMPERATURE_PRIMARY_INSTANCE,
+);
+const EXTRACT_TEMPERATURE_ALT_KEY = objectKey(
+  OBJECT_TYPE.ANALOG_INPUT,
+  EXTRACT_AIR_TEMPERATURE_ALT_INSTANCE,
+);
+const EXTRACT_HUMIDITY_KEY = objectKey(OBJECT_TYPE.ANALOG_INPUT, 96);
+const HEATING_COIL_POWER_KEY = objectKey(OBJECT_TYPE.ANALOG_VALUE, 194);
+const SUPPLY_FAN_SPEED_PERCENT_KEY = objectKey(OBJECT_TYPE.ANALOG_OUTPUT, 3);
+const EXTRACT_FAN_SPEED_PERCENT_KEY = objectKey(OBJECT_TYPE.ANALOG_OUTPUT, 4);
 const DEHUMIDIFICATION_FAN_CONTROL_KEY = objectKey(
   BACNET_OBJECTS.dehumidificationFanControl.type,
   BACNET_OBJECTS.dehumidificationFanControl.instance,
@@ -314,6 +329,8 @@ const ACTUAL_VENTILATION_MODE_KEY = objectKey(
   BACNET_OBJECTS.actualVentilationMode.type,
   BACNET_OBJECTS.actualVentilationMode.instance,
 );
+const FILTER_TIME_KEY = objectKey(OBJECT_TYPE.ANALOG_VALUE, 285);
+const FILTER_LIMIT_KEY = objectKey(OBJECT_TYPE.ANALOG_VALUE, 286);
 const TARGET_TEMPERATURE_MODE_PROBE_KEY_MAP: ReadonlyArray<readonly [string, string]> = [
   [OPERATION_MODE_KEY, 'operation_mode'],
   [VENTILATION_MODE_KEY, 'ventilation_mode'],
@@ -356,6 +373,13 @@ const MODE_RF_INPUT_MAP: Record<number, 'home' | 'away' | 'high' | 'fireplace'> 
   13: 'high',
   24: 'home',
   26: 'fireplace',
+};
+const FAN_MODE_LABELS: Record<FanProfileMode, string> = {
+  home: 'Home',
+  away: 'Away',
+  high: 'High',
+  fireplace: 'Fireplace',
+  cooker: 'Cooker hood',
 };
 
 const NEVER_BLOCK_KEYS = new Set<string>([
@@ -643,6 +667,43 @@ interface UnitState {
   freeCoolingStateInitialized: boolean;
   heatingCoilEnabled?: boolean;
   heatingCoilStateInitialized: boolean;
+}
+
+export type ModeWidgetTemporaryMode = 'temporary_high' | 'fireplace' | 'cooker_hood';
+
+export interface ModeWidgetModeStatus {
+  id: string;
+  label: string;
+  active: boolean;
+  detail: string;
+  tone: 'primary' | 'success' | 'warning' | 'neutral';
+}
+
+export interface ModeWidgetReading {
+  label: string;
+  value: number;
+  unit: string;
+}
+
+export interface ModeWidgetTemporaryStatus {
+  id: ModeWidgetTemporaryMode;
+  label: string;
+  detail: string;
+  remainingMinutes?: number;
+}
+
+export interface ModeWidgetSnapshot {
+  unitId: string;
+  transport: UnitState['transport'];
+  available: boolean;
+  stale: boolean;
+  lastPollAt?: string;
+  fanMode?: FanProfileMode;
+  fanModeLabel: string;
+  fanModeDetail: string;
+  temporaryMode?: ModeWidgetTemporaryStatus;
+  modes: ModeWidgetModeStatus[];
+  readings: ModeWidgetReading[];
 }
 
 interface PollParseTarget {
@@ -1308,6 +1369,337 @@ export class UnitRegistry {
     private cancelInFlightPoll(unit: UnitState) {
       unit.pollGeneration++;
       unit.pollInFlight = false;
+    }
+
+    getModeWidgetSnapshot(unitId: string): ModeWidgetSnapshot {
+      const unit = this.units.get(unitId);
+      if (!unit) throw new Error('Unit not found');
+
+      const data = this.getModeWidgetData(unit);
+      const fanMode = this.resolveFanModeFromSignals(data);
+      const temporaryMode = this.getModeWidgetTemporaryMode(unit, data, fanMode);
+      const staleAfterMs = unit.transport === 'cloud'
+        ? CLOUD_POLL_INTERVAL_MS * 3
+        : POLL_INTERVAL_MS * 3;
+      const stale = unit.lastPollAt === undefined || Date.now() - unit.lastPollAt > staleAfterMs;
+
+      return {
+        unitId,
+        transport: unit.transport,
+        available: unit.available,
+        stale,
+        lastPollAt: unit.lastPollAt === undefined ? undefined : new Date(unit.lastPollAt).toISOString(),
+        fanMode,
+        fanModeLabel: fanMode === undefined ? 'Unknown' : FAN_MODE_LABELS[fanMode],
+        fanModeDetail: this.getModeWidgetFanModeDetail(unit, fanMode, temporaryMode),
+        temporaryMode,
+        modes: this.getModeWidgetModes(unit, fanMode, temporaryMode),
+        readings: this.getModeWidgetReadings(unit, data, fanMode),
+      };
+    }
+
+    private getModeWidgetData(unit: UnitState): Record<string, number> {
+      const data: Record<string, number> = {};
+      const mappings = [
+        [COMFORT_BUTTON_KEY, 'comfort_button'],
+        [VENTILATION_MODE_KEY, 'ventilation_mode'],
+        [OPERATION_MODE_KEY, 'operation_mode'],
+        [RAPID_ACTIVE_KEY, 'rapid_active'],
+        [FIREPLACE_ACTIVE_KEY, 'fireplace_active'],
+        [TEMP_VENT_REMAINING_KEY, 'remaining_temp_vent_op'],
+        [RAPID_REMAINING_KEY, 'remaining_rapid_vent'],
+        [FIREPLACE_REMAINING_KEY, 'remaining_fireplace_vent'],
+        [MODE_RF_INPUT_KEY, 'mode_rf_input'],
+        [COOKER_HOOD_KEY, 'cooker_hood'],
+        [ACTUAL_VENTILATION_MODE_KEY, 'free_cooling_actual_mode'],
+        [DEHUMIDIFICATION_FAN_CONTROL_KEY, 'dehumidification_fan_control'],
+        [DEHUMIDIFICATION_SLOPE_REQUEST_KEY, 'dehumidification_request_by_slope'],
+      ] as const;
+
+      for (const [probeKey, dataKey] of mappings) {
+        this.copyModeWidgetProbeValue(unit, data, probeKey, dataKey);
+      }
+      this.copyTargetTemperatureProbeValues(unit, data);
+      return data;
+    }
+
+    private copyTargetTemperatureProbeValues(unit: UnitState, data: Record<string, number>) {
+      for (const mode of ['home', 'away'] as const) {
+        const objectId = TARGET_TEMPERATURE_OBJECTS[mode];
+        const probeKey = objectKey(objectId.type, objectId.instance);
+        this.copyModeWidgetProbeValue(unit, data, probeKey, TARGET_TEMPERATURE_DATA_KEYS[mode]);
+      }
+    }
+
+    private copyModeWidgetProbeValue(
+      unit: UnitState,
+      data: Record<string, number>,
+      probeKey: string,
+      dataKey: string,
+    ) {
+      const value = this.getModeWidgetProbeNumber(unit, probeKey);
+      if (value !== undefined) data[dataKey] = value;
+    }
+
+    private getModeWidgetProbeNumber(unit: UnitState, key: string): number | undefined {
+      const value = unit.probeValues.get(key);
+      return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+    }
+
+    private getModeWidgetTemporaryMode(
+      unit: UnitState,
+      data: Record<string, number>,
+      fanMode: FanProfileMode | undefined,
+    ): ModeWidgetTemporaryStatus | undefined {
+      if (this.isModeWidgetCookerActive(data, fanMode)) {
+        return { id: 'cooker_hood', label: 'Cooker hood', detail: 'Temporary ventilation' };
+      }
+
+      const fireplaceRemaining = this.getPositiveRoundedMinutes(data.remaining_fireplace_vent);
+      if (this.isModeWidgetFireplaceActive(data, fanMode)) {
+        return this.getModeWidgetTemporaryStatus('fireplace', 'Fireplace', fireplaceRemaining);
+      }
+
+      const highRemaining = this.getModeWidgetTemporaryHighRemaining(data);
+      if (this.isTemporaryRapidActive(unit) || (fanMode === 'high' && highRemaining !== undefined)) {
+        return this.getModeWidgetTemporaryStatus('temporary_high', 'Temp high', highRemaining);
+      }
+
+      return undefined;
+    }
+
+    private isModeWidgetCookerActive(data: Record<string, number>, fanMode: FanProfileMode | undefined) {
+      const operationMode = Math.round(data.operation_mode ?? NaN);
+      return fanMode === 'cooker'
+        || data.cooker_hood === COOKER_HOOD_ON
+        || operationMode === OPERATION_MODE_VALUES.COOKER_HOOD;
+    }
+
+    private isModeWidgetFireplaceActive(data: Record<string, number>, fanMode: FanProfileMode | undefined) {
+      const operationMode = Math.round(data.operation_mode ?? NaN);
+      return fanMode === 'fireplace'
+        || data.fireplace_active === 1
+        || operationMode === OPERATION_MODE_VALUES.FIREPLACE;
+    }
+
+    private getModeWidgetTemporaryStatus(
+      id: ModeWidgetTemporaryMode,
+      label: string,
+      remainingMinutes: number | undefined,
+    ): ModeWidgetTemporaryStatus {
+      const detail = remainingMinutes === undefined
+        ? 'Temporary ventilation'
+        : `${remainingMinutes} min left`;
+      return { id, label, detail, remainingMinutes };
+    }
+
+    private getModeWidgetTemporaryHighRemaining(data: Record<string, number>) {
+      const rapidRemaining = this.getPositiveRoundedMinutes(data.remaining_rapid_vent);
+      const tempRemaining = this.getPositiveRoundedMinutes(data.remaining_temp_vent_op);
+      if (rapidRemaining === undefined) return tempRemaining;
+      if (tempRemaining === undefined) return rapidRemaining;
+      return Math.max(rapidRemaining, tempRemaining);
+    }
+
+    private getPositiveRoundedMinutes(value: number | undefined) {
+      if (value === undefined || !Number.isFinite(value) || value <= 0) return undefined;
+      return Math.ceil(value);
+    }
+
+    private getModeWidgetFanModeDetail(
+      unit: UnitState,
+      fanMode: FanProfileMode | undefined,
+      temporaryMode: ModeWidgetTemporaryStatus | undefined,
+    ) {
+      if (temporaryMode) return temporaryMode.detail;
+      if (!fanMode) {
+        return unit.lastPollAt === undefined ? 'Waiting for first poll' : 'Waiting for mode signals';
+      }
+      return fanMode === 'high' ? 'High fan profile' : 'Normal fan profile';
+    }
+
+    private getModeWidgetModes(
+      unit: UnitState,
+      fanMode: FanProfileMode | undefined,
+      temporaryMode: ModeWidgetTemporaryStatus | undefined,
+    ): ModeWidgetModeStatus[] {
+      const modes = [
+        this.getModeWidgetFanStatus(fanMode),
+        this.getModeWidgetBooleanStatus(
+          'dehumidification',
+          'Dehumidify',
+          unit.dehumidificationActive,
+          'warning',
+        ),
+        this.getModeWidgetBooleanStatus('free_cooling', 'Free cooling', unit.freeCoolingActive, 'success'),
+        this.getModeWidgetBooleanStatus('heating_coil', 'Heating coil', unit.heatingCoilEnabled, 'neutral'),
+      ];
+      if (temporaryMode) modes.splice(1, 0, this.getModeWidgetTemporaryModeStatus(temporaryMode));
+      return modes;
+    }
+
+    private getModeWidgetFanStatus(fanMode: FanProfileMode | undefined): ModeWidgetModeStatus {
+      return {
+        id: 'fan_mode',
+        label: fanMode === undefined ? 'Fan mode' : FAN_MODE_LABELS[fanMode],
+        active: fanMode !== undefined,
+        detail: fanMode === undefined ? 'Unknown' : 'Active',
+        tone: 'primary',
+      };
+    }
+
+    private getModeWidgetTemporaryModeStatus(
+      temporaryMode: ModeWidgetTemporaryStatus,
+    ): ModeWidgetModeStatus {
+      return {
+        id: temporaryMode.id,
+        label: temporaryMode.label,
+        active: true,
+        detail: temporaryMode.detail,
+        tone: 'warning',
+      };
+    }
+
+    private getModeWidgetBooleanStatus(
+      id: string,
+      label: string,
+      active: boolean | undefined,
+      activeTone: ModeWidgetModeStatus['tone'],
+    ): ModeWidgetModeStatus {
+      return {
+        id,
+        label,
+        active: active === true,
+        detail: active === undefined ? 'Unknown' : (active ? 'On' : 'Off'),
+        tone: active === true ? activeTone : 'neutral',
+      };
+    }
+
+    private getModeWidgetReadings(
+      unit: UnitState,
+      data: Record<string, number>,
+      fanMode: FanProfileMode | undefined,
+    ) {
+      const readings: ModeWidgetReading[] = [];
+      this.pushModeWidgetReading(
+        readings,
+        'Supply fan',
+        this.getModeWidgetProbeNumber(unit, SUPPLY_FAN_SPEED_PERCENT_KEY),
+        '%',
+      );
+      this.pushModeWidgetReading(
+        readings,
+        'Extract fan',
+        this.getModeWidgetProbeNumber(unit, EXTRACT_FAN_SPEED_PERCENT_KEY),
+        '%',
+      );
+      this.pushModeWidgetFanSetpointReadings(unit, readings, fanMode);
+      this.pushModeWidgetReading(readings, 'Target', this.getModeWidgetTargetTemperature(data, fanMode), 'degC');
+      this.pushModeWidgetReading(
+        readings,
+        'Supply temp',
+        this.getModeWidgetProbeNumber(unit, SUPPLY_TEMPERATURE_KEY),
+        'degC',
+      );
+      this.pushModeWidgetReading(
+        readings,
+        'Outdoor',
+        this.getModeWidgetProbeNumber(unit, OUTDOOR_TEMPERATURE_KEY),
+        'degC',
+      );
+      this.pushModeWidgetReading(
+        readings,
+        'Exhaust temp',
+        this.getModeWidgetProbeNumber(unit, EXHAUST_TEMPERATURE_KEY),
+        'degC',
+      );
+      this.pushModeWidgetReading(readings, 'Extract temp', this.getModeWidgetExtractTemperature(unit), 'degC');
+      this.pushModeWidgetReading(readings, 'Humidity', this.getModeWidgetProbeNumber(unit, EXTRACT_HUMIDITY_KEY), '%');
+      this.pushModeWidgetReading(readings, 'Filter', this.getModeWidgetFilterLife(unit), '%');
+      this.pushModeWidgetReading(readings, 'Heater', this.getModeWidgetHeatingPower(unit), 'W');
+      return readings;
+    }
+
+    private pushModeWidgetFanSetpointReadings(
+      unit: UnitState,
+      readings: ModeWidgetReading[],
+      fanMode: FanProfileMode | undefined,
+    ) {
+      const mode = fanMode ?? unit.currentFanSetpointMode;
+      if (!mode) return;
+      this.pushModeWidgetReading(
+        readings,
+        'Supply setpoint',
+        this.getModeWidgetFanSetpoint(unit, mode, 'supply'),
+        '%',
+      );
+      this.pushModeWidgetReading(
+        readings,
+        'Extract setpoint',
+        this.getModeWidgetFanSetpoint(unit, mode, 'exhaust'),
+        '%',
+      );
+    }
+
+    private getModeWidgetFanSetpoint(
+      unit: UnitState,
+      mode: FanProfileMode,
+      fan: FanProfileFan,
+    ) {
+      if (unit.currentFanSetpointMode === mode) {
+        const current = unit.currentFanSetpoints[fan];
+        if (current !== undefined) return current;
+      }
+
+      const objectId = FAN_PROFILE_OBJECTS[mode][fan];
+      const value = this.getModeWidgetProbeNumber(unit, objectKey(objectId.type, objectId.instance));
+      if (value === undefined) return undefined;
+      try {
+        return normalizeFanProfilePercent(value, mode, fan);
+      } catch {
+        return undefined;
+      }
+    }
+
+    private pushModeWidgetReading(
+      readings: ModeWidgetReading[],
+      label: string,
+      value: number | undefined,
+      unit: string,
+    ) {
+      if (value === undefined || !Number.isFinite(value)) return;
+      readings.push({ label, value: Number(value.toFixed(1)), unit });
+    }
+
+    private getModeWidgetTargetTemperature(
+      data: Record<string, number>,
+      fanMode: FanProfileMode | undefined,
+    ) {
+      const mode = this.resolveCurrentTemperatureSetpointMode(data, fanMode) ?? 'home';
+      const value = data[TARGET_TEMPERATURE_DATA_KEYS[mode]];
+      return value === undefined ? undefined : normalizeTargetTemperature(value);
+    }
+
+    private getModeWidgetFilterLife(unit: UnitState) {
+      const filterTime = this.getModeWidgetProbeNumber(unit, FILTER_TIME_KEY);
+      const filterLimit = this.getModeWidgetProbeNumber(unit, FILTER_LIMIT_KEY);
+      if (filterTime === undefined || filterLimit === undefined) return undefined;
+      return this.computeFilterLife({
+        filter_time: filterTime,
+        filter_limit: filterLimit,
+      });
+    }
+
+    private getModeWidgetExtractTemperature(unit: UnitState) {
+      return selectExtractTemperature(
+        this.getModeWidgetProbeNumber(unit, EXTRACT_TEMPERATURE_PRIMARY_KEY),
+        this.getModeWidgetProbeNumber(unit, EXTRACT_TEMPERATURE_ALT_KEY),
+      );
+    }
+
+    private getModeWidgetHeatingPower(unit: UnitState) {
+      const kilowatts = this.getModeWidgetProbeNumber(unit, HEATING_COIL_POWER_KEY);
+      return kilowatts === undefined ? undefined : kilowatts * 1000;
     }
 
     private isTrackedUnit(unit: UnitState) {

@@ -21,6 +21,9 @@ class MockHomeyApp {
           trigger: sinon.stub().resolves(),
         }),
       },
+      drivers: {
+        getDriver: sinon.stub().throws(new Error('Driver not found')),
+      },
     };
   }
 }
@@ -38,6 +41,17 @@ function createRegistryStub(overrides: Record<string, any> = {}) {
     activateTemporaryHigh: sinon.stub().resolves(),
     getDehumidificationActive: sinon.stub().resolves(true),
     getFreeCoolingActive: sinon.stub().resolves(true),
+    getModeWidgetSnapshot: sinon.stub().returns({
+      unitId: 'unit-1',
+      transport: 'bacnet',
+      available: true,
+      stale: false,
+      fanMode: 'home',
+      fanModeLabel: 'Home',
+      fanModeDetail: 'Normal fan profile',
+      modes: [],
+      readings: [],
+    }),
     setHeatingCoilEnabled: sinon.stub().resolves(),
     toggleHeatingCoilEnabled: sinon.stub().resolves(true),
     getHeatingCoilEnabled: sinon.stub().resolves(true),
@@ -207,6 +221,52 @@ describe('App flow registration (vitest)', () => {
 
     expect(result).toBe(true);
     expect(registryStub.activateTemporaryHigh.calledOnceWithExactly('unit-1')).toBe(true);
+  });
+
+  it('returns ventilation mode widget status for the selected Homey device', () => {
+    const registryStub = createRegistryStub();
+    const AppClass = createAppClass(registryStub);
+    const app = new AppClass();
+    const device = {
+      getId: sinon.stub().returns('homey-device-1'),
+      getName: sinon.stub().returns('Kitchen ventilation'),
+      getAvailable: sinon.stub().returns(true),
+      getData: sinon.stub().returns({ id: 'unit-1', unitId: 'unit-1' }),
+      driver: { id: 'nordic' },
+    };
+
+    app.homey.drivers.getDriver.withArgs('nordic').returns({
+      getDevices: sinon.stub().returns([device]),
+    });
+
+    const status = (app as any).getVentilationModesWidgetStatus('homey-device-1');
+
+    expect(status.state).toBe('ready');
+    expect(status.device.name).toBe('Kitchen ventilation');
+    expect(status.device.unitId).toBe('unit-1');
+    expect(status.fanModeLabel).toBe('Home');
+    expect(registryStub.getModeWidgetSnapshot.calledOnceWithExactly('unit-1')).toBe(true);
+  });
+
+  it('returns unavailable widget status when the selected device has no unit id', () => {
+    const registryStub = createRegistryStub();
+    const AppClass = createAppClass(registryStub);
+    const app = new AppClass();
+    const device = {
+      getId: sinon.stub().returns('homey-device-1'),
+      getName: sinon.stub().returns('Incomplete ventilation'),
+      getData: sinon.stub().returns({}),
+    };
+
+    app.homey.drivers.getDriver.withArgs('nordic').returns({
+      getDevices: sinon.stub().returns([device]),
+    });
+
+    const status = (app as any).getVentilationModesWidgetStatus('homey-device-1');
+
+    expect(status.state).toBe('unavailable');
+    expect(status.message).toBe('Ventilation status is not available yet.');
+    expect(registryStub.getModeWidgetSnapshot.called).toBe(false);
   });
 
   it('logs uncaughtException and unhandledRejection through global handlers', async () => {

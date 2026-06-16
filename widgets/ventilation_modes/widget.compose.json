@@ -1,0 +1,21 @@
+{
+  "name": {
+    "en": "Ventilation Modes"
+  },
+  "height": 300,
+  "transparent": false,
+  "devices": {
+    "type": "app",
+    "singular": true,
+    "filter": {
+      "class": "airtreatment",
+      "capabilities": "fan_mode,dehumidification_active,free_cooling_active"
+    }
+  },
+  "api": {
+    "getStatus": {
+      "method": "GET",
+      "path": "/status"
+    }
+  }
+}

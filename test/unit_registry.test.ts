@@ -100,6 +100,10 @@ function makeReadObject(type: number, instance: number, value: number) {
   };
 }
 
+function probeKey(type: number, instance: number) {
+  return `${type}:${instance}`;
+}
+
 describe('UnitRegistry', () => {
   let UnitRegistryClass: any;
   let registry: any;
@@ -313,6 +317,90 @@ describe('UnitRegistry', () => {
     expect(events[1].active).to.equal(false);
     expect(events[0].device).to.equal(mockDevice);
     expect(events[1].device).to.equal(mockDevice);
+  });
+
+  it('builds a ventilation modes widget snapshot with temporary high overlays', () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    const unit = (registry as any).units.get('test_unit');
+    unit.lastPollAt = Date.now();
+    const setProbe = (type: number, instance: number, value: number) => {
+      unit.probeValues.set(probeKey(type, instance), value);
+    };
+
+    setProbe(BACNET_ENUMS.ObjectType.MULTI_STATE_VALUE, 361, 7);
+    setProbe(BACNET_ENUMS.ObjectType.BINARY_VALUE, 15, 1);
+    setProbe(BACNET_ENUMS.ObjectType.ANALOG_VALUE, 2031, 12.2);
+    setProbe(BACNET_ENUMS.ObjectType.ANALOG_OUTPUT, 3, 82);
+    setProbe(BACNET_ENUMS.ObjectType.ANALOG_OUTPUT, 4, 79);
+    setProbe(BACNET_ENUMS.ObjectType.ANALOG_INPUT, 96, 47);
+    setProbe(BACNET_ENUMS.ObjectType.ANALOG_VALUE, 285, 100);
+    setProbe(BACNET_ENUMS.ObjectType.ANALOG_VALUE, 286, 500);
+
+    (registry as any).distributeData(unit, {
+      operation_mode: 7,
+      rapid_active: 1,
+      remaining_rapid_vent: 12.2,
+      dehumidification_fan_control: 55,
+      free_cooling_actual_mode: 10,
+      heating_coil_enabled: 1,
+      'fan_profile.high.supply': 82,
+      'fan_profile.high.exhaust': 79,
+      'target_temperature.home': 20,
+    });
+
+    const snapshot = registry.getModeWidgetSnapshot('test_unit');
+    const modesById = new Map(snapshot.modes.map((mode: any) => [mode.id, mode]));
+    const readingsByLabel = new Map(snapshot.readings.map((reading: any) => [reading.label, reading]));
+
+    expect(snapshot.fanMode).to.equal('high');
+    expect(snapshot.fanModeLabel).to.equal('High');
+    expect(snapshot.stale).to.equal(false);
+    expect(snapshot.temporaryMode.id).to.equal('temporary_high');
+    expect(snapshot.temporaryMode.remainingMinutes).to.equal(13);
+    expect(modesById.get('dehumidification').active).to.equal(true);
+    expect(modesById.get('free_cooling').active).to.equal(true);
+    expect(modesById.get('heating_coil').active).to.equal(true);
+    expect(readingsByLabel.get('Supply fan').value).to.equal(82);
+    expect(readingsByLabel.get('Extract fan').value).to.equal(79);
+    expect(readingsByLabel.get('Filter').value).to.equal(80);
+  });
+
+  it('reports cooker hood as a temporary ventilation mode in widget snapshots', () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    const unit = (registry as any).units.get('test_unit');
+    unit.lastPollAt = Date.now();
+    unit.probeValues.set(probeKey(BACNET_ENUMS.ObjectType.MULTI_STATE_VALUE, 361), 5);
+    unit.probeValues.set(probeKey(BACNET_ENUMS.ObjectType.BINARY_VALUE, 402), 1);
+
+    (registry as any).distributeData(unit, {
+      operation_mode: 5,
+      cooker_hood: 1,
+      'fan_profile.cooker.supply': 90,
+      'fan_profile.cooker.exhaust': 50,
+    });
+
+    const snapshot = registry.getModeWidgetSnapshot('test_unit');
+
+    expect(snapshot.fanMode).to.equal('cooker');
+    expect(snapshot.temporaryMode.id).to.equal('cooker_hood');
+    expect(snapshot.modes.some((mode: any) => mode.id === 'cooker_hood' && mode.active)).to.equal(true);
+  });
+
+  it('omits widget filter life until both filter probes are loaded', () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    const unit = (registry as any).units.get('test_unit');
+    unit.lastPollAt = Date.now();
+    unit.probeValues.set(probeKey(BACNET_ENUMS.ObjectType.ANALOG_VALUE, 286), 500);
+
+    const snapshot = registry.getModeWidgetSnapshot('test_unit');
+
+    expect(snapshot.readings.some((reading: any) => reading.label === 'Filter')).to.equal(false);
   });
 
   it('blocks further heating coil writes after unsupported object error (Code:31)', async () => {
