@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="./index.css">
+    <title>Ventilation Modes</title>
+  </head>
+  <body class="homey-widget">
+    <main id="widget-root" class="mode-widget" data-state="loading">
+      <section class="mode-hero" aria-live="polite">
+        <div>
+          <p class="eyebrow" id="device-name">Flexit ventilation</p>
+          <h1 id="fan-mode">Loading</h1>
+          <p class="mode-detail" id="mode-detail">Reading current modes</p>
+        </div>
+        <div class="state-pill" id="freshness-pill">Now</div>
+      </section>
+
+      <section class="mode-strip" id="mode-strip" aria-label="Mode states"></section>
+      <section class="reading-grid" id="reading-grid" aria-label="Ventilation readings"></section>
+      <p class="empty-message" id="empty-message" hidden></p>
+    </main>
+    <script src="./index.js"></script>
+  </body>
+</html>
