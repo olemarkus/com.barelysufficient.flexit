@@ -32,6 +32,7 @@
 
   function setMessage(title, detail, tone) {
     root.dataset.state = 'message';
+    root.classList.remove('has-many-modes');
     deviceName.textContent = 'Flexit ventilation';
     fanMode.textContent = title;
     modeDetail.textContent = detail;
@@ -86,7 +87,9 @@
 
   function renderModes(modes) {
     clearChildren(modeStrip);
-    for (const mode of modes.slice(0, MAX_MODES)) {
+    const visibleModes = modes.slice(0, MAX_MODES);
+    root.classList.toggle('has-many-modes', visibleModes.length > 4);
+    for (const mode of visibleModes) {
       modeStrip.appendChild(createModeChip(mode));
     }
   }
