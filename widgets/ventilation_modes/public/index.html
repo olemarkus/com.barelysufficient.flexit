@@ -6,20 +6,13 @@
     <link rel="stylesheet" href="./index.css">
     <title>Ventilation Modes</title>
   </head>
-  <body class="homey-widget">
+  <body class="homey-widget-small">
     <main id="widget-root" class="mode-widget" data-state="loading">
-      <section class="mode-hero" aria-live="polite">
-        <div>
-          <p class="eyebrow" id="device-name">Flexit ventilation</p>
-          <h1 id="fan-mode">Loading</h1>
-          <p class="mode-detail" id="mode-detail">Reading current modes</p>
-        </div>
-        <div class="state-pill" id="freshness-pill">Now</div>
-      </section>
-
-      <section class="mode-strip" id="mode-strip" aria-label="Mode states"></section>
-      <section class="reading-grid" id="reading-grid" aria-label="Ventilation readings"></section>
-      <p class="empty-message" id="empty-message" hidden></p>
+      <header class="mode-widget__header">
+        <p class="homey-text-small-light truncate" id="device-name">Flexit ventilation</p>
+      </header>
+      <section class="mode-list" id="mode-list" aria-label="Ventilation modes"></section>
+      <p class="homey-text-small-light empty-message" id="empty-message" hidden></p>
     </main>
     <script src="./index.js"></script>
   </body>
