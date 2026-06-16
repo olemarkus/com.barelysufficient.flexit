@@ -2,7 +2,7 @@
   "name": {
     "en": "Ventilation Modes"
   },
-  "height": 300,
+  "height": 180,
   "transparent": false,
   "devices": {
     "type": "app",
