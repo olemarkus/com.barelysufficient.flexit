@@ -332,6 +332,8 @@ describe('UnitRegistry', () => {
     setProbe(BACNET_ENUMS.ObjectType.MULTI_STATE_VALUE, 361, 7);
     setProbe(BACNET_ENUMS.ObjectType.BINARY_VALUE, 15, 1);
     setProbe(BACNET_ENUMS.ObjectType.ANALOG_VALUE, 2031, 12.2);
+    setProbe(BACNET_ENUMS.ObjectType.MULTI_STATE_VALUE, 19, 10);
+    setProbe(BACNET_ENUMS.ObjectType.BINARY_VALUE, 478, 1);
     setProbe(BACNET_ENUMS.ObjectType.ANALOG_OUTPUT, 3, 82);
     setProbe(BACNET_ENUMS.ObjectType.ANALOG_OUTPUT, 4, 79);
     setProbe(BACNET_ENUMS.ObjectType.ANALOG_INPUT, 96, 47);
@@ -360,7 +362,10 @@ describe('UnitRegistry', () => {
     expect(snapshot.temporaryMode.id).to.equal('temporary_high');
     expect(snapshot.temporaryMode.remainingMinutes).to.equal(13);
     expect(modesById.get('dehumidification').active).to.equal(true);
+    expect(modesById.get('dehumidification').state).to.equal('active');
     expect(modesById.get('free_cooling').active).to.equal(true);
+    expect(modesById.get('free_cooling').state).to.equal('active');
+    expect(modesById.get('free_cooling').detail).to.equal('On');
     expect(modesById.get('heating_coil').active).to.equal(true);
     expect(readingsByLabel.get('Supply fan').value).to.equal(82);
     expect(readingsByLabel.get('Extract fan').value).to.equal(79);
@@ -390,6 +395,69 @@ describe('UnitRegistry', () => {
     expect(snapshot.modes.some((mode: any) => mode.id === 'cooker_hood' && mode.active)).to.equal(true);
   });
 
+  it('distinguishes free cooling enabled, disabled, off, and unknown widget states', () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+    const unit = (registry as any).units.get('test_unit');
+    unit.lastPollAt = Date.now();
+
+    const setProbe = (type: number, instance: number, value: number) => {
+      unit.probeValues.set(probeKey(type, instance), value);
+    };
+    const removeProbe = (type: number, instance: number) => {
+      unit.probeValues.delete(probeKey(type, instance));
+    };
+    const freeCoolingMode = () => {
+      const snapshot = registry.getModeWidgetSnapshot('test_unit');
+      return snapshot.modes.find((mode: any) => mode.id === 'free_cooling');
+    };
+
+    setProbe(BACNET_ENUMS.ObjectType.BINARY_VALUE, 478, 1);
+    setProbe(BACNET_ENUMS.ObjectType.MULTI_STATE_VALUE, 19, 10);
+    (registry as any).distributeData(unit, {
+      free_cooling_enabled: 1,
+      free_cooling_actual_mode: 10,
+    });
+    expect(freeCoolingMode()).to.include({ active: true, state: 'active', detail: 'On' });
+
+    setProbe(BACNET_ENUMS.ObjectType.MULTI_STATE_VALUE, 19, 3);
+    (registry as any).distributeData(unit, {
+      free_cooling_enabled: 1,
+      free_cooling_actual_mode: 3,
+    });
+    expect(freeCoolingMode()).to.include({ active: false, state: 'off', detail: 'Off' });
+
+    setProbe(BACNET_ENUMS.ObjectType.BINARY_VALUE, 478, 0);
+    (registry as any).distributeData(unit, {
+      free_cooling_enabled: 0,
+      free_cooling_actual_mode: 3,
+    });
+    expect(freeCoolingMode()).to.include({ active: false, state: 'disabled', detail: 'Disabled' });
+
+    removeProbe(BACNET_ENUMS.ObjectType.BINARY_VALUE, 478);
+    setProbe(BACNET_ENUMS.ObjectType.MULTI_STATE_VALUE, 19, 3);
+    (registry as any).distributeData(unit, {
+      free_cooling_actual_mode: 3,
+    });
+    expect(freeCoolingMode()).to.include({ active: false, state: 'unknown', detail: 'Unknown' });
+  });
+
+  it('does not report dehumidification as disabled in widget snapshots', () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+    const unit = (registry as any).units.get('test_unit');
+    unit.lastPollAt = Date.now();
+
+    (registry as any).distributeData(unit, {
+      dehumidification_fan_control: 0,
+      dehumidification_request_by_slope: 0,
+    });
+    const snapshot = registry.getModeWidgetSnapshot('test_unit');
+    const dehumidificationMode = snapshot.modes.find((mode: any) => mode.id === 'dehumidification');
+
+    expect(dehumidificationMode).to.include({ active: false, state: 'off', detail: 'Off' });
+  });
+
   it('omits widget filter life until both filter probes are loaded', () => {
     const mockDevice = makeMockDevice();
     registry.register('test_unit', mockDevice);
@@ -401,6 +469,32 @@ describe('UnitRegistry', () => {
     const snapshot = registry.getModeWidgetSnapshot('test_unit');
 
     expect(snapshot.readings.some((reading: any) => reading.label === 'Filter')).to.equal(false);
+  });
+
+  it('throws when building a widget snapshot for an unknown unit', () => {
+    expect(() => registry.getModeWidgetSnapshot('nonexistent_unit')).to.throw('Unit not found');
+  });
+
+  it('uses a longer stale window for cloud transport than bacnet', () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+    const unit = (registry as any).units.get('test_unit');
+
+    // 60s since the last poll: stale for bacnet (window POLL_INTERVAL_MS * 3 = 30s),
+    // but still fresh for cloud (window CLOUD_POLL_INTERVAL_MS * 3 = 180s).
+    unit.lastPollAt = Date.now() - 60_000;
+
+    unit.transport = 'bacnet';
+    expect(registry.getModeWidgetSnapshot('test_unit').stale).to.equal(true);
+
+    unit.transport = 'cloud';
+    const cloudSnapshot = registry.getModeWidgetSnapshot('test_unit');
+    expect(cloudSnapshot.transport).to.equal('cloud');
+    expect(cloudSnapshot.stale).to.equal(false);
+
+    // Beyond the cloud window: stale even for cloud transport.
+    unit.lastPollAt = Date.now() - 200_000;
+    expect(registry.getModeWidgetSnapshot('test_unit').stale).to.equal(true);
   });
 
   it('blocks further heating coil writes after unsupported object error (Code:31)', async () => {

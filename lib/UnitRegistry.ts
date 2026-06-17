@@ -670,11 +670,13 @@ interface UnitState {
 }
 
 export type ModeWidgetTemporaryMode = 'temporary_high' | 'fireplace' | 'cooker_hood';
+export type ModeWidgetModeState = 'active' | 'off' | 'disabled' | 'unknown';
 
 export interface ModeWidgetModeStatus {
   id: string;
   label: string;
   active: boolean;
+  state: ModeWidgetModeState;
   detail: string;
   tone: 'primary' | 'success' | 'warning' | 'neutral';
 }
@@ -1393,7 +1395,7 @@ export class UnitRegistry {
         fanModeLabel: fanMode === undefined ? 'Unknown' : FAN_MODE_LABELS[fanMode],
         fanModeDetail: this.getModeWidgetFanModeDetail(unit, fanMode, temporaryMode),
         temporaryMode,
-        modes: this.getModeWidgetModes(unit, fanMode, temporaryMode),
+        modes: this.getModeWidgetModes(unit, data, fanMode, temporaryMode),
         readings: this.getModeWidgetReadings(unit, data, fanMode),
       };
     }
@@ -1412,6 +1414,7 @@ export class UnitRegistry {
         [MODE_RF_INPUT_KEY, 'mode_rf_input'],
         [COOKER_HOOD_KEY, 'cooker_hood'],
         [ACTUAL_VENTILATION_MODE_KEY, 'free_cooling_actual_mode'],
+        [FREE_COOLING_ENABLED_KEY, 'free_cooling_enabled'],
         [DEHUMIDIFICATION_FAN_CONTROL_KEY, 'dehumidification_fan_control'],
         [DEHUMIDIFICATION_SLOPE_REQUEST_KEY, 'dehumidification_request_by_slope'],
       ] as const;
@@ -1520,6 +1523,7 @@ export class UnitRegistry {
 
     private getModeWidgetModes(
       unit: UnitState,
+      data: Record<string, number>,
       fanMode: FanProfileMode | undefined,
       temporaryMode: ModeWidgetTemporaryStatus | undefined,
     ): ModeWidgetModeStatus[] {
@@ -1531,7 +1535,7 @@ export class UnitRegistry {
           unit.dehumidificationActive,
           'warning',
         ),
-        this.getModeWidgetBooleanStatus('free_cooling', 'Free cooling', unit.freeCoolingActive, 'success'),
+        this.getModeWidgetFreeCoolingStatus(data, unit.freeCoolingActive),
         this.getModeWidgetBooleanStatus('heating_coil', 'Heating coil', unit.heatingCoilEnabled, 'neutral'),
       ];
       if (temporaryMode) modes.splice(1, 0, this.getModeWidgetTemporaryModeStatus(temporaryMode));
@@ -1543,6 +1547,7 @@ export class UnitRegistry {
         id: 'fan_mode',
         label: fanMode === undefined ? 'Fan mode' : FAN_MODE_LABELS[fanMode],
         active: fanMode !== undefined,
+        state: fanMode === undefined ? 'unknown' : 'active',
         detail: fanMode === undefined ? 'Unknown' : 'Active',
         tone: 'primary',
       };
@@ -1555,9 +1560,40 @@ export class UnitRegistry {
         id: temporaryMode.id,
         label: temporaryMode.label,
         active: true,
+        state: 'active',
         detail: temporaryMode.detail,
         tone: 'warning',
       };
+    }
+
+    private getModeWidgetFreeCoolingStatus(
+      data: Record<string, number>,
+      active: boolean | undefined,
+    ): ModeWidgetModeStatus {
+      const enabled = resolveFreeCoolingEnabled(data.free_cooling_enabled);
+      if (enabled === false) {
+        return {
+          id: 'free_cooling',
+          label: 'Free cooling',
+          active: false,
+          state: 'disabled',
+          detail: 'Disabled',
+          tone: 'neutral',
+        };
+      }
+
+      if (enabled === undefined && active !== true) {
+        return {
+          id: 'free_cooling',
+          label: 'Free cooling',
+          active: false,
+          state: 'unknown',
+          detail: 'Unknown',
+          tone: 'neutral',
+        };
+      }
+
+      return this.getModeWidgetBooleanStatus('free_cooling', 'Free cooling', active, 'success');
     }
 
     private getModeWidgetBooleanStatus(
@@ -1566,10 +1602,14 @@ export class UnitRegistry {
       active: boolean | undefined,
       activeTone: ModeWidgetModeStatus['tone'],
     ): ModeWidgetModeStatus {
+      const state: ModeWidgetModeState = active === undefined
+        ? 'unknown'
+        : (active ? 'active' : 'off');
       return {
         id,
         label,
         active: active === true,
+        state,
         detail: active === undefined ? 'Unknown' : (active ? 'On' : 'Off'),
         tone: active === true ? activeTone : 'neutral',
       };

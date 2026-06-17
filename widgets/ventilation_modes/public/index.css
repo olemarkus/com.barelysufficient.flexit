@@ -5,25 +5,38 @@
 html,
 body {
   min-height: 100%;
-  margin: 0;
-}
-
-body {
-  height: 100vh;
-  overflow: hidden;
+  margin: calc(var(--homey-su) * 0);
 }
 
 .mode-widget {
   display: flex;
   flex-direction: column;
   gap: var(--homey-su-2);
-  height: 100%;
   min-height: 0;
 }
 
-.mode-widget__header,
+.mode-widget__header {
+  display: flex;
+  align-items: baseline;
+  gap: var(--homey-su-2);
+  min-width: 0;
+}
+
+.mode-widget__header #device-name {
+  flex: 1 1 auto;
+}
+
+.mode-widget__freshness {
+  flex: 0 0 auto;
+}
+
 .mode-row {
   min-width: 0;
+}
+
+.mode-widget[data-freshness='stale'] .mode-list,
+.mode-widget[data-freshness='offline'] .mode-list {
+  opacity: 0.5;
 }
 
 .mode-list {
@@ -46,6 +59,10 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.truncate {
+  display: block;
 }
 
 .empty-message {

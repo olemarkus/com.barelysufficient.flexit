@@ -1,27 +1,56 @@
 (function () {
   'use strict';
 
-  const WIDGET_HEIGHT = 180;
+  const MIN_WIDGET_HEIGHT = 96;
   const REFRESH_INTERVAL_MS = 30000;
+  const TEMPORARY_MODE_IDS = new Set(['temporary_high', 'fireplace', 'cooker_hood']);
 
   const root = document.getElementById('widget-root');
   const deviceName = document.getElementById('device-name');
   const modeList = document.getElementById('mode-list');
   const emptyMessage = document.getElementById('empty-message');
+  const freshness = document.getElementById('freshness');
 
   let homey = null;
   let ready = false;
   let refreshTimer = null;
   let refreshInFlight = false;
+  let currentWidgetHeight = 0;
+  let heightFrame = null;
 
   function clearChildren(element) {
     while (element.firstChild) element.removeChild(element.firstChild);
   }
 
-  function setReady() {
-    if (ready) return;
-    ready = true;
-    if (homey && typeof homey.ready === 'function') homey.ready({ height: WIDGET_HEIGHT });
+  function parseCssNumber(value) {
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  function measureWidgetHeight() {
+    const bodyStyle = window.getComputedStyle(document.body);
+    const verticalPadding = parseCssNumber(bodyStyle.paddingTop) + parseCssNumber(bodyStyle.paddingBottom);
+    return Math.max(MIN_WIDGET_HEIGHT, Math.ceil(root.getBoundingClientRect().height + verticalPadding));
+  }
+
+  function applyWidgetHeight() {
+    if (!homey) return;
+    if (heightFrame) window.cancelAnimationFrame(heightFrame);
+    heightFrame = window.requestAnimationFrame(() => {
+      heightFrame = null;
+      const height = measureWidgetHeight();
+
+      if (!ready) {
+        ready = true;
+        currentWidgetHeight = height;
+        if (typeof homey.ready === 'function') homey.ready({ height });
+        return;
+      }
+
+      if (height === currentWidgetHeight) return;
+      currentWidgetHeight = height;
+      if (typeof homey.setHeight === 'function') homey.setHeight(height);
+    });
   }
 
   function createText(className, text) {
@@ -31,12 +60,27 @@
     return element;
   }
 
-  function createModeRow(label, value, active) {
+  function normalizeModeState(mode) {
+    const state = mode && mode.state;
+    if (state === 'active' || state === 'off' || state === 'disabled' || state === 'unknown') return state;
+    if (mode && (mode.active === true || TEMPORARY_MODE_IDS.has(mode.id))) return 'active';
+    if (!mode || mode.detail === 'Unknown') return 'unknown';
+    if (mode.detail === 'Disabled') return 'disabled';
+    return 'off';
+  }
+
+  function valueClassForState(state) {
+    if (state === 'active') return 'homey-text-medium';
+    if (state === 'off') return 'homey-text-regular';
+    return 'homey-text-small-light';
+  }
+
+  function createModeRow(label, value, state) {
     const row = document.createElement('div');
     row.className = 'mode-row';
 
     const labelElement = createText('homey-text-small-light mode-row__label', label);
-    const valueClass = active ? 'homey-text-medium' : 'homey-text-regular';
+    const valueClass = valueClassForState(state);
     const valueElement = createText(`${valueClass} mode-row__value`, value);
 
     row.append(labelElement, valueElement);
@@ -48,22 +92,30 @@
     return modes.find((mode) => mode && mode.id === id);
   }
 
-  function formatBooleanMode(status, id) {
-    const mode = getMode(status, id);
-    if (!mode) return { value: 'Unknown', active: false };
-    return {
-      value: mode.detail || (mode.active ? 'On' : 'Off'),
-      active: mode.active === true,
-    };
+  function findTemporaryMode(status) {
+    const explicitMode = status.temporaryMode && getMode(status, status.temporaryMode.id);
+    if (explicitMode) return explicitMode;
+
+    const modes = Array.isArray(status.modes) ? status.modes : [];
+    return modes.find((mode) => mode && TEMPORARY_MODE_IDS.has(mode.id))
+      || status.temporaryMode
+      || undefined;
   }
 
-  function formatTemporaryMode(status) {
-    const temporaryMode = status.temporaryMode;
-    if (!temporaryMode) return undefined;
+  function formatTemporaryMode(temporaryMode) {
     const label = String(temporaryMode.label || 'Temporary').trim() || 'Temporary';
     const detail = String(temporaryMode.detail || '').trim();
     if (!detail || detail === 'Temporary ventilation') return label;
     return `${label} · ${detail.replace(' min left', ' min')}`;
+  }
+
+  function createFeatureRow(status, id, fallbackLabel) {
+    const mode = getMode(status, id);
+    return createModeRow(
+      mode && mode.label ? mode.label : fallbackLabel,
+      mode && mode.detail ? mode.detail : 'Unknown',
+      normalizeModeState(mode),
+    );
   }
 
   function renderRows(status) {
@@ -73,24 +125,43 @@
     modeList.appendChild(createModeRow(
       'Fan',
       status.fanModeLabel || fanMode?.label || 'Unknown',
-      status.fanMode !== undefined,
+      normalizeModeState(fanMode),
     ));
 
-    const temporaryMode = formatTemporaryMode(status);
+    const temporaryMode = findTemporaryMode(status);
     if (temporaryMode) {
-      modeList.appendChild(createModeRow('Temporary', temporaryMode, true));
+      modeList.appendChild(createModeRow(
+        'Temporary',
+        formatTemporaryMode(temporaryMode),
+        normalizeModeState(temporaryMode),
+      ));
     }
 
-    const dehumidify = formatBooleanMode(status, 'dehumidification');
-    modeList.appendChild(createModeRow('Dehumidify', dehumidify.value, dehumidify.active));
+    modeList.appendChild(createFeatureRow(status, 'dehumidification', 'Dehumidify'));
+    modeList.appendChild(createFeatureRow(status, 'free_cooling', 'Free cooling'));
+  }
 
-    const freeCooling = formatBooleanMode(status, 'free_cooling');
-    modeList.appendChild(createModeRow('Free cooling', freeCooling.value, freeCooling.active));
+  function applyFreshness(status) {
+    const offline = status.available === false;
+    const stale = status.stale === true;
+    root.dataset.freshness = offline ? 'offline' : (stale ? 'stale' : 'live');
+    if (!freshness) return;
+    const label = offline ? 'Offline' : (stale ? 'Stale' : '');
+    freshness.textContent = label;
+    freshness.hidden = label === '';
+  }
+
+  function clearFreshness() {
+    root.dataset.freshness = 'live';
+    if (!freshness) return;
+    freshness.textContent = '';
+    freshness.hidden = true;
   }
 
   function setMessage(title, detail) {
     root.dataset.state = 'message';
     deviceName.textContent = 'Flexit ventilation';
+    clearFreshness();
     emptyMessage.textContent = detail || title;
     emptyMessage.hidden = false;
     clearChildren(modeList);
@@ -106,6 +177,7 @@
     root.dataset.state = 'ready';
     emptyMessage.hidden = true;
     deviceName.textContent = status.device && status.device.name ? status.device.name : 'Flexit ventilation';
+    applyFreshness(status);
     renderRows(status);
   }
 
@@ -128,7 +200,7 @@
       if (typeof console !== 'undefined') console.error(error);
     } finally {
       refreshInFlight = false;
-      setReady();
+      applyWidgetHeight();
     }
   }
 
@@ -150,6 +222,7 @@
         return ['preview-device'];
       },
       ready() {},
+      setHeight() {},
     };
   }
 
@@ -157,9 +230,19 @@
     const params = new URLSearchParams(window.location.search);
     if (params.get('theme') === 'dark') document.body.classList.add('homey-dark-mode');
     const scenario = params.get('preview') || 'temporary';
+    if (scenario === 'disabled') return previewDisabledStatus();
     if (scenario === 'freecooling') return previewFreeCoolingStatus();
     if (scenario === 'quiet') return previewQuietStatus();
+    if (scenario === 'offline') return previewOfflineStatus();
     return previewTemporaryStatus();
+  }
+
+  function previewOfflineStatus() {
+    return {
+      ...previewTemporaryStatus(),
+      available: false,
+      stale: true,
+    };
   }
 
   function previewBaseStatus() {
@@ -178,10 +261,10 @@
       fanModeLabel: 'High',
       temporaryMode: { id: 'temporary_high', label: 'Temp high', detail: '18 min left', remainingMinutes: 18 },
       modes: [
-        { id: 'fan_mode', label: 'High', active: true, detail: 'Active', tone: 'primary' },
-        { id: 'temporary_high', label: 'Temp high', active: true, detail: '18 min left', tone: 'warning' },
-        { id: 'dehumidification', label: 'Dehumidify', active: true, detail: 'On', tone: 'warning' },
-        { id: 'free_cooling', label: 'Free cooling', active: false, detail: 'Off', tone: 'neutral' },
+        { id: 'fan_mode', label: 'High', active: true, state: 'active', detail: 'Active', tone: 'primary' },
+        { id: 'temporary_high', label: 'Temp high', active: true, state: 'active', detail: '18 min left', tone: 'warning' },
+        { id: 'dehumidification', label: 'Dehumidify', active: true, state: 'active', detail: 'On', tone: 'warning' },
+        { id: 'free_cooling', label: 'Free cooling', active: false, state: 'off', detail: 'Off', tone: 'neutral' },
       ],
     };
   }
@@ -192,9 +275,22 @@
       fanMode: 'home',
       fanModeLabel: 'Home',
       modes: [
-        { id: 'fan_mode', label: 'Home', active: true, detail: 'Active', tone: 'primary' },
-        { id: 'dehumidification', label: 'Dehumidify', active: false, detail: 'Off', tone: 'neutral' },
-        { id: 'free_cooling', label: 'Free cooling', active: true, detail: 'On', tone: 'success' },
+        { id: 'fan_mode', label: 'Home', active: true, state: 'active', detail: 'Active', tone: 'primary' },
+        { id: 'dehumidification', label: 'Dehumidify', active: false, state: 'off', detail: 'Off', tone: 'neutral' },
+        { id: 'free_cooling', label: 'Free cooling', active: true, state: 'active', detail: 'On', tone: 'success' },
+      ],
+    };
+  }
+
+  function previewDisabledStatus() {
+    return {
+      ...previewBaseStatus(),
+      fanMode: 'home',
+      fanModeLabel: 'Home',
+      modes: [
+        { id: 'fan_mode', label: 'Home', active: true, state: 'active', detail: 'Active', tone: 'primary' },
+        { id: 'dehumidification', label: 'Dehumidify', active: false, state: 'off', detail: 'Off', tone: 'neutral' },
+        { id: 'free_cooling', label: 'Free cooling', active: false, state: 'disabled', detail: 'Disabled', tone: 'neutral' },
       ],
     };
   }
@@ -205,9 +301,9 @@
       fanMode: 'away',
       fanModeLabel: 'Away',
       modes: [
-        { id: 'fan_mode', label: 'Away', active: true, detail: 'Active', tone: 'primary' },
-        { id: 'dehumidification', label: 'Dehumidify', active: false, detail: 'Off', tone: 'neutral' },
-        { id: 'free_cooling', label: 'Free cooling', active: false, detail: 'Off', tone: 'neutral' },
+        { id: 'fan_mode', label: 'Away', active: true, state: 'active', detail: 'Active', tone: 'primary' },
+        { id: 'dehumidification', label: 'Dehumidify', active: false, state: 'off', detail: 'Off', tone: 'neutral' },
+        { id: 'free_cooling', label: 'Free cooling', active: false, state: 'unknown', detail: 'Unknown', tone: 'neutral' },
       ],
     };
   }
