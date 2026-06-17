@@ -9,10 +9,11 @@
   <body class="homey-widget-small">
     <main id="widget-root" class="mode-widget" data-state="loading">
       <header class="mode-widget__header">
-        <p class="homey-text-small-light truncate" id="device-name">Flexit ventilation</p>
+        <span class="homey-text-small-light truncate" id="device-name">Flexit ventilation</span>
+        <span class="homey-text-small-light mode-widget__freshness" id="freshness" hidden></span>
       </header>
       <section class="mode-list" id="mode-list" aria-label="Ventilation modes"></section>
-      <p class="homey-text-small-light empty-message" id="empty-message" hidden></p>
+      <div class="homey-text-small-light empty-message" id="empty-message" hidden></div>
     </main>
     <script src="./index.js"></script>
   </body>
