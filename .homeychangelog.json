@@ -85,5 +85,8 @@
   },
   "1.10.0": {
     "en": "Add flow card for starting temporary high mode."
+  },
+  "1.11.0": {
+    "en": "Added a widget that shows mode/status."
   }
 }
