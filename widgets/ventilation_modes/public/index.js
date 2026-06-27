@@ -187,6 +187,49 @@
     return Array.isArray(ids) && ids.length > 0 ? String(ids[0]) : '';
   }
 
+  // Auto-recovery for a host-orphaned widget instance. When the Homey host
+  // restarts or redeploys the app while a dashboard is open, the already-rendered
+  // widget WebView keeps an instance the host no longer routes: every homey.api()
+  // call rejects with "Widget Not Found" and never reaches the app, so the tile
+  // loops on that error forever (a same-instance retry can't fix it). Reloading
+  // the widget document re-runs the host handshake and re-establishes a routable
+  // binding. sessionStorage survives the reload, so we reload at most once per
+  // ORPHAN_RELOAD_WINDOW_MS and then fall through to the load-error copy — a
+  // recovering instance needs only the one reload, and a non-recovering one is
+  // bounded to one reload per window rather than a tight loop.
+  const ORPHAN_RELOAD_KEY = 'flexit-widget-orphan-reload-at';
+  const ORPHAN_RELOAD_WINDOW_MS = 60000;
+
+  function isWidgetNotFound(error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return message.toLowerCase().includes('widget not found');
+  }
+
+  // Returns true if a reload was triggered (the caller should bail — the page is
+  // going away). Returns false if we already reloaded within the window (give up
+  // and let the caller render the load-error state) or if sessionStorage is
+  // unavailable (no safe way to cap reloads, so don't risk a loop).
+  function maybeReloadOnOrphan() {
+    try {
+      const store = window.sessionStorage;
+      if (Date.now() - Number(store.getItem(ORPHAN_RELOAD_KEY) || '0') < ORPHAN_RELOAD_WINDOW_MS) {
+        return false;
+      }
+      store.setItem(ORPHAN_RELOAD_KEY, String(Date.now()));
+      window.location.reload();
+      return true;
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  // On a host-orphaned instance, fire the one-shot reload. Returns true if a
+  // reload was triggered, so the caller bails (page reloading) instead of
+  // rendering its load-error state.
+  function reloadIfOrphaned(error) {
+    return isWidgetNotFound(error) && maybeReloadOnOrphan();
+  }
+
   async function refreshStatus() {
     if (refreshInFlight) return;
     refreshInFlight = true;
@@ -196,7 +239,8 @@
       const status = await homey.api('GET', `/status${query}`, {});
       renderStatus(status);
     } catch (error) {
-      setMessage('No status', 'Could not read ventilation status.');
+      if (reloadIfOrphaned(error)) return;
+      setMessage('No status', 'Could not read ventilation status. Reopen the dashboard.');
       if (typeof console !== 'undefined') console.error(error);
     } finally {
       refreshInFlight = false;
