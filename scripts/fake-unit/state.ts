@@ -186,7 +186,6 @@ export class FakeNordicUnitState {
   }
 
   getIdentity(): FakeUnitIdentity {
-    // eslint-disable-next-line prefer-object-spread
     return Object.assign({}, this.identity);
   }
 
@@ -436,7 +435,6 @@ export class FakeNordicUnitState {
   }
 
   getPointSnapshots(): PointSnapshot[] {
-    // eslint-disable-next-line prefer-object-spread
     return SUPPORTED_POINTS.map((point) => Object.assign({}, point, {
       value: this.values.get(pointKey(point.type, point.instance)) ?? 0,
     }));

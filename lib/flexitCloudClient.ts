@@ -1,4 +1,3 @@
-/* eslint-disable max-classes-per-file */
 import { RuntimeLogger } from './logging';
 /**
  * Flexit Cloud API client.

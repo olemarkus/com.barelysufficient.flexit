@@ -1,9 +1,7 @@
-/* eslint-disable import/extensions */
 import { expect } from 'chai';
 import { createRequire } from 'module';
 
 const require = createRequire(import.meta.url);
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const { parseFlexitReply } = require('../lib/flexitReplyParser.ts');
 
 describe('flexitReplyParser', () => {

@@ -15,7 +15,7 @@
 /README.md
 /LICENSE
 /.gitignore
-/.eslintrc.json
+/eslint.config.mjs
 /tsconfig*.json
 .codex
 .claude/

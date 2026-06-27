@@ -3,7 +3,6 @@ import { createRequire } from 'module';
 import sinon from 'sinon';
 
 const require = createRequire(import.meta.url);
-// eslint-disable-next-line import/extensions
 const cli = require('../scripts/fake-unit-cli.ts');
 
 function sampleSummaryPayload() {

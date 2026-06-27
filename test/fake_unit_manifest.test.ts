@@ -1,9 +1,7 @@
-/* eslint-disable import/extensions */
 import { expect } from 'chai';
 import { createRequire } from 'module';
 
 const require = createRequire(import.meta.url);
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const {
   APPLICATION_TAG,
   FLEXIT_GO_RANGE_MAX_PROPERTY_ID,
