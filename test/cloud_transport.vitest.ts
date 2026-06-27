@@ -1,4 +1,3 @@
-/* eslint-disable import/extensions */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import sinon from 'sinon';
 import { sleep } from './test_utils.ts';

@@ -1,9 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import sinon from 'sinon';
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const Bacnet = require('bacstack');
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const probe = require('../scripts/bacnet-read-probe');
 
 describe('bacnet-read-probe', () => {

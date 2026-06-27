@@ -1,4 +1,3 @@
-/* eslint-disable import/extensions */
 import dgram from 'dgram';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import sinon from 'sinon';

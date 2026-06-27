@@ -1,9 +1,7 @@
-/* eslint-disable import/extensions */
 import assert from 'assert';
 import { createRequire } from 'module';
 
 const require = createRequire(import.meta.url);
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const { parseFlexitReply } = require('../lib/flexitReplyParser');
 
 console.log('Verifying Flexit Reply Parser...');

@@ -3,7 +3,6 @@ import { createRequire } from 'module';
 import sinon from 'sinon';
 
 const require = createRequire(import.meta.url);
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const proxyquire = require('proxyquire');
 
 const proxyquireStrict = proxyquire.noCallThru().noPreserveCache();

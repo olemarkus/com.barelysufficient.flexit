@@ -1,4 +1,3 @@
-/* eslint-disable import/extensions */
 import { createRequire } from 'module';
 import { describe, expect, it } from 'vitest';
 

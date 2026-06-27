@@ -1,14 +1,10 @@
-/* eslint-disable import/extensions */
 import { expect } from 'chai';
 import { createRequire } from 'module';
 
-// eslint-disable-next-line import/extensions
 import { getFreePort } from './test_utils.ts';
 
 const require = createRequire(import.meta.url);
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const { FakeApiServer } = require('../scripts/fake-unit/apiServer.ts');
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const {
   DEFAULT_DEVICE_NAME,
   DEFAULT_FIRMWARE,
@@ -16,7 +12,6 @@ const {
   DEFAULT_VENDOR_ID,
   DEFAULT_VENDOR_NAME,
 } = require('../scripts/fake-unit/manifest.ts');
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const { FakeNordicUnitState } = require('../scripts/fake-unit/state.ts');
 
 function createState() {

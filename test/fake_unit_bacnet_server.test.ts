@@ -1,21 +1,13 @@
-/* eslint-disable import/extensions */
 import { expect } from 'chai';
 import { createRequire } from 'module';
 
 const require = createRequire(import.meta.url);
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const Bacnet = require('bacstack');
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const Bvlc = require('bacstack/lib/bvlc');
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const Npdu = require('bacstack/lib/npdu');
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const Apdu = require('bacstack/lib/apdu');
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const Services = require('bacstack/lib/services');
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const { FakeBacnetServer } = require('../scripts/fake-unit/bacnetServer.ts');
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const {
   DEFAULT_DEVICE_NAME,
   DEFAULT_FIRMWARE,
@@ -30,7 +22,6 @@ const {
   DEFAULT_VENDOR_ID,
   DEFAULT_VENDOR_NAME,
 } = require('../scripts/fake-unit/manifest.ts');
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const { FakeNordicUnitState } = require('../scripts/fake-unit/state.ts');
 
 const BacnetEnums = Bacnet.enum;

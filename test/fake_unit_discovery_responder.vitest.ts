@@ -1,4 +1,3 @@
-/* eslint-disable import/extensions */
 import dgram from 'dgram';
 import { EventEmitter } from 'events';
 import sinon from 'sinon';

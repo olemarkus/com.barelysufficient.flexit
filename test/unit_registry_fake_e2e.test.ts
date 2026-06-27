@@ -1,4 +1,3 @@
-/* eslint-disable import/extensions */
 import dgram from 'dgram';
 import { expect } from 'chai';
 import sinon from 'sinon';
@@ -6,15 +5,10 @@ import { createRequire } from 'module';
 import { getFreePort, sleep } from './test_utils.ts';
 
 const require = createRequire(import.meta.url);
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const Bacnet = require('bacstack');
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const { UnitRegistry } = require('../lib/UnitRegistry.ts');
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const { FakeBacnetServer } = require('../scripts/fake-unit/bacnetServer.ts');
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const { FakeNordicUnitState } = require('../scripts/fake-unit/state.ts');
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const {
   DEFAULT_DEVICE_NAME,
   DEFAULT_FIRMWARE,

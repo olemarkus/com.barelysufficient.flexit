@@ -1,17 +1,13 @@
-/* eslint-disable import/extensions */
 import dgram from 'dgram';
 import { expect } from 'chai';
 import { EventEmitter } from 'events';
 import { createRequire } from 'module';
 import sinon from 'sinon';
 
-// eslint-disable-next-line import/extensions
 import { sleep } from './test_utils.ts';
 
 const require = createRequire(import.meta.url);
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const proxyquire = require('proxyquire');
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const { DiscoveryResponder } = require('../scripts/fake-unit/discoveryResponder.ts');
 
 const proxyquireStrict = proxyquire.noCallThru().noPreserveCache();

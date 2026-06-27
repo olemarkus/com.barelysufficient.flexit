@@ -1,4 +1,3 @@
-/* eslint-disable import/extensions */
 import { describe, expect, it } from 'vitest';
 
 import { getFreePort } from './test_utils.ts';

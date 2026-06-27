@@ -1,9 +1,7 @@
-/* eslint-disable import/extensions */
 import { expect } from 'chai';
 import { createRequire } from 'module';
 
 const require = createRequire(import.meta.url);
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const {
   APPLICATION_TAG,
   DEFAULT_DEVICE_NAME,
@@ -18,7 +16,6 @@ const {
   SUPPORTED_POINTS,
   pointKey,
 } = require('../scripts/fake-unit/manifest.ts');
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const {
   FakeNordicUnitState,
   valueTagForRead,

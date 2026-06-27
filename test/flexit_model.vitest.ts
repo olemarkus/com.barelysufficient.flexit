@@ -1,9 +1,7 @@
-/* eslint-disable import/extensions */
 import { createRequire } from 'module';
 import { describe, expect, it } from 'vitest';
 
 const require = createRequire(import.meta.url);
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const { getNordicModelFromSerial } = require('../lib/flexitModel.ts');
 
 describe('flexitModel (vitest)', () => {
