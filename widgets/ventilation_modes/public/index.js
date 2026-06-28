@@ -60,28 +60,12 @@
     return element;
   }
 
-  function normalizeModeState(mode) {
-    const state = mode && mode.state;
-    if (state === 'active' || state === 'off' || state === 'disabled' || state === 'unknown') return state;
-    if (mode && (mode.active === true || TEMPORARY_MODE_IDS.has(mode.id))) return 'active';
-    if (!mode || mode.detail === 'Unknown') return 'unknown';
-    if (mode.detail === 'Disabled') return 'disabled';
-    return 'off';
-  }
-
-  function valueClassForState(state) {
-    if (state === 'active') return 'homey-text-medium';
-    if (state === 'off') return 'homey-text-regular';
-    return 'homey-text-small-light';
-  }
-
-  function createModeRow(label, value, state) {
+  function createModeRow(label, value) {
     const row = document.createElement('div');
     row.className = 'mode-row';
 
     const labelElement = createText('homey-text-small-light mode-row__label', label);
-    const valueClass = valueClassForState(state);
-    const valueElement = createText(`${valueClass} mode-row__value`, value);
+    const valueElement = createText('homey-text-small mode-row__value', value);
 
     row.append(labelElement, valueElement);
     return row;
@@ -112,9 +96,8 @@
   function createFeatureRow(status, id, fallbackLabel) {
     const mode = getMode(status, id);
     return createModeRow(
-      mode && mode.label ? mode.label : fallbackLabel,
-      mode && mode.detail ? mode.detail : 'Unknown',
-      normalizeModeState(mode),
+      mode?.label || fallbackLabel,
+      mode?.detail || 'Unknown',
     );
   }
 
@@ -125,7 +108,6 @@
     modeList.appendChild(createModeRow(
       'Fan',
       status.fanModeLabel || fanMode?.label || 'Unknown',
-      normalizeModeState(fanMode),
     ));
 
     const temporaryMode = findTemporaryMode(status);
@@ -133,7 +115,6 @@
       modeList.appendChild(createModeRow(
         'Temporary',
         formatTemporaryMode(temporaryMode),
-        normalizeModeState(temporaryMode),
       ));
     }
 
@@ -201,8 +182,9 @@
   const ORPHAN_RELOAD_WINDOW_MS = 60000;
 
   function isWidgetNotFound(error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return message.toLowerCase().includes('widget not found');
+    // Homey may reject with a plain object ({ message, status }) rather than an Error.
+    const message = error?.message || String(error);
+    return String(message).toLowerCase().includes('widget not found');
   }
 
   // Returns true if a reload was triggered (the caller should bail — the page is
@@ -240,7 +222,12 @@
       renderStatus(status);
     } catch (error) {
       if (reloadIfOrphaned(error)) return;
-      setMessage('No status', 'Could not read ventilation status. Reopen the dashboard.');
+      // Only an orphaned instance (past its reload cap) is fixed by reopening;
+      // other errors (transient API/network blips) self-heal on the next refresh.
+      const detail = isWidgetNotFound(error)
+        ? 'Could not read ventilation status. Reopen the dashboard.'
+        : 'Could not read ventilation status.';
+      setMessage('No status', detail);
       if (typeof console !== 'undefined') console.error(error);
     } finally {
       refreshInFlight = false;
