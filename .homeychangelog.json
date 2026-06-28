@@ -88,5 +88,8 @@
   },
   "1.11.0": {
     "en": "Added a widget that shows mode/status."
+  },
+  "1.11.1": {
+    "en": "Fix widget loading issue."
   }
 }
