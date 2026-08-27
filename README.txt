@@ -5,3 +5,5 @@ Local (BACnet): Discovers units on the local network via BACnet/IP. Homey Pro an
 Cloud: Connects via the Flexit cloud using your Flexit GO account credentials. Works from any network — no local network access needed.
 
 Both drivers provide the same capabilities: set supply air target temperature, change ventilation mode (Away, Home, High, Fireplace, Cooker Hood), toggle electric heater, and view temperatures, humidity, fan data, heater power, and filter status.
+
+Flows can also stop the unit entirely with the "Stop ventilation" action, and react to the unit being stopped. Stopping is not a fire safety function: to shut ventilation down on a smoke alarm, connect the alarm to the unit's own smoke detector input instead.

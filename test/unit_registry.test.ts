@@ -372,6 +372,34 @@ describe('UnitRegistry', () => {
     expect(readingsByLabel.get('Filter').value).to.equal(80);
   });
 
+  it('reports a stopped unit in widget snapshots instead of its underlying mode', () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    const unit = (registry as any).units.get('test_unit');
+    unit.lastPollAt = Date.now();
+    const setProbe = (type: number, instance: number, value: number) => {
+      unit.probeValues.set(probeKey(type, instance), value);
+    };
+
+    // Stopped while a temporary high is still counting down.
+    setProbe(BACNET_ENUMS.ObjectType.MULTI_STATE_VALUE, 42, 1);
+    setProbe(BACNET_ENUMS.ObjectType.MULTI_STATE_VALUE, 361, 1);
+    setProbe(BACNET_ENUMS.ObjectType.BINARY_VALUE, 50, 1);
+    setProbe(BACNET_ENUMS.ObjectType.BINARY_VALUE, 15, 1);
+    setProbe(BACNET_ENUMS.ObjectType.ANALOG_VALUE, 2031, 12.2);
+
+    const snapshot = registry.getModeWidgetSnapshot('test_unit');
+    const modesById = new Map(snapshot.modes.map((mode: any) => [mode.id, mode]));
+
+    expect(snapshot.fanModeLabel).to.equal('Stopped');
+    expect(snapshot.fanModeDetail).to.equal('Both fans off');
+    expect(snapshot.temporaryMode).to.equal(undefined);
+    expect(modesById.get('fan_mode').label).to.equal('Stopped');
+    expect(modesById.get('fan_mode').tone).to.equal('warning');
+    expect(modesById.has('temporary_high')).to.equal(false);
+  });
+
   it('reports cooker hood as a temporary ventilation mode in widget snapshots', () => {
     const mockDevice = makeMockDevice();
     registry.register('test_unit', mockDevice);
@@ -1483,6 +1511,68 @@ describe('UnitRegistry', () => {
     const call = mockDevice.setCapabilityValue.lastCall;
     expect(call.args[0]).to.equal('fan_mode');
     expect(call.args[1]).to.equal('fireplace');
+  });
+
+  it('reports the stopped state from the ventilation mode register', () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    const unit = { unitId: 'test_unit', devices: new Set([mockDevice]) };
+    (registry as any).distributeData(unit, {
+      comfort_button: 1,
+      ventilation_mode: 1,
+    });
+
+    const stoppedCall = mockDevice.setCapabilityValue.getCalls()
+      .find((call: any) => call.args[0] === 'ventilation_stopped');
+    expect(stoppedCall).to.not.equal(undefined);
+    expect(stoppedCall.args[1]).to.equal(true);
+  });
+
+  it('reports the stopped state from the heat exchanger off state', () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    const unit = { unitId: 'test_unit', devices: new Set([mockDevice]) };
+    (registry as any).distributeData(unit, {
+      comfort_button: 0,
+      ventilation_mode: 2,
+      operation_mode: 1,
+    });
+
+    const stoppedCall = mockDevice.setCapabilityValue.getCalls()
+      .find((call: any) => call.args[0] === 'ventilation_stopped');
+    expect(stoppedCall).to.not.equal(undefined);
+    expect(stoppedCall.args[1]).to.equal(true);
+  });
+
+  it('reports a running unit as not stopped', () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    const unit = { unitId: 'test_unit', devices: new Set([mockDevice]) };
+    (registry as any).distributeData(unit, {
+      comfort_button: 1,
+      ventilation_mode: 3,
+      operation_mode: 3,
+    });
+
+    const stoppedCall = mockDevice.setCapabilityValue.getCalls()
+      .find((call: any) => call.args[0] === 'ventilation_stopped');
+    expect(stoppedCall).to.not.equal(undefined);
+    expect(stoppedCall.args[1]).to.equal(false);
+  });
+
+  it('leaves the stopped state untouched without mode signals', () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    const unit = { unitId: 'test_unit', devices: new Set([mockDevice]) };
+    (registry as any).distributeData(unit, { comfort_button: 1 });
+
+    const stoppedCall = mockDevice.setCapabilityValue.getCalls()
+      .find((call: any) => call.args[0] === 'ventilation_stopped');
+    expect(stoppedCall).to.equal(undefined);
   });
 
   it('prefers fireplace operation mode over rapid-active signal', () => {

@@ -477,6 +477,92 @@ describe('Cloud transport – UnitRegistry integration', () => {
     expect(ventCall).not.toBe(undefined);
   });
 
+  it('stops ventilation via cloud by writing STOP to the ventilation mode', async () => {
+    registry.registerCloud(UNIT_ID, mock.device, {
+      plantId: PLANT_ID,
+      client: mockClient,
+    });
+    await sleep(50);
+
+    await registry.stopVentilation(UNIT_ID);
+
+    // The ventilation mode register only takes effect while the comfort button is on.
+    const calls = mockClient.writeDatapoint.getCalls();
+    const comfortCall = calls.find(
+      (c: any) => c.args[1] === bacnetObjectToCloudPath(5, 50) && c.args[2] === 1,
+    );
+    const stopCall = calls.find(
+      (c: any) => c.args[1] === bacnetObjectToCloudPath(19, 42) && c.args[2] === 1,
+    );
+    expect(comfortCall).not.toBe(undefined);
+    expect(stopCall).not.toBe(undefined);
+    expect(comfortCall.calledBefore(stopCall)).toBe(true);
+  });
+
+  it('surfaces a cloud stop that cannot prepare the unit as an error', async () => {
+    const failingClient = makeMockCloudClient({ writeSuccess: false });
+    registry.registerCloud(UNIT_ID, mock.device, {
+      plantId: PLANT_ID,
+      client: failingClient,
+    });
+    await sleep(50);
+
+    await expect(registry.stopVentilation(UNIT_ID)).rejects.toThrow(/prepare unit for stop/);
+  });
+
+  it('restores the comfort button when the cloud stop write fails', async () => {
+    const ventilationModePath = bacnetObjectToCloudPath(19, 42);
+    const comfortPath = bacnetObjectToCloudPath(5, 50);
+    const originalWrite = mockClient.writeDatapoint;
+    mockClient.writeDatapoint = sinon.stub().callsFake(
+      async (plantId: string, path: string, value: number | string | null) => {
+        if (path === ventilationModePath) return false;
+        return originalWrite(plantId, path, value);
+      },
+    );
+
+    registry.registerCloud(UNIT_ID, mock.device, {
+      plantId: PLANT_ID,
+      client: mockClient,
+    });
+    await sleep(50);
+    // Away: the comfort button is off, and stopping switches it on to reach MSV:42.
+    await registry.setFanMode(UNIT_ID, 'away');
+    mockClient.writeDatapoint.resetHistory();
+
+    await expect(registry.stopVentilation(UNIT_ID)).rejects.toThrow(/Failed to stop ventilation/);
+
+    // Leaving comfort on would have moved an Away unit into Home.
+    const comfortWrites = mockClient.writeDatapoint.getCalls()
+      .filter((c: any) => c.args[1] === comfortPath)
+      .map((c: any) => c.args[2]);
+    expect(comfortWrites).toEqual([1, 0]);
+  });
+
+  it('leaves stop before writing away mode via cloud', async () => {
+    registry.registerCloud(UNIT_ID, mock.device, {
+      plantId: PLANT_ID,
+      client: mockClient,
+    });
+    await sleep(50);
+
+    await registry.stopVentilation(UNIT_ID);
+    mockClient.writeDatapoint.resetHistory();
+
+    await registry.setFanMode(UNIT_ID, 'away');
+
+    // Away only writes the comfort button, so the ventilation mode has to leave STOP first.
+    const calls = mockClient.writeDatapoint.getCalls();
+    const leaveStopCall = calls.find(
+      (c: any) => c.args[1] === bacnetObjectToCloudPath(19, 42) && c.args[2] === 2,
+    );
+    const comfortCall = calls.find(
+      (c: any) => c.args[1] === bacnetObjectToCloudPath(5, 50) && c.args[2] === 0,
+    );
+    expect(leaveStopCall).not.toBe(undefined);
+    expect(comfortCall).not.toBe(undefined);
+  });
+
   it('activates temporary high via cloud by triggering the rapid ventilation object', async () => {
     registry.registerCloud(UNIT_ID, mock.device, {
       plantId: PLANT_ID,

@@ -9,6 +9,7 @@ This folder contains reference material for the Flexit GO Homey app.
 - Add a compatible Flexit Nordic unit from the local network.
 - View supply/outdoor/exhaust/extract temperatures, humidity, fan data, heater power, and filter life.
 - Change fan mode and supply air target temperature.
+- Stop the unit from a Flow, and react to it being stopped.
 - Reset filter timer from the maintenance action after replacing both filters.
 - Set filter change interval in Advanced Settings (3 to 12 months).
 

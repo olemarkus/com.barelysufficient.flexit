@@ -67,15 +67,18 @@ export function createFlexitAppClass({
       this.registerHeatingCoilStateFlowTrigger();
       this.registerDehumidificationStateFlowTrigger();
       this.registerFreeCoolingStateFlowTrigger();
+      this.registerVentilationStoppedStateFlowTrigger();
       this.registerGlobalErrorHandlers();
       this.registerFanProfileActionCard();
       this.registerFireplaceDurationActionCard();
       this.registerHighDurationActionCard();
       this.registerTemporaryHighActionCard();
+      this.registerStopVentilationActionCard();
       this.registerHeatingCoilActionCards();
       this.registerHeatingCoilConditionCard();
       this.registerDehumidificationConditionCard();
       this.registerFreeCoolingConditionCard();
+      this.registerVentilationStoppedConditionCard();
     }
 
     private registerGlobalErrorHandlers() {
@@ -318,6 +321,31 @@ export function createFlexitAppClass({
       });
     }
 
+    private registerVentilationStoppedStateFlowTrigger() {
+      const ventilationStoppedCard = this.homey.flow.getDeviceTriggerCard('ventilation_stopped');
+      const ventilationResumedCard = this.homey.flow.getDeviceTriggerCard('ventilation_resumed');
+      registry.setVentilationStoppedStateChangedHandler((event: any) => {
+        runWithLogContext({
+          unitId: this.resolveUnitId(event.device),
+          stopped: event.stopped,
+        }, () => {
+          const card = event.stopped
+            ? ventilationStoppedCard
+            : ventilationResumedCard;
+          card.trigger(
+            event.device,
+            {},
+          ).catch((error: unknown) => {
+            this.getLogger().error(
+              'app.flow.trigger.ventilation_stopped_state.failed',
+              'Failed to trigger ventilation stopped state flow',
+              error,
+            );
+          });
+        });
+      });
+    }
+
     private registerFanProfileActionCard() {
       const setFanProfileModeCard = this.homey.flow.getActionCard('set_fan_profile_mode');
       setFanProfileModeCard.registerRunListener(async (args: any) => {
@@ -375,6 +403,15 @@ export function createFlexitAppClass({
       });
     }
 
+    private registerStopVentilationActionCard() {
+      const stopVentilationCard = this.homey.flow.getActionCard('stop_ventilation');
+      stopVentilationCard.registerRunListener(async (args: any) => {
+        const unitId = this.resolveUnitId(args?.device);
+        await registry.stopVentilation(unitId);
+        return true;
+      });
+    }
+
     private registerHeatingCoilActionCards() {
       const turnHeatingCoilOnCard = this.homey.flow.getActionCard('turn_heating_coil_on');
       turnHeatingCoilOnCard.registerRunListener(async (args: any) => {
@@ -419,6 +456,14 @@ export function createFlexitAppClass({
       freeCoolingIsActiveCard.registerRunListener(async (args: any) => {
         const unitId = this.resolveUnitId(args?.device);
         return registry.getFreeCoolingActive(unitId);
+      });
+    }
+
+    private registerVentilationStoppedConditionCard() {
+      const ventilationIsStoppedCard = this.homey.flow.getConditionCard('ventilation_is_stopped');
+      ventilationIsStoppedCard.registerRunListener(async (args: any) => {
+        const unitId = this.resolveUnitId(args?.device);
+        return registry.getVentilationStopped(unitId);
       });
     }
   };

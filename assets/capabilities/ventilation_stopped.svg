@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="24" height="24" fill="none" stroke="currentColor" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round">
+  <circle cx="50" cy="50" r="38" />
+  <defs>
+    <g id="fan-blade">
+      <path d="M50 50 C 50 31 61 21 71 26 C 80 31 73 44 50 50 Z" />
+    </g>
+  </defs>
+  <use href="#fan-blade" />
+  <use href="#fan-blade" transform="rotate(120 50 50)" />
+  <use href="#fan-blade" transform="rotate(240 50 50)" />
+  <line x1="23" y1="77" x2="77" y2="23" stroke-width="7" />
+</svg>

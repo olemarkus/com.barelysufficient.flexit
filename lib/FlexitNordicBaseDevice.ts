@@ -43,6 +43,7 @@ const REQUIRED_CAPABILITIES = [
   'measure_temperature.exhaust',
   'dehumidification_active',
   'free_cooling_active',
+  'ventilation_stopped',
   RESET_FILTER_CAPABILITY,
   'measure_fan_setpoint_percent',
   'measure_fan_setpoint_percent.extract',

@@ -1,0 +1,18 @@
+{
+  "title": {
+    "en": "Stop ventilation"
+  },
+  "titleFormatted": {
+    "en": "Stop ventilation"
+  },
+  "hint": {
+    "en": "Stops both the supply and extract fan on the unit. Ventilation stays off until a fan mode is set again with the \"Set fan mode\" action."
+  },
+  "args": [
+    {
+      "type": "device",
+      "name": "device",
+      "filter": "driver_id=nordic|nordic-cloud"
+    }
+  ]
+}

@@ -264,6 +264,7 @@
     if (scenario === 'disabled') return previewDisabledStatus();
     if (scenario === 'freecooling') return previewFreeCoolingStatus();
     if (scenario === 'quiet') return previewQuietStatus();
+    if (scenario === 'stopped') return previewStoppedStatus();
     if (scenario === 'offline') return previewOfflineStatus();
     return previewTemporaryStatus();
   }
@@ -295,6 +296,20 @@
         { id: 'fan_mode', label: 'High', active: true, state: 'active', detail: 'Active', tone: 'primary' },
         { id: 'temporary_high', label: 'Temp high', active: true, state: 'active', detail: '18 min left', tone: 'warning' },
         { id: 'dehumidification', label: 'Dehumidify', active: true, state: 'active', detail: 'On', tone: 'warning' },
+        { id: 'free_cooling', label: 'Free cooling', active: false, state: 'off', detail: 'Off', tone: 'neutral' },
+      ],
+    };
+  }
+
+  function previewStoppedStatus() {
+    return {
+      ...previewBaseStatus(),
+      fanMode: 'away',
+      fanModeLabel: 'Stopped',
+      fanModeDetail: 'Both fans off',
+      modes: [
+        { id: 'fan_mode', label: 'Stopped', active: true, state: 'active', detail: 'Both fans off', tone: 'warning' },
+        { id: 'dehumidification', label: 'Dehumidify', active: false, state: 'off', detail: 'Off', tone: 'neutral' },
         { id: 'free_cooling', label: 'Free cooling', active: false, state: 'off', detail: 'Off', tone: 'neutral' },
       ],
     };
