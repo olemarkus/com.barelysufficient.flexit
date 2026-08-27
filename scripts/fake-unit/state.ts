@@ -545,7 +545,8 @@ export class FakeNordicUnitState {
     this.syncTimerPoints();
 
     this.mode = this.computeMode();
-    const cookerHoodActive = asInteger(this.getByName('cooker_hood')) === 1;
+    const stopped = this.isStopped();
+    const cookerHoodActive = !stopped && asInteger(this.getByName('cooker_hood')) === 1;
     const temporaryVentilationRemaining = Math.max(
       this.rapidRemainingMinutes,
       this.fireplaceVentilationActive ? this.fireplaceRemainingMinutes : 0,
@@ -561,7 +562,8 @@ export class FakeNordicUnitState {
     this.setByName('mode_rf_input', MODE_RF_VALUES[this.mode]);
 
     let operationMode: number = OPERATION_MODE_VALUES.AWAY;
-    if (this.fireplaceVentilationActive) operationMode = OPERATION_MODE_VALUES.FIREPLACE;
+    if (stopped) operationMode = OPERATION_MODE_VALUES.OFF;
+    else if (this.fireplaceVentilationActive) operationMode = OPERATION_MODE_VALUES.FIREPLACE;
     else if (this.rapidRemainingMinutes > 0) operationMode = OPERATION_MODE_VALUES.TEMPORARY_HIGH;
     else if (cookerHoodActive) operationMode = OPERATION_MODE_VALUES.COOKER_HOOD;
     else if (this.mode === 'home') operationMode = OPERATION_MODE_VALUES.HOME;
@@ -583,12 +585,14 @@ export class FakeNordicUnitState {
       freeCoolingActive ? FREE_COOLING_ACTIVE_MODE_VALUE : operationMode,
     );
 
-    const fanTargets = this.targetFanPercent(this.mode, cookerHoodActive);
+    const fanTargets = stopped
+      ? { supply: 0, extract: 0 }
+      : this.targetFanPercent(this.mode, cookerHoodActive);
     this.setByName('fan_speed_supply_percent', fanTargets.supply);
     this.setByName('fan_speed_extract_percent', fanTargets.extract);
     this.setByName('fan_rpm_supply', fanTargets.supply * 39);
     this.setByName('fan_rpm_extract', fanTargets.extract * 39);
-    this.setByName('rotor_speed_percent', this.mode === 'away' ? 40 : 65);
+    this.setByName('rotor_speed_percent', this.rotorSpeedPercent(stopped));
 
     const currentOutside = this.getByName('temp_outside');
     const outsideDrift = (Math.random() - 0.5) * 0.02 * elapsedSimSeconds;
@@ -646,6 +650,19 @@ export class FakeNordicUnitState {
     this.setByName('remaining_fireplace', roundTo(reportedFireplaceRemaining, 3));
     this.setByName('trigger_rapid', 1);
     this.setByName('trigger_fireplace', 1);
+  }
+
+  /**
+   * The unit has no separate stopped flag: STOP is a value of the ventilation mode
+   * register, and while it is set both fans are off regardless of the reported mode.
+   */
+  private isStopped(): boolean {
+    return asInteger(this.getByName('ventilation_mode')) === VENTILATION_MODE_VALUES.STOP;
+  }
+
+  private rotorSpeedPercent(stopped: boolean): number {
+    if (stopped) return 0;
+    return this.mode === 'away' ? 40 : 65;
   }
 
   private computeMode(): FanMode {

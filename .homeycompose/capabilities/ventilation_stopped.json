@@ -1,0 +1,10 @@
+{
+  "type": "boolean",
+  "title": {
+    "en": "Ventilation stopped"
+  },
+  "icon": "/assets/capabilities/ventilation_stopped.svg",
+  "getable": true,
+  "setable": false,
+  "uiComponent": "sensor"
+}

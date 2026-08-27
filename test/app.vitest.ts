@@ -34,13 +34,16 @@ function createRegistryStub(overrides: Record<string, any> = {}) {
     setFanSetpointChangedHandler: sinon.stub(),
     setDehumidificationStateChangedHandler: sinon.stub(),
     setFreeCoolingStateChangedHandler: sinon.stub(),
+    setVentilationStoppedStateChangedHandler: sinon.stub(),
     setHeatingCoilStateChangedHandler: sinon.stub(),
     setFanProfileMode: sinon.stub().resolves(),
     setFireplaceVentilationDuration: sinon.stub().resolves(),
     setRapidVentilationDuration: sinon.stub().resolves(),
     activateTemporaryHigh: sinon.stub().resolves(),
+    stopVentilation: sinon.stub().resolves(),
     getDehumidificationActive: sinon.stub().resolves(true),
     getFreeCoolingActive: sinon.stub().resolves(true),
+    getVentilationStopped: sinon.stub().resolves(true),
     getModeWidgetSnapshot: sinon.stub().returns({
       unitId: 'unit-1',
       transport: 'bacnet',
@@ -98,6 +101,7 @@ function createCards() {
       setFireplaceDuration: { registerRunListener: sinon.stub() },
       setHighDuration: { registerRunListener: sinon.stub() },
       activateTemporaryHigh: { registerRunListener: sinon.stub() },
+      stopVentilation: { registerRunListener: sinon.stub() },
       turnHeatingCoilOn: { registerRunListener: sinon.stub() },
       turnHeatingCoilOff: { registerRunListener: sinon.stub() },
       toggleHeatingCoilOnOff: { registerRunListener: sinon.stub() },
@@ -105,6 +109,7 @@ function createCards() {
     condition: {
       dehumidificationIsActive: { registerRunListener: sinon.stub() },
       freeCoolingIsActive: { registerRunListener: sinon.stub() },
+      ventilationIsStopped: { registerRunListener: sinon.stub() },
       heatingCoilIsOn: { registerRunListener: sinon.stub() },
     },
     trigger: {
@@ -112,6 +117,8 @@ function createCards() {
       dehumidificationDeactivated: { trigger: sinon.stub().resolves() },
       freeCoolingActivated: { trigger: sinon.stub().resolves() },
       freeCoolingDeactivated: { trigger: sinon.stub().resolves() },
+      ventilationStopped: { trigger: sinon.stub().resolves() },
+      ventilationResumed: { trigger: sinon.stub().resolves() },
       supplyFanSetpointChanged: { trigger: sinon.stub().resolves() },
       extractFanSetpointChanged: { trigger: sinon.stub().resolves() },
       heatingCoilTurnedOn: { trigger: sinon.stub().resolves() },
@@ -125,6 +132,7 @@ function wireCards(app: any, cards: ReturnType<typeof createCards>) {
   app.homey.flow.getActionCard.withArgs('set_fireplace_duration').returns(cards.action.setFireplaceDuration);
   app.homey.flow.getActionCard.withArgs('set_high_duration').returns(cards.action.setHighDuration);
   app.homey.flow.getActionCard.withArgs('activate_temporary_high').returns(cards.action.activateTemporaryHigh);
+  app.homey.flow.getActionCard.withArgs('stop_ventilation').returns(cards.action.stopVentilation);
   app.homey.flow.getActionCard.withArgs('turn_heating_coil_on').returns(cards.action.turnHeatingCoilOn);
   app.homey.flow.getActionCard.withArgs('turn_heating_coil_off').returns(cards.action.turnHeatingCoilOff);
   app.homey.flow.getActionCard.withArgs('toggle_heating_coil_onoff').returns(cards.action.toggleHeatingCoilOnOff);
@@ -133,6 +141,8 @@ function wireCards(app: any, cards: ReturnType<typeof createCards>) {
     .returns(cards.condition.dehumidificationIsActive);
   app.homey.flow.getConditionCard.withArgs('free_cooling_is_active')
     .returns(cards.condition.freeCoolingIsActive);
+  app.homey.flow.getConditionCard.withArgs('ventilation_is_stopped')
+    .returns(cards.condition.ventilationIsStopped);
   app.homey.flow.getConditionCard.withArgs('heating_coil_is_on').returns(cards.condition.heatingCoilIsOn);
 
   app.homey.flow.getDeviceTriggerCard.withArgs('dehumidification_activated')
@@ -143,6 +153,10 @@ function wireCards(app: any, cards: ReturnType<typeof createCards>) {
     .returns(cards.trigger.freeCoolingActivated);
   app.homey.flow.getDeviceTriggerCard.withArgs('free_cooling_deactivated')
     .returns(cards.trigger.freeCoolingDeactivated);
+  app.homey.flow.getDeviceTriggerCard.withArgs('ventilation_stopped')
+    .returns(cards.trigger.ventilationStopped);
+  app.homey.flow.getDeviceTriggerCard.withArgs('ventilation_resumed')
+    .returns(cards.trigger.ventilationResumed);
   app.homey.flow.getDeviceTriggerCard.withArgs('supply_fan_setpoint_changed')
     .returns(cards.trigger.supplyFanSetpointChanged);
   app.homey.flow.getDeviceTriggerCard.withArgs('extract_fan_setpoint_changed')

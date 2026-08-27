@@ -31,11 +31,14 @@ function createRegistryStub(overrides: Record<string, any> = {}) {
     setFanSetpointChangedHandler: sinon.stub(),
     setDehumidificationStateChangedHandler: sinon.stub(),
     setFreeCoolingStateChangedHandler: sinon.stub(),
+    setVentilationStoppedStateChangedHandler: sinon.stub(),
     setHeatingCoilStateChangedHandler: sinon.stub(),
     setFanProfileMode: sinon.stub().resolves(),
     setFireplaceVentilationDuration: sinon.stub().resolves(),
     getDehumidificationActive: sinon.stub().resolves(true),
     getFreeCoolingActive: sinon.stub().resolves(true),
+    getVentilationStopped: sinon.stub().resolves(true),
+    stopVentilation: sinon.stub().resolves(),
     setHeatingCoilEnabled: sinon.stub().resolves(),
     toggleHeatingCoilEnabled: sinon.stub().resolves(true),
     getHeatingCoilEnabled: sinon.stub().resolves(true),
@@ -80,6 +83,7 @@ function createCards() {
     action: {
       setFanProfileMode: { registerRunListener: sinon.stub() },
       setFireplaceDuration: { registerRunListener: sinon.stub() },
+      stopVentilation: { registerRunListener: sinon.stub() },
       turnHeatingCoilOn: { registerRunListener: sinon.stub() },
       turnHeatingCoilOff: { registerRunListener: sinon.stub() },
       toggleHeatingCoilOnOff: { registerRunListener: sinon.stub() },
@@ -87,6 +91,7 @@ function createCards() {
     condition: {
       dehumidificationIsActive: { registerRunListener: sinon.stub() },
       freeCoolingIsActive: { registerRunListener: sinon.stub() },
+      ventilationIsStopped: { registerRunListener: sinon.stub() },
       heatingCoilIsOn: { registerRunListener: sinon.stub() },
     },
     trigger: {
@@ -94,6 +99,8 @@ function createCards() {
       dehumidificationDeactivated: { trigger: sinon.stub().resolves() },
       freeCoolingActivated: { trigger: sinon.stub().resolves() },
       freeCoolingDeactivated: { trigger: sinon.stub().resolves() },
+      ventilationStopped: { trigger: sinon.stub().resolves() },
+      ventilationResumed: { trigger: sinon.stub().resolves() },
       supplyFanSetpointChanged: { trigger: sinon.stub().resolves() },
       extractFanSetpointChanged: { trigger: sinon.stub().resolves() },
       heatingCoilTurnedOn: { trigger: sinon.stub().resolves() },
@@ -105,6 +112,7 @@ function createCards() {
 function wireCards(app: any, cards: ReturnType<typeof createCards>) {
   app.homey.flow.getActionCard.withArgs('set_fan_profile_mode').returns(cards.action.setFanProfileMode);
   app.homey.flow.getActionCard.withArgs('set_fireplace_duration').returns(cards.action.setFireplaceDuration);
+  app.homey.flow.getActionCard.withArgs('stop_ventilation').returns(cards.action.stopVentilation);
   app.homey.flow.getActionCard.withArgs('turn_heating_coil_on').returns(cards.action.turnHeatingCoilOn);
   app.homey.flow.getActionCard.withArgs('turn_heating_coil_off').returns(cards.action.turnHeatingCoilOff);
   app.homey.flow.getActionCard.withArgs('toggle_heating_coil_onoff').returns(cards.action.toggleHeatingCoilOnOff);
@@ -115,6 +123,9 @@ function wireCards(app: any, cards: ReturnType<typeof createCards>) {
   app.homey.flow.getConditionCard
     .withArgs('free_cooling_is_active')
     .returns(cards.condition.freeCoolingIsActive);
+  app.homey.flow.getConditionCard
+    .withArgs('ventilation_is_stopped')
+    .returns(cards.condition.ventilationIsStopped);
   app.homey.flow.getConditionCard.withArgs('heating_coil_is_on').returns(cards.condition.heatingCoilIsOn);
 
   app.homey.flow.getDeviceTriggerCard
@@ -129,6 +140,12 @@ function wireCards(app: any, cards: ReturnType<typeof createCards>) {
   app.homey.flow.getDeviceTriggerCard
     .withArgs('free_cooling_deactivated')
     .returns(cards.trigger.freeCoolingDeactivated);
+  app.homey.flow.getDeviceTriggerCard
+    .withArgs('ventilation_stopped')
+    .returns(cards.trigger.ventilationStopped);
+  app.homey.flow.getDeviceTriggerCard
+    .withArgs('ventilation_resumed')
+    .returns(cards.trigger.ventilationResumed);
   app.homey.flow.getDeviceTriggerCard
     .withArgs('supply_fan_setpoint_changed')
     .returns(cards.trigger.supplyFanSetpointChanged);
@@ -305,6 +322,51 @@ describe('App flow registration', () => {
     });
     expect(cards.trigger.heatingCoilTurnedOn.trigger.calledOnce).toBe(true);
     expect(cards.trigger.heatingCoilTurnedOff.trigger.calledOnce).toBe(true);
+  });
+
+  it('forwards the stop ventilation action and reports the stopped state', async () => {
+    const registryStub = createRegistryStub();
+    const cards = createCards();
+    const AppClass = createAppClass(registryStub);
+    const app = new AppClass();
+    wireCards(app, cards);
+
+    await app.onInit();
+
+    expect(app.homey.flow.getActionCard.calledWithExactly('stop_ventilation')).toBe(true);
+    expect(app.homey.flow.getConditionCard.calledWithExactly('ventilation_is_stopped')).toBe(true);
+    expect(app.homey.flow.getDeviceTriggerCard.calledWithExactly('ventilation_stopped')).toBe(true);
+    expect(app.homey.flow.getDeviceTriggerCard.calledWithExactly('ventilation_resumed')).toBe(true);
+
+    const stopListener = cards.action.stopVentilation.registerRunListener.firstCall.args[0];
+    const stopResult = await stopListener({ device: { getData: () => ({ unitId: 'unit-1' }) } });
+    expect(stopResult).toBe(true);
+    expect(registryStub.stopVentilation.calledOnceWithExactly('unit-1')).toBe(true);
+
+    const conditionListener = cards.condition.ventilationIsStopped.registerRunListener.firstCall.args[0];
+    const conditionResult = await conditionListener({ device: { getData: () => ({ unitId: 'unit-1' }) } });
+    expect(conditionResult).toBe(true);
+    expect(registryStub.getVentilationStopped.calledOnceWithExactly('unit-1')).toBe(true);
+
+    const stateChangedHandler = registryStub.setVentilationStoppedStateChangedHandler.firstCall.args[0];
+    await stateChangedHandler({ device: { getData: () => ({ unitId: 'unit-1' }) }, stopped: true });
+    await stateChangedHandler({ device: { getData: () => ({ unitId: 'unit-1' }) }, stopped: false });
+    expect(cards.trigger.ventilationStopped.trigger.calledOnce).toBe(true);
+    expect(cards.trigger.ventilationResumed.trigger.calledOnce).toBe(true);
+  });
+
+  it('rejects a stop ventilation action without a device unit id', async () => {
+    const registryStub = createRegistryStub();
+    const cards = createCards();
+    const AppClass = createAppClass(registryStub);
+    const app = new AppClass();
+    wireCards(app, cards);
+
+    await app.onInit();
+
+    const stopListener = cards.action.stopVentilation.registerRunListener.firstCall.args[0];
+    await expect(stopListener({ device: { getData: () => ({}) } })).rejects.toThrow(/unitId is missing/);
+    expect(registryStub.stopVentilation.called).toBe(false);
   });
 
   it('rejects unsupported flow mode values', async () => {

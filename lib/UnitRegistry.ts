@@ -205,6 +205,7 @@ const OPERATION_MODE_VALUES = {
 };
 
 const TRIGGER_VALUE = 2;
+const STOP_WRITE_TAG = 'stop';
 const HEATING_COIL_OFF = 0;
 const HEATING_COIL_ON = 1;
 const COOKER_HOOD_ON = 1;
@@ -367,6 +368,7 @@ const CAPABILITY_MAPPINGS = [
 ] as const;
 const DEHUMIDIFICATION_ACTIVE_CAPABILITY = 'dehumidification_active';
 const FREE_COOLING_ACTIVE_CAPABILITY = 'free_cooling_active';
+const VENTILATION_STOPPED_CAPABILITY = 'ventilation_stopped';
 
 const MODE_RF_INPUT_MAP: Record<number, 'home' | 'away' | 'high' | 'fireplace'> = {
   3: 'high',
@@ -463,6 +465,27 @@ function resolveFreeCoolingActive(data: Record<string, number>): boolean | undef
     return undefined;
   }
   return Math.round(actualVentilationMode) === FREE_COOLING_ACTIVE_MODE_VALUE;
+}
+
+/**
+ * The unit has no dedicated "stopped" flag. STOP is read back from the ventilation mode
+ * register itself, which is how the Flexit BACnet ecosystem detects it. That register is
+ * masked by the comfort button (it reports AWAY while comfort is off), so the heat
+ * exchanger state reporting OFF is used as a second signal.
+ */
+function resolveVentilationStopped(data: Record<string, number>): boolean | undefined {
+  const ventilationMode = data.ventilation_mode;
+  const operationMode = data.operation_mode;
+  const ventilationModeUsable = ventilationMode !== undefined && Number.isFinite(ventilationMode);
+  const operationModeUsable = operationMode !== undefined && Number.isFinite(operationMode);
+  if (!ventilationModeUsable && !operationModeUsable) return undefined;
+  if (ventilationModeUsable && Math.round(ventilationMode) === VENTILATION_MODE_VALUES.STOP) {
+    return true;
+  }
+  if (operationModeUsable && Math.round(operationMode) === OPERATION_MODE_VALUES.OFF) {
+    return true;
+  }
+  return false;
 }
 
 export function normalizeTargetTemperature(value: number): number {
@@ -665,6 +688,8 @@ interface UnitState {
   dehumidificationStateInitialized: boolean;
   freeCoolingActive?: boolean;
   freeCoolingStateInitialized: boolean;
+  ventilationStopped?: boolean;
+  ventilationStoppedStateInitialized: boolean;
   heatingCoilEnabled?: boolean;
   heatingCoilStateInitialized: boolean;
 }
@@ -737,6 +762,13 @@ interface WriteUpdate {
   priority?: number | null;
 }
 
+interface TemporaryModeState {
+  temporaryRapidActive: boolean;
+  fireplaceAlreadyActive: boolean;
+  cookerAlreadyActive: boolean;
+  fireplaceRuntime: number;
+}
+
 interface FanModeWriteContext {
   unit: UnitState;
   mode: string;
@@ -799,6 +831,11 @@ interface DehumidificationStateChangedEvent {
 interface FreeCoolingStateChangedEvent {
   device: FlexitDevice;
   active: boolean;
+}
+
+interface VentilationStoppedStateChangedEvent {
+  device: FlexitDevice;
+  stopped: boolean;
 }
 
 function presentValueRequest(objectId: { type: number; instance: number }) {
@@ -989,6 +1026,9 @@ export class UnitRegistry {
     private fanSetpointChangedHandler?: (event: FanSetpointChangedEvent) => void;
     private dehumidificationStateChangedHandler?: (event: DehumidificationStateChangedEvent) => void;
     private freeCoolingStateChangedHandler?: (event: FreeCoolingStateChangedEvent) => void;
+    private ventilationStoppedStateChangedHandler?: (
+      event: VentilationStoppedStateChangedEvent,
+    ) => void;
     private heatingCoilStateChangedHandler?: (event: HeatingCoilStateChangedEvent) => void;
 
     constructor(dependencies?: Partial<RegistryDependencies>) {
@@ -1024,6 +1064,12 @@ export class UnitRegistry {
 
     setFreeCoolingStateChangedHandler(handler?: (event: FreeCoolingStateChangedEvent) => void) {
       this.freeCoolingStateChangedHandler = handler;
+    }
+
+    setVentilationStoppedStateChangedHandler(
+      handler?: (event: VentilationStoppedStateChangedEvent) => void,
+    ) {
+      this.ventilationStoppedStateChangedHandler = handler;
     }
 
     setHeatingCoilStateChangedHandler(handler?: (event: HeatingCoilStateChangedEvent) => void) {
@@ -1181,6 +1227,8 @@ export class UnitRegistry {
           dehumidificationStateInitialized: false,
           freeCoolingActive: undefined,
           freeCoolingStateInitialized: false,
+          ventilationStopped: undefined,
+          ventilationStoppedStateInitialized: false,
           heatingCoilEnabled: undefined,
           heatingCoilStateInitialized: false,
         };
@@ -1257,6 +1305,8 @@ export class UnitRegistry {
           dehumidificationStateInitialized: false,
           freeCoolingActive: undefined,
           freeCoolingStateInitialized: false,
+          ventilationStopped: undefined,
+          ventilationStoppedStateInitialized: false,
           heatingCoilEnabled: undefined,
           heatingCoilStateInitialized: false,
         };
@@ -1379,7 +1429,10 @@ export class UnitRegistry {
 
       const data = this.getModeWidgetData(unit);
       const fanMode = this.resolveFanModeFromSignals(data);
-      const temporaryMode = this.getModeWidgetTemporaryMode(unit, data, fanMode);
+      const ventilationStopped = resolveVentilationStopped(data);
+      const temporaryMode = ventilationStopped
+        ? undefined
+        : this.getModeWidgetTemporaryMode(unit, data, fanMode);
       const staleAfterMs = unit.transport === 'cloud'
         ? CLOUD_POLL_INTERVAL_MS * 3
         : POLL_INTERVAL_MS * 3;
@@ -1392,10 +1445,12 @@ export class UnitRegistry {
         stale,
         lastPollAt: unit.lastPollAt === undefined ? undefined : new Date(unit.lastPollAt).toISOString(),
         fanMode,
-        fanModeLabel: fanMode === undefined ? 'Unknown' : FAN_MODE_LABELS[fanMode],
-        fanModeDetail: this.getModeWidgetFanModeDetail(unit, fanMode, temporaryMode),
+        fanModeLabel: this.getModeWidgetFanModeLabel(fanMode, ventilationStopped),
+        fanModeDetail: this.getModeWidgetFanModeDetail(
+          unit, fanMode, temporaryMode, ventilationStopped,
+        ),
         temporaryMode,
-        modes: this.getModeWidgetModes(unit, data, fanMode, temporaryMode),
+        modes: this.getModeWidgetModes(unit, data, fanMode, { temporaryMode, ventilationStopped }),
         readings: this.getModeWidgetReadings(unit, data, fanMode),
       };
     }
@@ -1509,11 +1564,21 @@ export class UnitRegistry {
       return Math.ceil(value);
     }
 
+    private getModeWidgetFanModeLabel(
+      fanMode: FanProfileMode | undefined,
+      ventilationStopped: boolean | undefined,
+    ) {
+      if (ventilationStopped) return 'Stopped';
+      return fanMode === undefined ? 'Unknown' : FAN_MODE_LABELS[fanMode];
+    }
+
     private getModeWidgetFanModeDetail(
       unit: UnitState,
       fanMode: FanProfileMode | undefined,
       temporaryMode: ModeWidgetTemporaryStatus | undefined,
+      ventilationStopped: boolean | undefined,
     ) {
+      if (ventilationStopped) return 'Both fans off';
       if (temporaryMode) return temporaryMode.detail;
       if (!fanMode) {
         return unit.lastPollAt === undefined ? 'Waiting for first poll' : 'Waiting for mode signals';
@@ -1525,10 +1590,14 @@ export class UnitRegistry {
       unit: UnitState,
       data: Record<string, number>,
       fanMode: FanProfileMode | undefined,
-      temporaryMode: ModeWidgetTemporaryStatus | undefined,
+      status: {
+        temporaryMode: ModeWidgetTemporaryStatus | undefined;
+        ventilationStopped: boolean | undefined;
+      },
     ): ModeWidgetModeStatus[] {
+      const { temporaryMode, ventilationStopped } = status;
       const modes = [
-        this.getModeWidgetFanStatus(fanMode),
+        this.getModeWidgetFanStatus(fanMode, ventilationStopped),
         this.getModeWidgetBooleanStatus(
           'dehumidification',
           'Dehumidify',
@@ -1542,7 +1611,20 @@ export class UnitRegistry {
       return modes;
     }
 
-    private getModeWidgetFanStatus(fanMode: FanProfileMode | undefined): ModeWidgetModeStatus {
+    private getModeWidgetFanStatus(
+      fanMode: FanProfileMode | undefined,
+      ventilationStopped: boolean | undefined,
+    ): ModeWidgetModeStatus {
+      if (ventilationStopped) {
+        return {
+          id: 'fan_mode',
+          label: 'Stopped',
+          active: true,
+          state: 'active',
+          detail: 'Both fans off',
+          tone: 'warning',
+        };
+      }
       return {
         id: 'fan_mode',
         label: fanMode === undefined ? 'Fan mode' : FAN_MODE_LABELS[fanMode],
@@ -2480,6 +2562,12 @@ export class UnitRegistry {
           comfortButtonKey: COMFORT_BUTTON_KEY,
         };
 
+        // A stopped unit ignores the boost trigger, so leave STOP first.
+        if (this.isVentilationStopped(unit)) {
+          this.log(`[UnitRegistry] Leaving STOP before temporary high for ${unitId}`);
+          await this.writeVentMode(context, VENTILATION_MODE_VALUES.HOME);
+        }
+
         await this.writeRapidTrigger(context, TRIGGER_VALUE);
         this.pollUnit(unitId);
       });
@@ -2806,8 +2894,10 @@ export class UnitRegistry {
     private distributeData(unit: UnitState, data: Record<string, number>) {
       const dehumidificationActive = resolveDehumidificationActive(data);
       const freeCoolingActive = resolveFreeCoolingActive(data);
+      const ventilationStopped = resolveVentilationStopped(data);
       this.observeDehumidificationState(unit, dehumidificationActive);
       this.observeFreeCoolingState(unit, freeCoolingActive);
+      this.observeVentilationStoppedState(unit, ventilationStopped);
       this.observeHeatingCoilState(unit, data.heating_coil_enabled);
 
       const mode = this.resolveFanMode(unit, data);
@@ -2831,6 +2921,9 @@ export class UnitRegistry {
         }
         if (freeCoolingActive !== undefined) {
           this.setCapability(device, FREE_COOLING_ACTIVE_CAPABILITY, freeCoolingActive);
+        }
+        if (ventilationStopped !== undefined) {
+          this.setCapability(device, VENTILATION_STOPPED_CAPABILITY, ventilationStopped);
         }
         if (mode !== undefined) this.setCapability(device, 'fan_mode', mode);
       }
@@ -3021,6 +3114,34 @@ export class UnitRegistry {
         this.freeCoolingStateChangedHandler(event);
       } catch (error) {
         this.log('[UnitRegistry] Failed to handle free cooling state changed callback:', error);
+      }
+    }
+
+    private observeVentilationStoppedState(unit: UnitState, stopped: boolean | undefined) {
+      if (stopped === undefined) return;
+
+      if (!unit.ventilationStoppedStateInitialized) {
+        unit.ventilationStopped = stopped;
+        unit.ventilationStoppedStateInitialized = true;
+        return;
+      }
+      if (unit.ventilationStopped === stopped) return;
+
+      unit.ventilationStopped = stopped;
+      for (const device of unit.devices) {
+        this.triggerVentilationStoppedStateChanged({
+          device,
+          stopped,
+        });
+      }
+    }
+
+    private triggerVentilationStoppedStateChanged(event: VentilationStoppedStateChangedEvent) {
+      if (!this.ventilationStoppedStateChangedHandler) return;
+      try {
+        this.ventilationStoppedStateChangedHandler(event);
+      } catch (error) {
+        this.log('[UnitRegistry] Failed to handle ventilation stopped state changed callback:', error);
       }
     }
 
@@ -3563,6 +3684,84 @@ export class UnitRegistry {
       return active;
     }
 
+    async getVentilationStopped(unitId: string): Promise<boolean> {
+      const unit = this.units.get(unitId);
+      if (!unit) throw new Error('Unit not found');
+
+      if (unit.ventilationStoppedStateInitialized && typeof unit.ventilationStopped === 'boolean') {
+        return unit.ventilationStopped;
+      }
+
+      const mergedData: Record<string, number> = {};
+      const cachedVentilationMode = unit.probeValues.get(VENTILATION_MODE_KEY);
+      if (typeof cachedVentilationMode === 'number' && Number.isFinite(cachedVentilationMode)) {
+        mergedData.ventilation_mode = cachedVentilationMode;
+      }
+      const cachedOperationMode = unit.probeValues.get(OPERATION_MODE_KEY);
+      if (typeof cachedOperationMode === 'number' && Number.isFinite(cachedOperationMode)) {
+        mergedData.operation_mode = cachedOperationMode;
+      }
+
+      if (unit.transport === 'cloud') {
+        await this.cloudPollUnit(unit);
+        const cloudVentilationMode = unit.probeValues.get(VENTILATION_MODE_KEY);
+        if (typeof cloudVentilationMode === 'number' && Number.isFinite(cloudVentilationMode)) {
+          mergedData.ventilation_mode = cloudVentilationMode;
+        }
+        const cloudOperationMode = unit.probeValues.get(OPERATION_MODE_KEY);
+        if (typeof cloudOperationMode === 'number' && Number.isFinite(cloudOperationMode)) {
+          mergedData.operation_mode = cloudOperationMode;
+        }
+      } else {
+        const client = this.dependencies.getBacnetClient(unit.bacnetPort);
+        // Both signals have to be read: the ventilation mode register is masked to AWAY
+        // while the comfort button is off, so on its own it reports a stopped unit as
+        // running. A stale cached value must not outlive a successful fresh read either.
+        await Promise.all([
+          this.bootstrapVentilationStoppedSignal(client, unit, {
+            objectId: BACNET_OBJECTS.ventilationMode,
+            probeKey: VENTILATION_MODE_KEY,
+            dataKey: 'ventilation_mode',
+          }, mergedData),
+          this.bootstrapVentilationStoppedSignal(client, unit, {
+            objectId: BACNET_OBJECTS.operationMode,
+            probeKey: OPERATION_MODE_KEY,
+            dataKey: 'operation_mode',
+          }, mergedData),
+        ]);
+      }
+
+      const stopped = resolveVentilationStopped(mergedData);
+      if (stopped === undefined) {
+        throw new Error('Ventilation stopped state unavailable');
+      }
+
+      unit.ventilationStopped = stopped;
+      unit.ventilationStoppedStateInitialized = true;
+      return stopped;
+    }
+
+    private async bootstrapVentilationStoppedSignal(
+      client: any,
+      unit: UnitState,
+      signal: { objectId: { type: number; instance: number }; probeKey: string; dataKey: string },
+      mergedData: Record<string, number>,
+    ) {
+      const { objectId, probeKey, dataKey } = signal;
+      try {
+        const value = await this.readPresentValue(client, unit, objectId);
+        unit.probeValues.set(probeKey, value);
+        mergedData[dataKey] = value;
+      } catch (error) {
+        if (!(dataKey in mergedData)) {
+          this.log(
+            `[UnitRegistry] Failed to bootstrap ${dataKey} for ${unit.unitId}:`,
+            error,
+          );
+        }
+      }
+    }
+
     async getHeatingCoilEnabled(unitId: string): Promise<boolean> {
       const unit = this.units.get(unitId);
       if (!unit) throw new Error('Unit not found');
@@ -3650,12 +3849,85 @@ export class UnitRegistry {
       return this.enqueueWrite(unit, () => this.applyFanMode(unit, mode, writeOptions));
     }
 
-    private async applyFanMode(unit: UnitState, mode: string, writeOptions: WriteOptions) {
+    async stopVentilation(unitId: string) {
+      this.log(`[UnitRegistry] Stopping ventilation for ${unitId}`);
+      const unit = this.units.get(unitId);
+      if (!unit) throw new Error('Unit not found');
+      if (unit.transport === 'cloud') return this.cloudStopVentilation(unit);
+      const writeOptions: WriteOptions = {
+        maxSegments: BacnetEnums.MaxSegmentsAccepted.SEGMENTS_0,
+        maxApdu: BacnetEnums.MaxApduLengthAccepted.OCTETS_1476,
+        priority: DEFAULT_WRITE_PRIORITY,
+      };
+
+      return this.enqueueWrite(unit, () => this.applyStopVentilation(unit, writeOptions));
+    }
+
+    private async applyStopVentilation(unit: UnitState, writeOptions: WriteOptions) {
       for (const key of NEVER_BLOCK_KEYS) {
         unit.blockedWrites.delete(key);
       }
 
-      const context: FanModeWriteContext = {
+      const context = this.buildFanModeWriteContext(unit, STOP_WRITE_TAG, writeOptions);
+      const temporaryModeState = this.readTemporaryModeState(unit);
+
+      unit.deferredMode = undefined;
+      unit.deferredSince = undefined;
+
+      // STOP is not one of the fan modes the poll loop can resolve, so there is no
+      // expected mode to reconcile against.
+      unit.expectedMode = undefined;
+      unit.expectedModeAt = undefined;
+      unit.lastMismatchKey = undefined;
+
+      await this.exitTemporaryModes(context, temporaryModeState, STOP_WRITE_TAG);
+
+      if (unit.blockedWrites.has(context.ventilationModeKey)) {
+        throw new Error('Ventilation mode write blocked; cannot stop ventilation.');
+      }
+
+      // The ventilation mode register only takes effect while the comfort button is on.
+      const previousComfort = unit.probeValues.get(context.comfortButtonKey);
+      const comfortOk = await this.writeComfort(context, 1);
+      if (!comfortOk) throw new Error('Failed to prepare unit for stop.');
+
+      const stopped = await this.writeVentMode(
+        context,
+        VENTILATION_MODE_VALUES.STOP,
+        { force: true },
+      );
+      if (!stopped) {
+        // Comfort was switched on only to make the STOP write take. Leaving it on would
+        // put an Away unit into Home, ventilating harder than before the failed stop.
+        await this.restoreComfortAfterFailedStop(context, previousComfort);
+        this.pollUnit(unit.unitId);
+        throw new Error('Failed to stop ventilation.');
+      }
+
+      // The next queued write decides whether it has to leave STOP from the cached probe
+      // values, and the poll below only refreshes them asynchronously — so record the
+      // stopped state now, or a mode set within the poll interval silently no-ops.
+      unit.probeValues.set(context.ventilationModeKey, VENTILATION_MODE_VALUES.STOP);
+      unit.probeValues.set(OPERATION_MODE_KEY, OPERATION_MODE_VALUES.OFF);
+      this.pollUnit(unit.unitId);
+    }
+
+    private async restoreComfortAfterFailedStop(
+      context: FanModeWriteContext,
+      previousComfort: number | undefined,
+    ) {
+      if (previousComfort === undefined) return;
+      const restored = Math.round(previousComfort);
+      if (restored === 1) return;
+      await this.writeComfort(context, restored, { force: true });
+    }
+
+    private buildFanModeWriteContext(
+      unit: UnitState,
+      mode: string,
+      writeOptions: WriteOptions,
+    ): FanModeWriteContext {
+      return {
         unit,
         mode,
         writeOptions,
@@ -3663,20 +3935,67 @@ export class UnitRegistry {
         ventilationModeKey: VENTILATION_MODE_KEY,
         comfortButtonKey: COMFORT_BUTTON_KEY,
       };
+    }
 
+    private readTemporaryModeState(unit: UnitState): TemporaryModeState {
       const operationMode = Math.round(unit.probeValues.get(OPERATION_MODE_KEY) ?? NaN);
-      const temporaryRapidActive = this.isTemporaryRapidActive(unit);
       const fireplaceActive = (unit.probeValues.get(FIREPLACE_ACTIVE_KEY) ?? 0) === 1;
       const fireplaceModeReported = operationMode === OPERATION_MODE_VALUES.FIREPLACE;
-      const fireplaceAlreadyActive = fireplaceActive || fireplaceModeReported;
       const cookerModeReported = operationMode === OPERATION_MODE_VALUES.COOKER_HOOD;
       const cookerRequested = this.hasPendingWriteValue(unit, COOKER_HOOD_KEY, 1);
-      const cookerAlreadyActive = cookerModeReported || cookerRequested;
-      const fireplaceRuntime = clamp(
-        Math.round(unit.probeValues.get(FIREPLACE_RUNTIME_KEY) ?? DEFAULT_FIREPLACE_VENTILATION_MINUTES),
-        1,
-        360,
-      );
+      return {
+        temporaryRapidActive: this.isTemporaryRapidActive(unit),
+        fireplaceAlreadyActive: fireplaceActive || fireplaceModeReported,
+        cookerAlreadyActive: cookerModeReported || cookerRequested,
+        fireplaceRuntime: clamp(
+          Math.round(
+            unit.probeValues.get(FIREPLACE_RUNTIME_KEY) ?? DEFAULT_FIREPLACE_VENTILATION_MINUTES,
+          ),
+          1,
+          360,
+        ),
+      };
+    }
+
+    private async exitTemporaryModes(
+      context: FanModeWriteContext,
+      state: TemporaryModeState,
+      targetMode: string,
+    ) {
+      if (targetMode !== 'fireplace' && state.fireplaceAlreadyActive) {
+        await this.writeFireplaceTrigger(context, TRIGGER_VALUE);
+      }
+      if (targetMode !== 'fireplace' && targetMode !== 'high' && state.temporaryRapidActive) {
+        await this.writeRapidTrigger(context, TRIGGER_VALUE);
+      }
+      if (targetMode !== 'cooker' && state.cookerAlreadyActive) {
+        await this.relinquishCookerHood(context);
+      }
+    }
+
+    /**
+     * Same rule as the polled state, applied to the cached probe values, to decide whether
+     * a write has to leave STOP first.
+     */
+    private isVentilationStopped(unit: UnitState): boolean {
+      return resolveVentilationStopped({
+        ventilation_mode: unit.probeValues.get(VENTILATION_MODE_KEY) ?? NaN,
+        operation_mode: unit.probeValues.get(OPERATION_MODE_KEY) ?? NaN,
+      }) === true;
+    }
+
+    private async applyFanMode(unit: UnitState, mode: string, writeOptions: WriteOptions) {
+      for (const key of NEVER_BLOCK_KEYS) {
+        unit.blockedWrites.delete(key);
+      }
+
+      const context = this.buildFanModeWriteContext(unit, mode, writeOptions);
+      const {
+        temporaryRapidActive,
+        fireplaceAlreadyActive,
+        cookerAlreadyActive,
+        fireplaceRuntime,
+      } = this.readTemporaryModeState(unit);
 
       if (mode !== 'fireplace') {
         unit.deferredMode = undefined;
@@ -3691,14 +4010,20 @@ export class UnitRegistry {
       unit.expectedModeAt = Date.now();
       unit.lastMismatchKey = undefined;
 
-      if (mode !== 'fireplace' && fireplaceAlreadyActive) {
-        await this.writeFireplaceTrigger(context, TRIGGER_VALUE);
-      }
-      if (mode !== 'fireplace' && mode !== 'high' && temporaryRapidActive) {
-        await this.writeRapidTrigger(context, TRIGGER_VALUE);
-      }
-      if (mode !== 'cooker' && cookerAlreadyActive) {
-        await this.relinquishCookerHood(context);
+      await this.exitTemporaryModes(
+        context,
+        { temporaryRapidActive, fireplaceAlreadyActive, cookerAlreadyActive, fireplaceRuntime },
+        mode,
+      );
+
+      // Away, cooker and fireplace never write the ventilation mode themselves, so a unit
+      // sitting in STOP would keep both fans off while reporting the requested mode.
+      if (mode !== 'home' && mode !== 'high' && this.isVentilationStopped(unit)) {
+        this.log(`[UnitRegistry] Leaving STOP before applying '${mode}' for ${unit.unitId}`);
+        await this.writeVentMode(
+          context,
+          mode === 'away' ? VENTILATION_MODE_VALUES.AWAY : VENTILATION_MODE_VALUES.HOME,
+        );
       }
 
       switch (mode) {
@@ -4450,6 +4775,13 @@ export class UnitRegistry {
       }
 
       this.log(`[UnitRegistry] Cloud: activating temporary high for ${unit.unitId}`);
+      // A stopped unit ignores the boost trigger, so leave STOP first.
+      if (this.isVentilationStopped(unit)) {
+        await this.cloudWriteDatapoint(
+          unit, BACNET_OBJECTS.ventilationMode, VENTILATION_MODE_VALUES.HOME,
+        );
+      }
+
       const success = await this.cloudWriteDatapoint(
         unit,
         BACNET_OBJECTS.rapidVentilationTrigger,
@@ -4567,6 +4899,17 @@ export class UnitRegistry {
         );
       }
 
+      // Away and fireplace never write the ventilation mode themselves, so a unit sitting
+      // in STOP would keep both fans off while reporting the requested mode.
+      if (mode !== 'home' && mode !== 'high' && this.isVentilationStopped(unit)) {
+        this.log(`[UnitRegistry] Cloud: leaving STOP before applying '${mode}' for ${unit.unitId}`);
+        await this.cloudWriteDatapoint(
+          unit,
+          BACNET_OBJECTS.ventilationMode,
+          mode === 'away' ? VENTILATION_MODE_VALUES.AWAY : VENTILATION_MODE_VALUES.HOME,
+        );
+      }
+
       switch (mode) {
         case 'home':
           await this.cloudWriteDatapoint(unit, BACNET_OBJECTS.comfortButton, 1);
@@ -4591,6 +4934,51 @@ export class UnitRegistry {
             `[UnitRegistry] Unsupported cloud fan mode '${mode}' for ${unit.unitId}`,
           );
           return;
+      }
+
+      await this.cloudPollUnit(unit);
+    }
+
+    private async cloudStopVentilation(unit: UnitState) {
+      this.log(`[UnitRegistry] Cloud: stopping ventilation for ${unit.unitId}`);
+
+      const { temporaryRapidActive, fireplaceAlreadyActive } = this.readTemporaryModeState(unit);
+
+      unit.deferredMode = undefined;
+      unit.deferredSince = undefined;
+      unit.expectedMode = undefined;
+      unit.expectedModeAt = undefined;
+      unit.lastMismatchKey = undefined;
+
+      if (fireplaceAlreadyActive) {
+        await this.cloudWriteDatapoint(
+          unit, BACNET_OBJECTS.fireplaceVentilationTrigger, TRIGGER_VALUE,
+        );
+      }
+      if (temporaryRapidActive) {
+        await this.cloudWriteDatapoint(
+          unit, BACNET_OBJECTS.rapidVentilationTrigger, TRIGGER_VALUE,
+        );
+      }
+
+      // The ventilation mode register only takes effect while the comfort button is on.
+      const previousComfort = unit.probeValues.get(COMFORT_BUTTON_KEY);
+      const comfortOk = await this.cloudWriteDatapoint(unit, BACNET_OBJECTS.comfortButton, 1);
+      if (!comfortOk) throw new Error('Failed to prepare unit for stop via cloud');
+
+      const stopped = await this.cloudWriteDatapoint(
+        unit, BACNET_OBJECTS.ventilationMode, VENTILATION_MODE_VALUES.STOP,
+      );
+      if (!stopped) {
+        // Comfort was switched on only to make the STOP write take. Leaving it on would
+        // put an Away unit into Home, ventilating harder than before the failed stop.
+        if (previousComfort !== undefined && Math.round(previousComfort) !== 1) {
+          await this.cloudWriteDatapoint(
+            unit, BACNET_OBJECTS.comfortButton, Math.round(previousComfort),
+          );
+        }
+        await this.cloudPollUnit(unit);
+        throw new Error('Failed to stop ventilation via cloud');
       }
 
       await this.cloudPollUnit(unit);

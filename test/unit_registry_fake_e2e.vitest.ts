@@ -14,6 +14,7 @@ import {
   OBJECT_TYPE,
   OPERATION_MODE_VALUES,
   PROPERTY_ID,
+  VENTILATION_MODE_VALUES,
   DEFAULT_VENDOR_ID,
   DEFAULT_VENDOR_NAME,
 } from '../scripts/fake-unit/manifest.ts';
@@ -1283,6 +1284,150 @@ describe('UnitRegistry fake-unit e2e', { timeout: 10000 }, () => {
           `Expected BACnet writes for ${fromMode} -> ${toMode}`,
         ).toBeGreaterThan(0);
       }
+    }
+  });
+
+  it('stops both fans and reports the stopped state', async () => {
+    const device = makeMockDevice(SERVER_BIND_ADDRESS, serverPort, 4380);
+    registry.register('test_unit', device);
+
+    await registry.stopVentilation('test_unit');
+
+    await waitFor(() => {
+      const ventilationMode = state.readPresentValue(
+        OBJECT_TYPE.MULTI_STATE_VALUE,
+        42,
+        PROPERTY_ID.PRESENT_VALUE,
+      );
+      const operationMode = state.readPresentValue(
+        OBJECT_TYPE.MULTI_STATE_VALUE,
+        361,
+        PROPERTY_ID.PRESENT_VALUE,
+      );
+      const supplyFan = state.readPresentValue(OBJECT_TYPE.ANALOG_OUTPUT, 3, PROPERTY_ID.PRESENT_VALUE);
+      const extractFan = state.readPresentValue(OBJECT_TYPE.ANALOG_OUTPUT, 4, PROPERTY_ID.PRESENT_VALUE);
+      return ventilationMode.ok
+        && operationMode.ok
+        && supplyFan.ok
+        && extractFan.ok
+        && ventilationMode.value.value === VENTILATION_MODE_VALUES.STOP
+        && operationMode.value.value === OPERATION_MODE_VALUES.OFF
+        && supplyFan.value.value === 0
+        && extractFan.value.value === 0;
+    });
+
+    const stopWrite = writePresentValueSpy.getCalls().find((call: any) => (
+      call.args[0] === OBJECT_TYPE.MULTI_STATE_VALUE
+      && call.args[1] === 42
+      && call.args[2] === PROPERTY_ID.PRESENT_VALUE
+      && call.args[3] === VENTILATION_MODE_VALUES.STOP
+      && call.args[4] === 13
+    ));
+    expect(stopWrite).not.toBe(undefined);
+
+    (registry as any).pollUnit('test_unit');
+    await waitFor(() => device.setCapabilityValue.getCalls().some((call: any) => (
+      call.args[0] === 'ventilation_stopped' && call.args[1] === true
+    )));
+  });
+
+  it('leaves stop when a fan mode is set again', { timeout: 30000 }, async () => {
+    const modes = ['home', 'away', 'high', 'fireplace', 'cooker'] as const;
+
+    for (const mode of modes) {
+      registry?.destroy();
+      registry = new UnitRegistry({
+        getBacnetClient: getBacnetClientStub,
+        discoverFlexitUnits: discoverFlexitUnitsStub,
+      });
+      const device = makeMockDevice(SERVER_BIND_ADDRESS, serverPort, 4380);
+      registry.register('test_unit', device);
+
+      await registry.stopVentilation('test_unit');
+      await waitFor(() => {
+        const ventilationMode = state.readPresentValue(
+          OBJECT_TYPE.MULTI_STATE_VALUE,
+          42,
+          PROPERTY_ID.PRESENT_VALUE,
+        );
+        return ventilationMode.ok && ventilationMode.value.value === VENTILATION_MODE_VALUES.STOP;
+      });
+      device.setCapabilityValue.resetHistory();
+      await registry.setFanMode('test_unit', mode);
+
+      await waitFor(() => {
+        const ventilationMode = state.readPresentValue(
+          OBJECT_TYPE.MULTI_STATE_VALUE,
+          42,
+          PROPERTY_ID.PRESENT_VALUE,
+        );
+        const supplyFan = state.readPresentValue(OBJECT_TYPE.ANALOG_OUTPUT, 3, PROPERTY_ID.PRESENT_VALUE);
+        return ventilationMode.ok
+          && supplyFan.ok
+          && ventilationMode.value.value !== VENTILATION_MODE_VALUES.STOP
+          && supplyFan.value.value > 0;
+      }, 5000);
+
+      (registry as any).pollUnit('test_unit');
+      await waitFor(() => device.setCapabilityValue.getCalls().some((call: any) => (
+        call.args[0] === 'ventilation_stopped' && call.args[1] === false
+      )), 5000);
+    }
+  });
+
+  it('leaves stop when temporary high is activated', async () => {
+    const device = makeMockDevice(SERVER_BIND_ADDRESS, serverPort, 4380);
+    registry.register('test_unit', device);
+
+    await registry.stopVentilation('test_unit');
+    await waitFor(() => {
+      const ventilationMode = state.readPresentValue(
+        OBJECT_TYPE.MULTI_STATE_VALUE,
+        42,
+        PROPERTY_ID.PRESENT_VALUE,
+      );
+      return ventilationMode.ok && ventilationMode.value.value === VENTILATION_MODE_VALUES.STOP;
+    });
+
+    await registry.activateTemporaryHigh('test_unit');
+
+    await waitFor(() => {
+      const ventilationMode = state.readPresentValue(
+        OBJECT_TYPE.MULTI_STATE_VALUE,
+        42,
+        PROPERTY_ID.PRESENT_VALUE,
+      );
+      const rapidActive = state.readPresentValue(OBJECT_TYPE.BINARY_VALUE, 15, PROPERTY_ID.PRESENT_VALUE);
+      const supplyFan = state.readPresentValue(OBJECT_TYPE.ANALOG_OUTPUT, 3, PROPERTY_ID.PRESENT_VALUE);
+      return ventilationMode.ok
+        && rapidActive.ok
+        && supplyFan.ok
+        && ventilationMode.value.value !== VENTILATION_MODE_VALUES.STOP
+        && rapidActive.value.value === 1
+        && supplyFan.value.value > 0;
+    });
+  });
+
+  it('reads both mode signals when bootstrapping the stopped state', async () => {
+    const device = makeMockDevice(SERVER_BIND_ADDRESS, serverPort, 4380);
+    registry.register('test_unit', device);
+
+    const unit = (registry as any).units.get('test_unit');
+    unit.probeValues.clear();
+    unit.ventilationStopped = undefined;
+    unit.ventilationStoppedStateInitialized = false;
+
+    const readSpy = sinon.spy(registry as any, 'readPresentValue');
+    try {
+      await registry.getVentilationStopped('test_unit');
+
+      // MSV:42 alone is masked to AWAY while the comfort button is off, so the heat
+      // exchanger state has to be read too or a panel-stopped unit reads as running.
+      const readObjects = readSpy.getCalls().map((call: any) => call.args[2]);
+      expect(readObjects).to.deep.include({ type: OBJECT_TYPE.MULTI_STATE_VALUE, instance: 42 });
+      expect(readObjects).to.deep.include({ type: OBJECT_TYPE.MULTI_STATE_VALUE, instance: 361 });
+    } finally {
+      readSpy.restore();
     }
   });
 

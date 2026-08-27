@@ -19,6 +19,7 @@
     "free_cooling_active",
     "measure_power",
     "fan_mode",
+    "ventilation_stopped",
     "measure_motor_rpm",
     "measure_motor_rpm.extract",
     "measure_fan_speed_percent",
@@ -42,6 +43,11 @@
     "free_cooling_active": {
       "title": {
         "en": "Free cooling active"
+      }
+    },
+    "ventilation_stopped": {
+      "title": {
+        "en": "Ventilation stopped"
       }
     },
     "measure_power": {

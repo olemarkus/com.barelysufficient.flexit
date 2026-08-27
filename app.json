@@ -217,6 +217,44 @@
           }
         ],
         "id": "supply_fan_setpoint_changed"
+      },
+      {
+        "title": {
+          "en": "Ventilation resumed"
+        },
+        "titleFormatted": {
+          "en": "Ventilation resumed"
+        },
+        "hint": {
+          "en": "Triggers when the unit resumes ventilation after being stopped."
+        },
+        "args": [
+          {
+            "type": "device",
+            "name": "device",
+            "filter": "driver_id=nordic|nordic-cloud"
+          }
+        ],
+        "id": "ventilation_resumed"
+      },
+      {
+        "title": {
+          "en": "Ventilation stopped"
+        },
+        "titleFormatted": {
+          "en": "Ventilation stopped"
+        },
+        "hint": {
+          "en": "Triggers when the unit stops both fans."
+        },
+        "args": [
+          {
+            "type": "device",
+            "name": "device",
+            "filter": "driver_id=nordic|nordic-cloud"
+          }
+        ],
+        "id": "ventilation_stopped"
       }
     ],
     "conditions": [
@@ -276,6 +314,25 @@
           }
         ],
         "id": "heating_coil_is_on"
+      },
+      {
+        "title": {
+          "en": "Ventilation is stopped"
+        },
+        "titleFormatted": {
+          "en": "Ventilation is stopped"
+        },
+        "hint": {
+          "en": "Checks whether the unit is currently stopped."
+        },
+        "args": [
+          {
+            "type": "device",
+            "name": "device",
+            "filter": "driver_id=nordic|nordic-cloud"
+          }
+        ],
+        "id": "ventilation_is_stopped"
       }
     ],
     "actions": [
@@ -436,6 +493,25 @@
       },
       {
         "title": {
+          "en": "Stop ventilation"
+        },
+        "titleFormatted": {
+          "en": "Stop ventilation"
+        },
+        "hint": {
+          "en": "Stops both the supply and extract fan on the unit. Ventilation stays off until a fan mode is set again with the \"Set fan mode\" action."
+        },
+        "args": [
+          {
+            "type": "device",
+            "name": "device",
+            "filter": "driver_id=nordic|nordic-cloud"
+          }
+        ],
+        "id": "stop_ventilation"
+      },
+      {
+        "title": {
           "en": "Toggle heating coil on or off"
         },
         "titleFormatted": {
@@ -515,6 +591,7 @@
         "free_cooling_active",
         "measure_power",
         "fan_mode",
+        "ventilation_stopped",
         "measure_motor_rpm",
         "measure_motor_rpm.extract",
         "measure_fan_speed_percent",
@@ -538,6 +615,11 @@
         "free_cooling_active": {
           "title": {
             "en": "Free cooling active"
+          }
+        },
+        "ventilation_stopped": {
+          "title": {
+            "en": "Ventilation stopped"
           }
         },
         "measure_power": {
@@ -1109,6 +1191,7 @@
         "free_cooling_active",
         "measure_power",
         "fan_mode",
+        "ventilation_stopped",
         "measure_motor_rpm",
         "measure_motor_rpm.extract",
         "measure_fan_speed_percent",
@@ -1132,6 +1215,11 @@
         "free_cooling_active": {
           "title": {
             "en": "Free cooling active"
+          }
+        },
+        "ventilation_stopped": {
+          "title": {
+            "en": "Ventilation stopped"
           }
         },
         "measure_power": {
@@ -1783,6 +1871,16 @@
       "getable": true,
       "setable": false,
       "insights": true
+    },
+    "ventilation_stopped": {
+      "type": "boolean",
+      "title": {
+        "en": "Ventilation stopped"
+      },
+      "icon": "/assets/capabilities/ventilation_stopped.svg",
+      "getable": true,
+      "setable": false,
+      "uiComponent": "sensor"
     }
   }
 }
