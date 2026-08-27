@@ -47,7 +47,7 @@ When adding new BACnet points, update both the poll list and `distributeData` ma
 ## Useful scripts
 - `npm run lint` / `npm run lint:fix`
 - `npm run typecheck`
-- `npm test` — typecheck + mocha tests with c8 coverage
+- `npm test` — typecheck + vitest tests with v8 coverage
 - `npm run validate` — lint + test + homey app validate
 - `npm start` — runs `homey app run --remote`
 - `npm run fake-unit:start` — standalone fake Nordic unit
