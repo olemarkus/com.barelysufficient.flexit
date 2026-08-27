@@ -36,7 +36,7 @@ When adding new BACnet points, update both the poll list and `distributeData` ma
 - TypeScript `strict` is enabled.
 - ESLint max-warnings=0 is enforced.
 - Do not ignore lint errors to get a change through review. `eslint-disable` / ignore comments are only acceptable when there is genuinely no viable code change that satisfies the rule, and that exception should be kept as narrow as possible.
-- Tests use mocha + chai + sinon (NOT jest). Device tests use proxyquire.
+- Tests use vitest + sinon (NOT jest, NOT mocha). Test files are `test/*.vitest.ts`; module mocking uses `vi.mock`.
 - Any feature touching BACnet behavior must include end-to-end coverage using the fake unit.
 - Run `npm run validate` after changes (lint + tests + `homey app validate`).
 - `README.txt` is app-store/user-facing only; no developer/test instructions.

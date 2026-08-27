@@ -116,6 +116,35 @@ describe('Nordic driver (vitest)', () => {
     ]);
   });
 
+  it('lists every discovered unit in the completion log rather than a capped sample', async () => {
+    const discovered = Array.from({ length: 6 }, (_value, index) => ({
+      name: `Unit ${index + 1}`,
+      serialNormalized: `80013100000${index + 1}`,
+      ip: `192.0.2.${index + 10}`,
+      bacnetPort: 47808 + index,
+      serial: `800131-00000${index + 1}`,
+      mac: '',
+    }));
+    discoverStub.resolves(discovered);
+    const driver = new DriverClass();
+
+    await driver.onPairListDevices();
+
+    const completeLog = findStructuredLog(driver.log, 'driver.pair.discovery.complete');
+    expect(completeLog?.unitCount).toBe(6);
+    expect(completeLog?.units).toHaveLength(6);
+    expect(completeLog?.units?.map((unit: any) => unit.unitId)).toEqual(
+      discovered.map((unit) => unit.serialNormalized),
+    );
+    expect(completeLog?.units?.[5]).toEqual({
+      unitId: '800131000006',
+      serial: '800131-000006',
+      ip: '192.0.2.15',
+      bacnetPort: 47813,
+      status: 'new',
+    });
+  });
+
   it('marks discovered units that are already paired', async () => {
     discoverStub.resolves([
       {
