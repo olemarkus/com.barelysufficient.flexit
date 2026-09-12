@@ -75,6 +75,7 @@ export function createFlexitAppClass({
       this.registerTemporaryHighActionCard();
       this.registerStopVentilationActionCard();
       this.registerHeatingCoilActionCards();
+      this.registerFreeCoolingActionCards();
       this.registerHeatingCoilConditionCard();
       this.registerDehumidificationConditionCard();
       this.registerFreeCoolingConditionCard();
@@ -431,6 +432,22 @@ export function createFlexitAppClass({
       toggleHeatingCoilCard.registerRunListener(async (args: any) => {
         const unitId = this.resolveUnitId(args?.device);
         await registry.toggleHeatingCoilEnabled(unitId);
+        return true;
+      });
+    }
+
+    private registerFreeCoolingActionCards() {
+      const turnFreeCoolingOnCard = this.homey.flow.getActionCard('turn_free_cooling_on');
+      turnFreeCoolingOnCard.registerRunListener(async (args: any) => {
+        const unitId = this.resolveUnitId(args?.device);
+        await registry.setFreeCoolingEnabled(unitId, true);
+        return true;
+      });
+
+      const turnFreeCoolingOffCard = this.homey.flow.getActionCard('turn_free_cooling_off');
+      turnFreeCoolingOffCard.registerRunListener(async (args: any) => {
+        const unitId = this.resolveUnitId(args?.device);
+        await registry.setFreeCoolingEnabled(unitId, false);
         return true;
       });
     }

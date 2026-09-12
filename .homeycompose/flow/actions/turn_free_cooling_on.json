@@ -1,0 +1,18 @@
+{
+  "title": {
+    "en": "Turn free cooling on"
+  },
+  "titleFormatted": {
+    "en": "Turn free cooling on"
+  },
+  "hint": {
+    "en": "Enables the unit's free cooling function. The unit then starts free cooling on its own when its extract and outdoor temperature conditions are met, and runs high ventilation while it is active."
+  },
+  "args": [
+    {
+      "type": "device",
+      "name": "device",
+      "filter": "driver_id=nordic|nordic-cloud"
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "title": {
+    "en": "Turn free cooling off"
+  },
+  "titleFormatted": {
+    "en": "Turn free cooling off"
+  },
+  "hint": {
+    "en": "Disables the unit's free cooling function. If free cooling is already running, the unit may keep it running until its minimum on-time has passed."
+  },
+  "args": [
+    {
+      "type": "device",
+      "name": "device",
+      "filter": "driver_id=nordic|nordic-cloud"
+    }
+  ]
+}
