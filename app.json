@@ -741,7 +741,8 @@
           },
           "units": {
             "en": "%"
-          }
+          },
+          "insights": true
         },
         "button.reset_filter": {
           "maintenanceAction": true,
@@ -1341,7 +1342,8 @@
           },
           "units": {
             "en": "%"
-          }
+          },
+          "insights": true
         },
         "button.reset_filter": {
           "maintenanceAction": true,
@@ -1856,7 +1858,14 @@
       "icon": "/assets/capabilities/dehumidification_active.svg",
       "getable": true,
       "setable": false,
-      "uiComponent": "sensor"
+      "uiComponent": "sensor",
+      "insights": true,
+      "insightsTitleTrue": {
+        "en": "Dehumidification started"
+      },
+      "insightsTitleFalse": {
+        "en": "Dehumidification stopped"
+      }
     },
     "free_cooling_active": {
       "type": "boolean",
@@ -1866,7 +1875,14 @@
       "icon": "/assets/capabilities/free_cooling_active.svg",
       "getable": true,
       "setable": false,
-      "uiComponent": "sensor"
+      "uiComponent": "sensor",
+      "insights": true,
+      "insightsTitleTrue": {
+        "en": "Free cooling started"
+      },
+      "insightsTitleFalse": {
+        "en": "Free cooling stopped"
+      }
     },
     "measure_fan_setpoint_percent": {
       "type": "number",
@@ -1918,7 +1934,14 @@
       "icon": "/assets/capabilities/ventilation_stopped.svg",
       "getable": true,
       "setable": false,
-      "uiComponent": "sensor"
+      "uiComponent": "sensor",
+      "insights": true,
+      "insightsTitleTrue": {
+        "en": "Ventilation stopped"
+      },
+      "insightsTitleFalse": {
+        "en": "Ventilation resumed"
+      }
     }
   }
 }
