@@ -58,6 +58,7 @@ function createRegistryStub(overrides: Record<string, any> = {}) {
     setHeatingCoilEnabled: sinon.stub().resolves(),
     toggleHeatingCoilEnabled: sinon.stub().resolves(true),
     getHeatingCoilEnabled: sinon.stub().resolves(true),
+    setFreeCoolingEnabled: sinon.stub().resolves(),
     ...overrides,
   };
 }
@@ -105,6 +106,8 @@ function createCards() {
       turnHeatingCoilOn: { registerRunListener: sinon.stub() },
       turnHeatingCoilOff: { registerRunListener: sinon.stub() },
       toggleHeatingCoilOnOff: { registerRunListener: sinon.stub() },
+      turnFreeCoolingOn: { registerRunListener: sinon.stub() },
+      turnFreeCoolingOff: { registerRunListener: sinon.stub() },
     },
     condition: {
       dehumidificationIsActive: { registerRunListener: sinon.stub() },
@@ -136,6 +139,8 @@ function wireCards(app: any, cards: ReturnType<typeof createCards>) {
   app.homey.flow.getActionCard.withArgs('turn_heating_coil_on').returns(cards.action.turnHeatingCoilOn);
   app.homey.flow.getActionCard.withArgs('turn_heating_coil_off').returns(cards.action.turnHeatingCoilOff);
   app.homey.flow.getActionCard.withArgs('toggle_heating_coil_onoff').returns(cards.action.toggleHeatingCoilOnOff);
+  app.homey.flow.getActionCard.withArgs('turn_free_cooling_on').returns(cards.action.turnFreeCoolingOn);
+  app.homey.flow.getActionCard.withArgs('turn_free_cooling_off').returns(cards.action.turnFreeCoolingOff);
 
   app.homey.flow.getConditionCard.withArgs('dehumidification_is_active')
     .returns(cards.condition.dehumidificationIsActive);
@@ -235,6 +240,43 @@ describe('App flow registration (vitest)', () => {
 
     expect(result).toBe(true);
     expect(registryStub.activateTemporaryHigh.calledOnceWithExactly('unit-1')).toBe(true);
+  });
+
+  it('forwards the free cooling on and off flow cards to the registry', async () => {
+    const registryStub = createRegistryStub();
+    const cards = createCards();
+    const AppClass = createAppClass(registryStub);
+    const app = new AppClass();
+    wireCards(app, cards);
+
+    await app.onInit();
+
+    expect(app.homey.flow.getActionCard.calledWithExactly('turn_free_cooling_on')).toBe(true);
+    expect(app.homey.flow.getActionCard.calledWithExactly('turn_free_cooling_off')).toBe(true);
+
+    const device = { getData: () => ({ unitId: 'unit-1' }) };
+    const onListener = cards.action.turnFreeCoolingOn.registerRunListener.firstCall.args[0];
+    const offListener = cards.action.turnFreeCoolingOff.registerRunListener.firstCall.args[0];
+
+    expect(await onListener({ device })).toBe(true);
+    expect(registryStub.setFreeCoolingEnabled.calledOnceWithExactly('unit-1', true)).toBe(true);
+
+    expect(await offListener({ device })).toBe(true);
+    expect(registryStub.setFreeCoolingEnabled.secondCall.args).toEqual(['unit-1', false]);
+  });
+
+  it('rejects the free cooling flow cards when the device has no unit id', async () => {
+    const registryStub = createRegistryStub();
+    const cards = createCards();
+    const AppClass = createAppClass(registryStub);
+    const app = new AppClass();
+    wireCards(app, cards);
+
+    await app.onInit();
+
+    const onListener = cards.action.turnFreeCoolingOn.registerRunListener.firstCall.args[0];
+    await expect(onListener({ device: { getData: () => ({}) } })).rejects.toThrow('Device unitId is missing.');
+    expect(registryStub.setFreeCoolingEnabled.called).toBe(false);
   });
 
   it('returns ventilation mode widget status for the selected Homey device', () => {
