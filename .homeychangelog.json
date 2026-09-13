@@ -94,5 +94,8 @@
   },
   "1.12.0": {
     "en": "Add a flow action for stopping ventilation, along with a condition and triggers for whether the unit is stopped. A stopped unit is now also shown as stopped in the widget and as a status on the device.\n\nMinor stability fixes."
+  },
+  "1.13.0": {
+    "en": "Add flow actions for turning free cooling on and off, for example to allow free cooling in summer only. The unit still decides when free cooling actually runs, based on the temperature settings on the device."
   }
 }
