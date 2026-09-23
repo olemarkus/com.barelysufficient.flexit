@@ -36,6 +36,7 @@ import {
   normalizeFreeCoolingMinOnTimeSeconds,
   FREE_COOLING_DT_START_SETTING,
   FREE_COOLING_DT_STOP_SETTING,
+  FREE_COOLING_START_MARGIN_SETTING,
   MIN_FREE_COOLING_DT_K,
   MAX_FREE_COOLING_DT_K,
   normalizeFreeCoolingDt,
@@ -69,6 +70,7 @@ const FREE_COOLING_SETTING_KEYS = [
   FREE_COOLING_MIN_ON_TIME_SECONDS_SETTING,
   FREE_COOLING_DT_START_SETTING,
   FREE_COOLING_DT_STOP_SETTING,
+  FREE_COOLING_START_MARGIN_SETTING,
 ];
 const DEICING_SETTING_KEYS = [
   DEICING_ENABLED_SETTING,
@@ -78,6 +80,7 @@ const DEICING_SETTING_KEYS = [
 ];
 const FREE_COOLING_DT_START_LABEL = 'free cooling start temperature difference';
 const FREE_COOLING_DT_STOP_LABEL = 'free cooling stop temperature difference';
+const FREE_COOLING_START_MARGIN_LABEL = 'free cooling start margin';
 
 function validateFreeCoolingDt(requestedValue: number, label: string) {
   if (requestedValue < MIN_FREE_COOLING_DT_K || requestedValue > MAX_FREE_COOLING_DT_K) {
@@ -375,6 +378,17 @@ export abstract class FlexitNordicBaseDevice extends Homey.Device {
       unitId, newSettings, changedKeys.includes(FREE_COOLING_MIN_ON_TIME_SECONDS_SETTING),
     );
     await this.maybeHandleFreeCoolingDtSettings(unitId, newSettings, changedKeys);
+    await this.maybeHandleNumericSetting(
+      unitId, newSettings, changedKeys.includes(FREE_COOLING_START_MARGIN_SETTING),
+      {
+        settingKey: FREE_COOLING_START_MARGIN_SETTING,
+        label: FREE_COOLING_START_MARGIN_LABEL,
+        normalize: normalizeFreeCoolingDt,
+        validate: validateFreeCoolingDt,
+        update: (nextValue) => Registry.setFreeCoolingStartMargin(unitId, nextValue),
+        formatValue: (nextValue) => `${nextValue} K`,
+      },
+    );
   }
 
   private validateFreeCoolingDtSettings(newSettings: Record<string, unknown>, changedKeys: string[]) {

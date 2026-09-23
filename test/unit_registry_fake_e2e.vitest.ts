@@ -891,6 +891,7 @@ describe('UnitRegistry fake-unit e2e', { timeout: 10000 }, () => {
     expect(device.getSetting('deicing_min_off_time')).toBe('1800 s');
     expect(device.getSetting('free_cooling_dt_start_k')).toBe(1.5);
     expect(device.getSetting('free_cooling_dt_stop_k')).toBe(0.5);
+    expect(device.getSetting('free_cooling_start_margin_k')).toBe(2);
     expect(device.getSetting('deicing_enabled')).toBe(true);
     expect(device.getSetting('deicing_rotor_speed_percent')).toBe(100);
     expect(device.getSetting('deicing_supply_fan_percent')).toBe(15);

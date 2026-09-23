@@ -914,7 +914,24 @@
               "max": 30,
               "step": 0.5,
               "hint": {
-                "en": "Based on the extract air temperature, the air leaving the rooms. Free cooling can start when the extract air is warmer than this, and stops when the extract air has cooled below it."
+                "en": "Based on the extract air temperature, the air leaving the rooms. Free cooling can start once the extract air is warmer than this plus the start margin below, and stops when the extract air has cooled below it."
+              }
+            },
+            {
+              "id": "free_cooling_start_margin_k",
+              "type": "number",
+              "label": {
+                "en": "Start margin above setpoint"
+              },
+              "units": {
+                "en": "K"
+              },
+              "value": 2,
+              "min": 0,
+              "max": 10,
+              "step": 0.5,
+              "hint": {
+                "en": "Free cooling only starts once the extract air is this much above the extract air setpoint. It is not shown in Flexit GO, so a setpoint of 23 with the factory margin of 2 K starts free cooling at 25."
               }
             },
             {
@@ -1763,7 +1780,24 @@
               "max": 30,
               "step": 0.5,
               "hint": {
-                "en": "Based on the extract air temperature, the air leaving the rooms. Free cooling can start when the extract air is warmer than this, and stops when the extract air has cooled below it."
+                "en": "Based on the extract air temperature, the air leaving the rooms. Free cooling can start once the extract air is warmer than this plus the start margin below, and stops when the extract air has cooled below it."
+              }
+            },
+            {
+              "id": "free_cooling_start_margin_k",
+              "type": "number",
+              "label": {
+                "en": "Start margin above setpoint"
+              },
+              "units": {
+                "en": "K"
+              },
+              "value": 2,
+              "min": 0,
+              "max": 10,
+              "step": 0.5,
+              "hint": {
+                "en": "Free cooling only starts once the extract air is this much above the extract air setpoint. It is not shown in Flexit GO, so a setpoint of 23 with the factory margin of 2 K starts free cooling at 25."
               }
             },
             {

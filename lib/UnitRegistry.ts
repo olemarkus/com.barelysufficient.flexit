@@ -64,6 +64,7 @@ export const MIN_FREE_COOLING_MIN_ON_TIME_SECONDS = 0;
 export const MAX_FREE_COOLING_MIN_ON_TIME_SECONDS = 18_000;
 export const FREE_COOLING_DT_START_SETTING = 'free_cooling_dt_start_k';
 export const FREE_COOLING_DT_STOP_SETTING = 'free_cooling_dt_stop_k';
+export const FREE_COOLING_START_MARGIN_SETTING = 'free_cooling_start_margin_k';
 export const MIN_FREE_COOLING_DT_K = 0;
 export const MAX_FREE_COOLING_DT_K = 10;
 const FREE_COOLING_DT_STEP_K = 0.5;
@@ -237,6 +238,7 @@ const BACNET_OBJECTS = {
   freeCoolingMinOnTime: { type: OBJECT_TYPE.POSITIVE_INTEGER_VALUE, instance: 296 },
   freeCoolingDtStart: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 1936 },
   freeCoolingDtStop: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 1937 },
+  freeCoolingStartMargin: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 1933 },
   deicingRotorActive: { type: OBJECT_TYPE.BINARY_VALUE, instance: 404 },
   deicingFanActive: { type: OBJECT_TYPE.BINARY_VALUE, instance: 405 },
   deicingEnabled: { type: OBJECT_TYPE.BINARY_VALUE, instance: 406 },
@@ -437,6 +439,16 @@ const FREE_COOLING_DT_POINTS: Record<'start' | 'stop', AnalogSettingPoint> = {
     writeGroup: FREE_COOLING_WRITE_GROUP,
   },
 };
+// AV 1933 "Free cooling, d B3-setpoint start": free cooling only starts once the extract air is
+// this much above the extract air setpoint. Flexit GO does not show it, so a setpoint of 23 with
+// the factory margin of 2 K in practice means 25.
+const FREE_COOLING_START_MARGIN_POINT: AnalogSettingPoint = {
+  objectId: BACNET_OBJECTS.freeCoolingStartMargin,
+  settingKey: FREE_COOLING_START_MARGIN_SETTING,
+  normalize: normalizeFreeCoolingDt,
+  label: 'free cooling start margin',
+  writeGroup: FREE_COOLING_WRITE_GROUP,
+};
 const DEICING_PERCENT_POINTS: Record<'rotorSpeed' | 'supplyFan' | 'exhaustFan', AnalogSettingPoint> = {
   rotorSpeed: {
     objectId: BACNET_OBJECTS.deicingRotorSpeed,
@@ -501,6 +513,7 @@ const READ_ONLY_LABEL_POINTS: ReadonlyArray<ReadOnlyLabelPoint> = [
 // Polled under their setting key, so the settings sync can read them straight from poll data.
 const POLLED_SETTING_POINTS = [
   ...Object.values(FREE_COOLING_DT_POINTS),
+  FREE_COOLING_START_MARGIN_POINT,
   ...Object.values(DEICING_PERCENT_POINTS),
   ...READ_ONLY_LABEL_POINTS,
 ];
@@ -2253,6 +2266,10 @@ export class UnitRegistry {
       await this.setAnalogSetting(unitId, FREE_COOLING_DT_POINTS.stop, value);
     }
 
+    async setFreeCoolingStartMargin(unitId: string, value: number) {
+      await this.setAnalogSetting(unitId, FREE_COOLING_START_MARGIN_POINT, value);
+    }
+
     async setDeicingEnabled(unitId: string, enabled: boolean) {
       const unit = this.units.get(unitId);
       if (!unit) throw new Error('Unit not found');
@@ -3573,6 +3590,7 @@ export class UnitRegistry {
           normalize: normalizeFreeCoolingMinOnTimeSeconds,
         },
         ...Object.values(FREE_COOLING_DT_POINTS),
+        FREE_COOLING_START_MARGIN_POINT,
       ], updates);
 
       if (Object.keys(updates).length === 0) return;

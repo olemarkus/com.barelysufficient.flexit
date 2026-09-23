@@ -54,6 +54,7 @@ describe('Nordic device', () => {
       setFreeCoolingMinOnTimeSeconds: sinon.stub().resolves(),
       setFreeCoolingDtStart: sinon.stub().resolves(),
       setFreeCoolingDtStop: sinon.stub().resolves(),
+      setFreeCoolingStartMargin: sinon.stub().resolves(),
       setDeicingEnabled: sinon.stub().resolves(),
       setDeicingRotorSpeedPercent: sinon.stub().resolves(),
       setDeicingSupplyFanPercent: sinon.stub().resolves(),
@@ -80,6 +81,7 @@ describe('Nordic device', () => {
       MAX_FREE_COOLING_MIN_ON_TIME_SECONDS: 18000,
       FREE_COOLING_DT_START_SETTING: 'free_cooling_dt_start_k',
       FREE_COOLING_DT_STOP_SETTING: 'free_cooling_dt_stop_k',
+      FREE_COOLING_START_MARGIN_SETTING: 'free_cooling_start_margin_k',
       MIN_FREE_COOLING_DT_K: 0,
       MAX_FREE_COOLING_DT_K: 10,
       DEICING_ENABLED_SETTING: 'deicing_enabled',
@@ -682,6 +684,29 @@ describe('Nordic device', () => {
     expect(thrownRuntime?.message).toContain('between 0 and 18000 seconds');
     expect(registryStub.setFreeCoolingTemperatureSetpoint.called).toBe(false);
     expect(registryStub.setFreeCoolingMinOnTimeSeconds.called).toBe(false);
+  });
+
+  it('writes the free cooling start margin and rejects one outside the unit range', async () => {
+    const device = new DeviceClass();
+    device.getSetting.withArgs('free_cooling_start_margin_k').returns(2);
+    await device.onInit();
+
+    await device.onSettings({
+      newSettings: { free_cooling_start_margin_k: 0.6 },
+      changedKeys: ['free_cooling_start_margin_k'],
+    });
+    expect(registryStub.setFreeCoolingStartMargin.calledOnceWithExactly('test_unit', 0.5)).toBe(true);
+
+    let thrown: Error | undefined;
+    try {
+      await device.onSettings({
+        newSettings: { free_cooling_start_margin_k: 12 },
+        changedKeys: ['free_cooling_start_margin_k'],
+      });
+    } catch (error) { thrown = error as Error; }
+
+    expect(thrown?.message).toContain('between 0 and 10 K');
+    expect(registryStub.setFreeCoolingStartMargin.calledOnce).toBe(true);
   });
 
   it('writes free cooling dT and de-icing settings through the shared settings handler', async () => {
