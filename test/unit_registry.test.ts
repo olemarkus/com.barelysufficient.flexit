@@ -798,20 +798,43 @@ describe('UnitRegistry', () => {
     expect(settingsUpdate).to.not.equal(undefined);
   });
 
-  it('rejects fan profile values outside mode-specific ranges', async () => {
+  it('rejects fan profile values outside the unit limits', async () => {
     const mockDevice = makeMockDevice();
     registry.register('test_unit', mockDevice);
 
     let thrown: Error | null = null;
     try {
-      await registry.setFanProfileMode('test_unit', 'high', 70, 90);
+      await registry.setFanProfileMode('test_unit', 'high', 25, 90);
     } catch (error) {
       thrown = error as Error;
     }
 
     expect(thrown).to.not.equal(null);
-    expect(thrown?.message).to.equal('high supply fan profile must be between 80 and 100 percent');
+    expect(thrown?.message).to.equal('high supply fan profile must be between 30 and 100 percent');
     expect(mockClient.writeProperty.called).to.equal(false);
+  });
+
+  it('mirrors a home fan profile below the old fixed minimum from the unit', async () => {
+    const mockDevice = makeMockDevice();
+    mockDevice.settings.fan_profile_home_supply = 60;
+    mockDevice.settings.fan_profile_home_exhaust = 55;
+    registry.register('test_unit', mockDevice);
+
+    const unit = { unitId: 'test_unit', devices: new Set([mockDevice]) };
+    (registry as any).syncFanProfileSettings(mockDevice, {
+      'fan_profile.home.supply': 50,
+      'fan_profile.home.exhaust': 45,
+      'fan_profile.away.supply': 40,
+      'fan_profile.away.exhaust': 35,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(unit.devices.size).to.equal(1);
+    const settingsUpdate = mockDevice.setSettings.getCalls().find((call: any) => (
+      call.args[0]?.fan_profile_home_supply === 50
+      && call.args[0]?.fan_profile_home_exhaust === 45
+    ));
+    expect(settingsUpdate).to.not.equal(undefined);
   });
 
   it('publishes current fan setpoint capabilities and triggers change callback', async () => {

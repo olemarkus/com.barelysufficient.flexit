@@ -72,19 +72,22 @@ const CURRENT_FAN_SETPOINT_CAPABILITIES: Record<FanProfileFan, string> = {
   supply: 'measure_fan_setpoint_percent',
   exhaust: 'measure_fan_setpoint_percent.extract',
 };
-// Observed Flexit GO range hints (AV 1835..1844 proprietary 5036/5037, also probed as LOW/HIGH_LIMIT).
+// Absolute limits the unit accepts (AV 1835..1844, proprietary properties 5036/5037). Away, home and
+// high are also chained on the unit: away <= home <= high per fan, and 5036/5037 move with the
+// neighbouring modes. The device settings handler checks that order. The fixed 56/55 home minimum
+// used before came from a unit whose away profile sat at 56/55, and rejected lower home values.
 export const FAN_PROFILE_PERCENT_RANGES: Record<FanProfileMode, Record<FanProfileFan, { min: number; max: number }>> = {
   high: {
-    supply: { min: 80, max: 100 },
-    exhaust: { min: 79, max: 100 },
+    supply: { min: 30, max: 100 },
+    exhaust: { min: 30, max: 100 },
   },
   home: {
-    supply: { min: 56, max: 100 },
-    exhaust: { min: 55, max: 99 },
+    supply: { min: 30, max: 100 },
+    exhaust: { min: 30, max: 100 },
   },
   away: {
-    supply: { min: 30, max: 80 },
-    exhaust: { min: 30, max: 79 },
+    supply: { min: 30, max: 100 },
+    exhaust: { min: 30, max: 100 },
   },
   fireplace: {
     supply: { min: 30, max: 100 },
