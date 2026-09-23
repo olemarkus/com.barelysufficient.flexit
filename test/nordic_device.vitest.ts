@@ -134,9 +134,9 @@ describe('Nordic device', () => {
       normalizeFanProfilePercent: (value: number, mode: string, fan: string) => {
         const rounded = Math.round(value);
         const ranges: Record<string, Record<string, { min: number; max: number }>> = {
-          high: { supply: { min: 80, max: 100 }, exhaust: { min: 79, max: 100 } },
-          home: { supply: { min: 56, max: 100 }, exhaust: { min: 55, max: 99 } },
-          away: { supply: { min: 30, max: 80 }, exhaust: { min: 30, max: 79 } },
+          high: { supply: { min: 30, max: 100 }, exhaust: { min: 30, max: 100 } },
+          home: { supply: { min: 30, max: 100 }, exhaust: { min: 30, max: 100 } },
+          away: { supply: { min: 30, max: 100 }, exhaust: { min: 30, max: 100 } },
           fireplace: { supply: { min: 30, max: 100 }, exhaust: { min: 30, max: 100 } },
           cooker: { supply: { min: 30, max: 100 }, exhaust: { min: 30, max: 100 } },
         };
@@ -858,7 +858,57 @@ describe('Nordic device', () => {
     }
 
     expect(thrown).not.toBe(null);
-    expect(thrown?.message).toContain('between 56 and 100');
+    expect(thrown?.message).toContain('between 30 and 100');
+    expect(registryStub.setFanProfileMode.called).toBe(false);
+  });
+
+  it('accepts a home fan profile down to the away profile', async () => {
+    const device = new DeviceClass();
+    device.hasCapability.withArgs(EXHAUST_TEMP_CAPABILITY).returns(true);
+    device.hasCapability.withArgs(RESET_FILTER_CAPABILITY).returns(true);
+    device.getSetting.withArgs('fan_profile_home_supply').returns(60);
+    device.getSetting.withArgs('fan_profile_home_exhaust').returns(55);
+    device.getSetting.withArgs('fan_profile_away_supply').returns(40);
+    device.getSetting.withArgs('fan_profile_away_exhaust').returns(35);
+    device.getSetting.withArgs('fan_profile_high_supply').returns(100);
+    device.getSetting.withArgs('fan_profile_high_exhaust').returns(95);
+    await device.onInit();
+
+    await device.onSettings({
+      newSettings: { fan_profile_home_supply: 50, fan_profile_home_exhaust: 45 },
+      changedKeys: ['fan_profile_home_supply', 'fan_profile_home_exhaust'],
+    });
+
+    expect(registryStub.setFanProfileMode.calledOnceWithExactly('test_unit', 'home', 50, 45)).toBe(true);
+  });
+
+  it('rejects fan profiles that break the away <= home <= high order', async () => {
+    const device = new DeviceClass();
+    device.hasCapability.withArgs(EXHAUST_TEMP_CAPABILITY).returns(true);
+    device.hasCapability.withArgs(RESET_FILTER_CAPABILITY).returns(true);
+    device.getSetting.withArgs('fan_profile_home_supply').returns(50);
+    device.getSetting.withArgs('fan_profile_home_exhaust').returns(45);
+    device.getSetting.withArgs('fan_profile_away_supply').returns(40);
+    device.getSetting.withArgs('fan_profile_away_exhaust').returns(35);
+    device.getSetting.withArgs('fan_profile_high_supply').returns(100);
+    device.getSetting.withArgs('fan_profile_high_exhaust').returns(95);
+    await device.onInit();
+
+    const settingsError = async (newSettings: Record<string, number>) => {
+      try {
+        await device.onSettings({ newSettings, changedKeys: Object.keys(newSettings) });
+      } catch (error) {
+        return error as Error;
+      }
+      return null;
+    };
+
+    expect((await settingsError({ fan_profile_home_supply: 35 }))?.message)
+      .toBe('Home supply fan (35 %) cannot be lower than away (40 %).');
+    expect((await settingsError({ fan_profile_away_exhaust: 50 }))?.message)
+      .toBe('Home exhaust fan (45 %) cannot be lower than away (50 %).');
+    expect((await settingsError({ fan_profile_high_supply: 45 }))?.message)
+      .toBe('High supply fan (45 %) cannot be lower than home (50 %).');
     expect(registryStub.setFanProfileMode.called).toBe(false);
   });
 });
