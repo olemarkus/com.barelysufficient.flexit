@@ -407,6 +407,7 @@ describe('Cloud transport – UnitRegistry integration', () => {
     // Check that capabilities were set
     expect(mock.device.setCapabilityValue.called).toBe(true);
     expect(mock.capabilityValues['measure_temperature']).toBe(21.5);
+    expect(mock.capabilityValues['measure_temperature.supply']).toBe(21.5);
     expect(mock.capabilityValues['measure_temperature.outdoor']).toBe(5.2);
     expect(mock.capabilityValues['measure_temperature.exhaust']).toBe(22.0);
     expect(mock.capabilityValues['measure_temperature.extract']).toBe(23.1);
@@ -955,6 +956,63 @@ describe('Cloud transport – UnitRegistry integration', () => {
     expect(settingsCalls.some((value: any) => value?.free_cooling_extract_temp_setpoint === 24.5)).toBe(true);
     expect(settingsCalls.some((value: any) => value?.free_cooling_outside_temp_limit === 16.5)).toBe(true);
     expect(settingsCalls.some((value: any) => value?.free_cooling_min_on_time_seconds === 1200)).toBe(true);
+  });
+
+  it('writes and verifies free cooling dT and de-icing settings via cloud', async () => {
+    registry.registerCloud(UNIT_ID, mock.device, {
+      plantId: PLANT_ID,
+      client: mockClient,
+    });
+    await sleep(50);
+
+    await registry.setFreeCoolingDtStart(UNIT_ID, 3);
+    await registry.setFreeCoolingDtStop(UNIT_ID, 1);
+    await registry.setDeicingEnabled(UNIT_ID, false);
+    await registry.setDeicingRotorSpeedPercent(UNIT_ID, 80);
+    await registry.setDeicingSupplyFanPercent(UNIT_ID, 20);
+    await registry.setDeicingExhaustFanPercent(UNIT_ID, 60);
+
+    const expectedWrites: Array<[number, number, number]> = [
+      [OBJ.ANALOG_VALUE, 1936, 3],
+      [OBJ.ANALOG_VALUE, 1937, 1],
+      [OBJ.BINARY_VALUE, 406, 0],
+      [OBJ.ANALOG_VALUE, 1852, 80],
+      [OBJ.ANALOG_VALUE, 1878, 20],
+      [OBJ.ANALOG_VALUE, 1958, 60],
+    ];
+    for (const [type, instance, value] of expectedWrites) {
+      expect(
+        mockClient.writeDatapoint.calledWith(PLANT_ID, bacnetObjectToCloudPath(type, instance), value),
+        `${type}:${instance} written as ${value}`,
+      ).toBe(true);
+    }
+
+    const settingsCalls = mock.setSettings.getCalls().map((call: any) => call.args[0]);
+    expect(settingsCalls.some((value: any) => value?.free_cooling_dt_start_k === 3)).toBe(true);
+    expect(settingsCalls.some((value: any) => value?.free_cooling_dt_stop_k === 1)).toBe(true);
+    expect(settingsCalls.some((value: any) => value?.deicing_enabled === false)).toBe(true);
+    expect(settingsCalls.some((value: any) => value?.deicing_rotor_speed_percent === 80)).toBe(true);
+    expect(settingsCalls.some((value: any) => value?.deicing_supply_fan_percent === 20)).toBe(true);
+    expect(settingsCalls.some((value: any) => value?.deicing_exhaust_fan_percent === 60)).toBe(true);
+  });
+
+  it('publishes de-icing state and read-only unit values from cloud data', async () => {
+    const client = makeMockCloudClient({
+      sensorValues: [
+        ...defaultSensorValues(),
+        { type: OBJ.BINARY_VALUE, instance: 404, value: 0 }, // de-icing rotor request
+        { type: OBJ.BINARY_VALUE, instance: 405, value: 1 }, // de-icing fan request
+        { type: OBJ.POSITIVE_INTEGER_VALUE, instance: 272, value: 420 }, // de-icing activation time
+        { type: OBJ.ANALOG_VALUE, instance: 1943, value: -9 }, // off-time ramp end
+      ],
+    });
+    registry.registerCloud(UNIT_ID, mock.device, { plantId: PLANT_ID, client });
+    await sleep(100);
+
+    expect(mock.capabilityValues['deicing_active']).toBe(true);
+    const settingsCalls = mock.setSettings.getCalls().map((call: any) => call.args[0]);
+    expect(settingsCalls.some((value: any) => value?.deicing_active_time === '420 s')).toBe(true);
+    expect(settingsCalls.some((value: any) => value?.deicing_off_time_ramp_end_temperature === '-9 °C')).toBe(true);
   });
 
   it('computes filter life correctly from cloud data', async () => {

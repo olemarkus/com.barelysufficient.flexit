@@ -62,6 +62,17 @@ export const MAX_FREE_COOLING_TEMPERATURE_C = 30;
 const FREE_COOLING_TEMPERATURE_STEP_C = 0.5;
 export const MIN_FREE_COOLING_MIN_ON_TIME_SECONDS = 0;
 export const MAX_FREE_COOLING_MIN_ON_TIME_SECONDS = 18_000;
+export const FREE_COOLING_DT_START_SETTING = 'free_cooling_dt_start_k';
+export const FREE_COOLING_DT_STOP_SETTING = 'free_cooling_dt_stop_k';
+export const MIN_FREE_COOLING_DT_K = 0;
+export const MAX_FREE_COOLING_DT_K = 10;
+const FREE_COOLING_DT_STEP_K = 0.5;
+export const DEICING_ENABLED_SETTING = 'deicing_enabled';
+export const DEICING_ROTOR_SPEED_SETTING = 'deicing_rotor_speed_percent';
+export const DEICING_SUPPLY_FAN_SETTING = 'deicing_supply_fan_percent';
+export const DEICING_EXHAUST_FAN_SETTING = 'deicing_exhaust_fan_percent';
+export const MIN_DEICING_PERCENT = 0;
+export const MAX_DEICING_PERCENT = 100;
 type TargetTemperatureMode = 'home' | 'away';
 export const FILTER_CHANGE_INTERVAL_MONTHS_SETTING = 'filter_change_interval_months';
 export const FILTER_CHANGE_INTERVAL_HOURS_LEGACY_SETTING = 'filter_change_interval_hours';
@@ -224,6 +235,21 @@ const BACNET_OBJECTS = {
   freeCoolingOutsideTemperatureLimit: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 1934 },
   freeCoolingTemperatureSetpoint: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 2071 },
   freeCoolingMinOnTime: { type: OBJECT_TYPE.POSITIVE_INTEGER_VALUE, instance: 296 },
+  freeCoolingDtStart: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 1936 },
+  freeCoolingDtStop: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 1937 },
+  deicingRotorActive: { type: OBJECT_TYPE.BINARY_VALUE, instance: 404 },
+  deicingFanActive: { type: OBJECT_TYPE.BINARY_VALUE, instance: 405 },
+  deicingEnabled: { type: OBJECT_TYPE.BINARY_VALUE, instance: 406 },
+  deicingRotorSpeed: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 1852 },
+  deicingSupplyFanSpeed: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 1878 },
+  deicingExhaustFanSpeed: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 1958 },
+  deicingRotorStartTemperature: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 1939 },
+  deicingFanStartTemperature: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 1938 },
+  deicingActivationTime: { type: OBJECT_TYPE.POSITIVE_INTEGER_VALUE, instance: 272 },
+  deicingMaxOffTime: { type: OBJECT_TYPE.POSITIVE_INTEGER_VALUE, instance: 298 },
+  deicingMinOffTime: { type: OBJECT_TYPE.POSITIVE_INTEGER_VALUE, instance: 299 },
+  deicingOffTimeRampStartTemperature: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 1942 },
+  deicingOffTimeRampEndTemperature: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 1943 },
   rapidVentilationTrigger: { type: OBJECT_TYPE.MULTI_STATE_VALUE, instance: 357 },
   rapidVentilationRuntime: { type: OBJECT_TYPE.POSITIVE_INTEGER_VALUE, instance: 293 },
   rapidVentilationRemaining: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 2031 },
@@ -254,6 +280,7 @@ const FIREPLACE_DURATION_DATA_KEY = 'fireplace_duration_minutes';
 const HIGH_DURATION_DATA_KEY = 'high_duration_minutes';
 
 const objectKey = (type: number, instance: number) => `${type}:${instance}`;
+const objectIdKey = (objectId: { type: number; instance: number }) => objectKey(objectId.type, objectId.instance);
 const FIREPLACE_RUNTIME_KEY = objectKey(
   BACNET_OBJECTS.fireplaceVentilationRuntime.type,
   BACNET_OBJECTS.fireplaceVentilationRuntime.instance,
@@ -326,6 +353,9 @@ const FREE_COOLING_MIN_ON_TIME_KEY = objectKey(
   BACNET_OBJECTS.freeCoolingMinOnTime.type,
   BACNET_OBJECTS.freeCoolingMinOnTime.instance,
 );
+const DEICING_ENABLED_KEY = objectIdKey(BACNET_OBJECTS.deicingEnabled);
+const DEICING_ROTOR_ACTIVE_KEY = objectIdKey(BACNET_OBJECTS.deicingRotorActive);
+const DEICING_FAN_ACTIVE_KEY = objectIdKey(BACNET_OBJECTS.deicingFanActive);
 const ACTUAL_VENTILATION_MODE_KEY = objectKey(
   BACNET_OBJECTS.actualVentilationMode.type,
   BACNET_OBJECTS.actualVentilationMode.instance,
@@ -357,6 +387,8 @@ const MODE_SIGNAL_KEYS = [
 const CAPABILITY_MAPPINGS = [
   { dataKey: 'measure_temperature', capability: 'measure_temperature' },
   { dataKey: 'measure_temperature.outdoor', capability: 'measure_temperature.outdoor' },
+  // Supply air again as its own sensor tile; the thermostat view alone shows measure_temperature.
+  { dataKey: 'measure_temperature', capability: 'measure_temperature.supply' },
   { dataKey: 'measure_temperature.exhaust', capability: 'measure_temperature.exhaust' },
   { dataKey: 'measure_temperature.extract', capability: 'measure_temperature.extract' },
   { dataKey: 'measure_power', capability: 'measure_power' },
@@ -369,6 +401,109 @@ const CAPABILITY_MAPPINGS = [
 const DEHUMIDIFICATION_ACTIVE_CAPABILITY = 'dehumidification_active';
 const FREE_COOLING_ACTIVE_CAPABILITY = 'free_cooling_active';
 const VENTILATION_STOPPED_CAPABILITY = 'ventilation_stopped';
+const DEICING_ACTIVE_CAPABILITY = 'deicing_active';
+const FREE_COOLING_WRITE_GROUP = 'free_cooling';
+const DEICING_WRITE_GROUP = 'deicing';
+
+/** A writable analog value that is mirrored by a device setting of the same key. */
+interface AnalogSettingPoint {
+  objectId: { type: number; instance: number };
+  settingKey: string;
+  normalize: (value: unknown) => number;
+  label: string;
+  writeGroup: string;
+}
+
+/** A value only the unit can change, shown as a formatted read-only label setting. */
+interface ReadOnlyLabelPoint {
+  objectId: { type: number; instance: number };
+  settingKey: string;
+  format: (value: number) => string | undefined;
+}
+
+const FREE_COOLING_DT_POINTS: Record<'start' | 'stop', AnalogSettingPoint> = {
+  start: {
+    objectId: BACNET_OBJECTS.freeCoolingDtStart,
+    settingKey: FREE_COOLING_DT_START_SETTING,
+    normalize: normalizeFreeCoolingDt,
+    label: 'free cooling dT start',
+    writeGroup: FREE_COOLING_WRITE_GROUP,
+  },
+  stop: {
+    objectId: BACNET_OBJECTS.freeCoolingDtStop,
+    settingKey: FREE_COOLING_DT_STOP_SETTING,
+    normalize: normalizeFreeCoolingDt,
+    label: 'free cooling dT stop',
+    writeGroup: FREE_COOLING_WRITE_GROUP,
+  },
+};
+const DEICING_PERCENT_POINTS: Record<'rotorSpeed' | 'supplyFan' | 'exhaustFan', AnalogSettingPoint> = {
+  rotorSpeed: {
+    objectId: BACNET_OBJECTS.deicingRotorSpeed,
+    settingKey: DEICING_ROTOR_SPEED_SETTING,
+    normalize: normalizeDeicingPercent,
+    label: 'de-icing rotor speed',
+    writeGroup: DEICING_WRITE_GROUP,
+  },
+  supplyFan: {
+    objectId: BACNET_OBJECTS.deicingSupplyFanSpeed,
+    settingKey: DEICING_SUPPLY_FAN_SETTING,
+    normalize: normalizeDeicingPercent,
+    label: 'de-icing supply fan speed',
+    writeGroup: DEICING_WRITE_GROUP,
+  },
+  exhaustFan: {
+    objectId: BACNET_OBJECTS.deicingExhaustFanSpeed,
+    settingKey: DEICING_EXHAUST_FAN_SETTING,
+    normalize: normalizeDeicingPercent,
+    label: 'de-icing exhaust fan speed',
+    writeGroup: DEICING_WRITE_GROUP,
+  },
+};
+// Matches what Flexit GO exposes: these are configured on the unit and only displayed here.
+const READ_ONLY_LABEL_POINTS: ReadonlyArray<ReadOnlyLabelPoint> = [
+  {
+    objectId: BACNET_OBJECTS.deicingRotorStartTemperature,
+    settingKey: 'deicing_rotor_start_temperature',
+    format: formatTemperatureLabel,
+  },
+  {
+    objectId: BACNET_OBJECTS.deicingFanStartTemperature,
+    settingKey: 'deicing_fan_start_temperature',
+    format: formatTemperatureLabel,
+  },
+  {
+    objectId: BACNET_OBJECTS.deicingActivationTime,
+    settingKey: 'deicing_active_time',
+    format: formatSecondsLabel,
+  },
+  {
+    objectId: BACNET_OBJECTS.deicingMaxOffTime,
+    settingKey: 'deicing_max_off_time',
+    format: formatSecondsLabel,
+  },
+  {
+    objectId: BACNET_OBJECTS.deicingOffTimeRampStartTemperature,
+    settingKey: 'deicing_off_time_ramp_start_temperature',
+    format: formatTemperatureLabel,
+  },
+  {
+    objectId: BACNET_OBJECTS.deicingMinOffTime,
+    settingKey: 'deicing_min_off_time',
+    format: formatSecondsLabel,
+  },
+  {
+    objectId: BACNET_OBJECTS.deicingOffTimeRampEndTemperature,
+    settingKey: 'deicing_off_time_ramp_end_temperature',
+    format: formatTemperatureLabel,
+  },
+];
+// Polled under their setting key, so the settings sync can read them straight from poll data.
+const POLLED_SETTING_POINTS = [
+  ...Object.values(FREE_COOLING_DT_POINTS),
+  ...Object.values(DEICING_PERCENT_POINTS),
+  ...READ_ONLY_LABEL_POINTS,
+];
 
 const MODE_RF_INPUT_MAP: Record<number, 'home' | 'away' | 'high' | 'fireplace'> = {
   3: 'high',
@@ -454,9 +589,27 @@ function resolveDehumidificationActive(data: Record<string, number>): boolean | 
   );
 }
 
-function resolveFreeCoolingEnabled(value: number | undefined): boolean | undefined {
+function resolveBinaryFlag(value: number | undefined): boolean | undefined {
   if (value === undefined || !Number.isFinite(value)) return undefined;
   return Math.round(value) !== 0;
+}
+
+// The unit de-ices through two separate requests: one slows the heat exchanger rotor and one
+// adjusts the fans. Either request means de-icing is running.
+function resolveDeicingActive(data: Record<string, number>): boolean | undefined {
+  const rotorActive = resolveBinaryFlag(data.deicing_rotor_active);
+  const fanActive = resolveBinaryFlag(data.deicing_fan_active);
+  if (rotorActive === undefined && fanActive === undefined) return undefined;
+  return rotorActive === true || fanActive === true;
+}
+
+function formatTemperatureLabel(value: number): string {
+  // Number() drops trailing zeros and turns -0 into 0.
+  return `${Number(value.toFixed(1))} °C`;
+}
+
+function formatSecondsLabel(value: number): string {
+  return `${Math.round(value)} s`;
 }
 
 function resolveFreeCoolingActive(data: Record<string, number>): boolean | undefined {
@@ -531,6 +684,37 @@ export function normalizeFreeCoolingMinOnTimeSeconds(value: unknown): number {
     throw new Error(
       `Free cooling minimum on-time must be between ${MIN_FREE_COOLING_MIN_ON_TIME_SECONDS}`
       + ` and ${MAX_FREE_COOLING_MIN_ON_TIME_SECONDS} seconds`,
+    );
+  }
+  return rounded;
+}
+
+export function normalizeFreeCoolingDt(value: unknown): number {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    throw new Error('Free cooling temperature difference must be numeric');
+  }
+  if (numeric < MIN_FREE_COOLING_DT_K || numeric > MAX_FREE_COOLING_DT_K) {
+    throw new Error(
+      `Free cooling temperature difference must be between ${MIN_FREE_COOLING_DT_K}`
+      + ` and ${MAX_FREE_COOLING_DT_K} K`,
+    );
+  }
+
+  const stepped = Math.round(numeric / FREE_COOLING_DT_STEP_K) * FREE_COOLING_DT_STEP_K;
+  return Number(stepped.toFixed(1));
+}
+
+export function normalizeDeicingPercent(value: unknown): number {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    throw new Error('De-icing speed must be numeric');
+  }
+
+  const rounded = Math.round(numeric);
+  if (rounded < MIN_DEICING_PERCENT || rounded > MAX_DEICING_PERCENT) {
+    throw new Error(
+      `De-icing speed must be between ${MIN_DEICING_PERCENT} and ${MAX_DEICING_PERCENT} percent`,
     );
   }
   return rounded;
@@ -877,6 +1061,11 @@ function buildPollRequest() {
     presentValueRequest(BACNET_OBJECTS.freeCoolingTemperatureSetpoint),
     presentValueRequest(BACNET_OBJECTS.freeCoolingOutsideTemperatureLimit),
     presentValueRequest(BACNET_OBJECTS.freeCoolingMinOnTime),
+    presentValueRequest(BACNET_OBJECTS.deicingEnabled),
+    presentValueRequest(BACNET_OBJECTS.deicingRotorActive),
+    presentValueRequest(BACNET_OBJECTS.deicingFanActive),
+    // Free cooling dT, de-icing speeds, and the read-only de-icing and temperature control values
+    ...POLLED_SETTING_POINTS.map((point) => presentValueRequest(point.objectId)),
     presentValueRequest(FAN_PROFILE_OBJECTS.home.supply), // Setpoint supply HOME
     presentValueRequest(FAN_PROFILE_OBJECTS.home.exhaust), // Setpoint exhaust HOME
     presentValueRequest(FAN_PROFILE_OBJECTS.away.supply), // Setpoint supply AWAY
@@ -950,6 +1139,13 @@ const POLL_VALUE_MAPPINGS: Record<string, (value: number, target: PollParseTarge
   [FREE_COOLING_TEMPERATURE_SETPOINT_KEY]: mapPollValue('free_cooling_temperature_setpoint'),
   [FREE_COOLING_OUTSIDE_TEMPERATURE_LIMIT_KEY]: mapPollValue('free_cooling_outside_temperature_limit'),
   [FREE_COOLING_MIN_ON_TIME_KEY]: mapPollValue('free_cooling_min_on_time_seconds'),
+  [DEICING_ENABLED_KEY]: mapPollValue(DEICING_ENABLED_SETTING),
+  [DEICING_ROTOR_ACTIVE_KEY]: mapPollValue('deicing_rotor_active'),
+  [DEICING_FAN_ACTIVE_KEY]: mapPollValue('deicing_fan_active'),
+  ...Object.fromEntries(POLLED_SETTING_POINTS.map((point) => [
+    objectIdKey(point.objectId),
+    mapPollValue(point.settingKey),
+  ])),
   [objectKey(
     FAN_PROFILE_OBJECTS.home.supply.type,
     FAN_PROFILE_OBJECTS.home.supply.instance,
@@ -1652,7 +1848,7 @@ export class UnitRegistry {
       data: Record<string, number>,
       active: boolean | undefined,
     ): ModeWidgetModeStatus {
-      const enabled = resolveFreeCoolingEnabled(data.free_cooling_enabled);
+      const enabled = resolveBinaryFlag(data.free_cooling_enabled);
       if (enabled === false) {
         return {
           id: 'free_cooling',
@@ -1939,7 +2135,7 @@ export class UnitRegistry {
       if (!unit) throw new Error('Unit not found');
 
       const expectedEnabled = Boolean(enabled);
-      const currentEnabled = resolveFreeCoolingEnabled(unit.probeValues.get(FREE_COOLING_ENABLED_KEY));
+      const currentEnabled = resolveBinaryFlag(unit.probeValues.get(FREE_COOLING_ENABLED_KEY));
       if (currentEnabled === expectedEnabled) {
         this.log(
           `[UnitRegistry] Skipping free cooling enabled write — already ${expectedEnabled}`
@@ -1948,7 +2144,7 @@ export class UnitRegistry {
         return;
       }
 
-      await this.writeFreeCoolingBooleanSetting(unit, {
+      await this.writeVerifiedBooleanSetting(unit, {
         objectId: BACNET_OBJECTS.freeCoolingEnabled,
         settingKey: FREE_COOLING_ENABLED_SETTING,
         expectedEnabled,
@@ -1976,7 +2172,7 @@ export class UnitRegistry {
         return;
       }
 
-      await this.writeFreeCoolingNumericSetting(unit, {
+      await this.writeVerifiedNumericSetting(unit, {
         objectId: BACNET_OBJECTS.freeCoolingTemperatureSetpoint,
         settingKey: FREE_COOLING_TEMPERATURE_SETPOINT_SETTING,
         expectedValue: normalizedValue,
@@ -2006,7 +2202,7 @@ export class UnitRegistry {
         return;
       }
 
-      await this.writeFreeCoolingNumericSetting(unit, {
+      await this.writeVerifiedNumericSetting(unit, {
         objectId: BACNET_OBJECTS.freeCoolingOutsideTemperatureLimit,
         settingKey: FREE_COOLING_OUTSIDE_TEMPERATURE_LIMIT_SETTING,
         expectedValue: normalizedValue,
@@ -2036,7 +2232,7 @@ export class UnitRegistry {
         return;
       }
 
-      await this.writeFreeCoolingNumericSetting(
+      await this.writeVerifiedNumericSetting(
         unit,
         {
           objectId: BACNET_OBJECTS.freeCoolingMinOnTime,
@@ -2049,17 +2245,93 @@ export class UnitRegistry {
       );
     }
 
-    private async writeFreeCoolingBooleanSetting(
+    async setFreeCoolingDtStart(unitId: string, value: number) {
+      await this.setAnalogSetting(unitId, FREE_COOLING_DT_POINTS.start, value);
+    }
+
+    async setFreeCoolingDtStop(unitId: string, value: number) {
+      await this.setAnalogSetting(unitId, FREE_COOLING_DT_POINTS.stop, value);
+    }
+
+    async setDeicingEnabled(unitId: string, enabled: boolean) {
+      const unit = this.units.get(unitId);
+      if (!unit) throw new Error('Unit not found');
+
+      const expectedEnabled = Boolean(enabled);
+      const currentEnabled = resolveBinaryFlag(unit.probeValues.get(DEICING_ENABLED_KEY));
+      if (currentEnabled === expectedEnabled) {
+        this.log(
+          `[UnitRegistry] Skipping de-icing enabled write — already ${expectedEnabled}`
+          + ` on ${unit.unitId}`,
+        );
+        return;
+      }
+
+      await this.writeVerifiedBooleanSetting(unit, {
+        objectId: BACNET_OBJECTS.deicingEnabled,
+        settingKey: DEICING_ENABLED_SETTING,
+        expectedEnabled,
+        label: 'de-icing enabled',
+        writeGroup: DEICING_WRITE_GROUP,
+      });
+    }
+
+    async setDeicingRotorSpeedPercent(unitId: string, value: number) {
+      await this.setAnalogSetting(unitId, DEICING_PERCENT_POINTS.rotorSpeed, value);
+    }
+
+    async setDeicingSupplyFanPercent(unitId: string, value: number) {
+      await this.setAnalogSetting(unitId, DEICING_PERCENT_POINTS.supplyFan, value);
+    }
+
+    async setDeicingExhaustFanPercent(unitId: string, value: number) {
+      await this.setAnalogSetting(unitId, DEICING_PERCENT_POINTS.exhaustFan, value);
+    }
+
+    private async setAnalogSetting(unitId: string, point: AnalogSettingPoint, value: number) {
+      const unit = this.units.get(unitId);
+      if (!unit) throw new Error('Unit not found');
+
+      const normalizedValue = point.normalize(value);
+      const currentValue = unit.probeValues.get(objectIdKey(point.objectId));
+      const normalizedCurrentValue = currentValue !== undefined
+        ? tryNormalizeValue(currentValue, point.normalize)
+        : undefined;
+      if (
+        normalizedCurrentValue !== undefined
+        && valuesMatch(normalizedCurrentValue, normalizedValue)
+      ) {
+        this.log(
+          `[UnitRegistry] Skipping ${point.label} write — already ${normalizedValue}`
+          + ` on ${unit.unitId}`,
+        );
+        return;
+      }
+
+      await this.writeVerifiedNumericSetting(unit, {
+        objectId: point.objectId,
+        settingKey: point.settingKey,
+        expectedValue: normalizedValue,
+        normalize: point.normalize,
+        // Every AnalogSettingPoint is an ANALOG_VALUE object.
+        tag: BacnetEnums.ApplicationTags.REAL,
+        label: point.label,
+        writeGroup: point.writeGroup,
+      });
+    }
+
+    private async writeVerifiedBooleanSetting(
       unit: UnitState,
       config: {
         objectId: { type: number; instance: number };
         settingKey: string;
         expectedEnabled: boolean;
         label: string;
+        writeGroup?: string;
       },
     ) {
       const {
-        objectId, settingKey, expectedEnabled, label,
+        objectId, settingKey, expectedEnabled, label, writeGroup = FREE_COOLING_WRITE_GROUP,
       } = config;
       if (unit.transport === 'cloud') {
         await this.cloudWriteAndVerifyBooleanSetting(unit, config);
@@ -2075,7 +2347,7 @@ export class UnitRegistry {
       await this.enqueueWrite(unit, async () => {
         const context: FanModeWriteContext = {
           unit,
-          mode: `free_cooling:${settingKey}`,
+          mode: `${writeGroup}:${settingKey}`,
           writeOptions,
           client: this.dependencies.getBacnetClient(unit.bacnetPort),
           ventilationModeKey: VENTILATION_MODE_KEY,
@@ -2092,7 +2364,7 @@ export class UnitRegistry {
 
         const verifiedValue = await this.readPresentValue(context.client, unit, objectId);
         unit.probeValues.set(objectKey(objectId.type, objectId.instance), verifiedValue);
-        const verifiedEnabled = resolveFreeCoolingEnabled(verifiedValue);
+        const verifiedEnabled = resolveBinaryFlag(verifiedValue);
         if (verifiedEnabled !== expectedEnabled) {
           throw new Error(
             `Failed to verify ${label}: expected ${expectedEnabled}, got ${String(verifiedEnabled)}`,
@@ -2103,7 +2375,7 @@ export class UnitRegistry {
       });
     }
 
-    private async writeFreeCoolingNumericSetting(
+    private async writeVerifiedNumericSetting(
       unit: UnitState,
       config: {
         objectId: { type: number; instance: number };
@@ -2112,10 +2384,11 @@ export class UnitRegistry {
         normalize: (value: unknown) => number;
         tag: number;
         label: string;
+        writeGroup?: string;
       },
     ) {
       const {
-        objectId, settingKey, expectedValue, normalize, tag, label,
+        objectId, settingKey, expectedValue, normalize, tag, label, writeGroup = FREE_COOLING_WRITE_GROUP,
       } = config;
       if (unit.transport === 'cloud') {
         await this.cloudWriteAndVerifyNumericSetting(unit, config);
@@ -2131,7 +2404,7 @@ export class UnitRegistry {
       await this.enqueueWrite(unit, async () => {
         const context: FanModeWriteContext = {
           unit,
-          mode: `free_cooling:${settingKey}`,
+          mode: `${writeGroup}:${settingKey}`,
           writeOptions,
           client: this.dependencies.getBacnetClient(unit.bacnetPort),
           ventilationModeKey: VENTILATION_MODE_KEY,
@@ -2180,7 +2453,7 @@ export class UnitRegistry {
         unit,
         {
           objectId,
-          resolve: resolveFreeCoolingEnabled,
+          resolve: resolveBinaryFlag,
           expectedValue: expectedEnabled,
           label,
         },
@@ -2895,6 +3168,7 @@ export class UnitRegistry {
       const dehumidificationActive = resolveDehumidificationActive(data);
       const freeCoolingActive = resolveFreeCoolingActive(data);
       const ventilationStopped = resolveVentilationStopped(data);
+      const deicingActive = resolveDeicingActive(data);
       this.observeDehumidificationState(unit, dehumidificationActive);
       this.observeFreeCoolingState(unit, freeCoolingActive);
       this.observeVentilationStoppedState(unit, ventilationStopped);
@@ -2910,6 +3184,8 @@ export class UnitRegistry {
         this.applyCurrentFanSetpointCapabilities(unit, device, data, setpointMode);
         this.syncTargetTemperatureSettings(device, data);
         this.syncFreeCoolingSettings(device, data);
+        this.syncDeicingSettings(device, data);
+        this.syncReadOnlyLabelSettings(device, data);
         this.syncFanProfileSettings(device, data);
         this.syncFireplaceDurationSetting(device, data[FIREPLACE_DURATION_DATA_KEY]);
         this.syncHighDurationSetting(device, data[HIGH_DURATION_DATA_KEY]);
@@ -2924,6 +3200,9 @@ export class UnitRegistry {
         }
         if (ventilationStopped !== undefined) {
           this.setCapability(device, VENTILATION_STOPPED_CAPABILITY, ventilationStopped);
+        }
+        if (deicingActive !== undefined) {
+          this.setCapability(device, DEICING_ACTIVE_CAPABILITY, deicingActive);
         }
         if (mode !== undefined) this.setCapability(device, 'fan_mode', mode);
       }
@@ -3271,17 +3550,13 @@ export class UnitRegistry {
     private syncFreeCoolingSettings(device: FlexitDevice, data: Record<string, number>) {
       const updates: Record<string, boolean | number> = {};
 
-      const enabled = resolveFreeCoolingEnabled(data.free_cooling_enabled);
+      const enabled = resolveBinaryFlag(data.free_cooling_enabled);
       const currentEnabled = device.getSetting(FREE_COOLING_ENABLED_SETTING);
       if (enabled !== undefined && currentEnabled !== enabled) {
         updates[FREE_COOLING_ENABLED_SETTING] = enabled;
       }
 
-      const numericSettings: Array<{
-        dataKey: string;
-        settingKey: string;
-        normalize: (value: unknown) => number;
-      }> = [
+      this.collectNumericSettingUpdates(device, data, [
         {
           dataKey: 'free_cooling_temperature_setpoint',
           settingKey: FREE_COOLING_TEMPERATURE_SETPOINT_SETTING,
@@ -3297,10 +3572,55 @@ export class UnitRegistry {
           settingKey: FREE_COOLING_MIN_ON_TIME_SECONDS_SETTING,
           normalize: normalizeFreeCoolingMinOnTimeSeconds,
         },
-      ];
+        ...Object.values(FREE_COOLING_DT_POINTS),
+      ], updates);
 
-      for (const { dataKey, settingKey, normalize } of numericSettings) {
-        const rawValue = data[dataKey];
+      if (Object.keys(updates).length === 0) return;
+
+      this.updateDeviceSettings(device, updates).catch((err) => {
+        this.log(
+          `[UnitRegistry] Failed to sync free cooling settings for ${device.getData().unitId}:`,
+          err,
+        );
+      });
+    }
+
+    private syncDeicingSettings(device: FlexitDevice, data: Record<string, number>) {
+      const updates: Record<string, boolean | number> = {};
+
+      const enabled = resolveBinaryFlag(data[DEICING_ENABLED_SETTING]);
+      if (enabled !== undefined && device.getSetting(DEICING_ENABLED_SETTING) !== enabled) {
+        updates[DEICING_ENABLED_SETTING] = enabled;
+      }
+      this.collectNumericSettingUpdates(device, data, Object.values(DEICING_PERCENT_POINTS), updates);
+
+      if (Object.keys(updates).length === 0) return;
+
+      this.updateDeviceSettings(device, updates).catch((err) => {
+        this.log(
+          `[UnitRegistry] Failed to sync de-icing settings for ${device.getData().unitId}:`,
+          err,
+        );
+      });
+    }
+
+    /**
+     * Adds a setting update for every polled value that normalizes cleanly and differs from
+     * the device setting. Values the normalizer rejects (out of range) are ignored. The poll
+     * data key defaults to the setting key.
+     */
+    private collectNumericSettingUpdates(
+      device: FlexitDevice,
+      data: Record<string, number>,
+      settings: ReadonlyArray<{
+        dataKey?: string;
+        settingKey: string;
+        normalize: (value: unknown) => number;
+      }>,
+      updates: Record<string, boolean | number>,
+    ) {
+      for (const { dataKey, settingKey, normalize } of settings) {
+        const rawValue = data[dataKey ?? settingKey];
         if (rawValue === undefined || !Number.isFinite(rawValue)) continue;
 
         const normalized = tryNormalizeValue(rawValue, normalize);
@@ -3310,12 +3630,25 @@ export class UnitRegistry {
           updates[settingKey] = normalized;
         }
       }
+    }
+
+    private syncReadOnlyLabelSettings(device: FlexitDevice, data: Record<string, number>) {
+      const updates: Record<string, string> = {};
+
+      for (const { settingKey, format } of READ_ONLY_LABEL_POINTS) {
+        const rawValue = data[settingKey];
+        if (rawValue === undefined || !Number.isFinite(rawValue)) continue;
+
+        const label = format(rawValue);
+        if (label === undefined || device.getSetting(settingKey) === label) continue;
+        updates[settingKey] = label;
+      }
 
       if (Object.keys(updates).length === 0) return;
 
       this.updateDeviceSettings(device, updates).catch((err) => {
         this.log(
-          `[UnitRegistry] Failed to sync free cooling settings for ${device.getData().unitId}:`,
+          `[UnitRegistry] Failed to sync read-only unit settings for ${device.getData().unitId}:`,
           err,
         );
       });

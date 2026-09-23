@@ -9,3 +9,5 @@ Both drivers provide the same capabilities: set supply air target temperature, c
 Flows can also stop the unit entirely with the "Stop ventilation" action, and react to the unit being stopped. Stopping is not a fire safety function: to shut ventilation down on a smoke alarm, connect the alarm to the unit's own smoke detector input instead.
 
 Free cooling can be turned on or off from flows with the "Turn free cooling on" and "Turn free cooling off" actions, for example to allow it in summer only. The unit still decides when free cooling actually runs, based on its extract temperature setpoint and outdoor temperature limit in the device settings.
+
+The device settings also let you adjust the temperature differences that start and stop free cooling and the unit's de-icing settings, and the "De-icing active" indicator shows in Insights when the heat exchanger is being de-iced.

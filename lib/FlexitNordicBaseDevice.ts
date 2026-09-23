@@ -34,20 +34,66 @@ import {
   normalizeTargetTemperature,
   normalizeFreeCoolingTemperature,
   normalizeFreeCoolingMinOnTimeSeconds,
+  FREE_COOLING_DT_START_SETTING,
+  FREE_COOLING_DT_STOP_SETTING,
+  MIN_FREE_COOLING_DT_K,
+  MAX_FREE_COOLING_DT_K,
+  normalizeFreeCoolingDt,
+  DEICING_ENABLED_SETTING,
+  DEICING_ROTOR_SPEED_SETTING,
+  DEICING_SUPPLY_FAN_SETTING,
+  DEICING_EXHAUST_FAN_SETTING,
+  MIN_DEICING_PERCENT,
+  MAX_DEICING_PERCENT,
+  normalizeDeicingPercent,
 } from './UnitRegistry';
 
 const RESET_FILTER_CAPABILITY = 'button.reset_filter';
 const REGISTRY_SETTING_SUPPRESSION_WINDOW_MS = 30_000;
 const SETTING_SYNC_TOLERANCE = 0.1;
 const REQUIRED_CAPABILITIES = [
+  'measure_temperature.supply',
   'measure_temperature.exhaust',
   'dehumidification_active',
   'free_cooling_active',
+  'deicing_active',
   'ventilation_stopped',
   RESET_FILTER_CAPABILITY,
   'measure_fan_setpoint_percent',
   'measure_fan_setpoint_percent.extract',
 ] as const;
+const FREE_COOLING_SETTING_KEYS = [
+  FREE_COOLING_ENABLED_SETTING,
+  FREE_COOLING_TEMPERATURE_SETPOINT_SETTING,
+  FREE_COOLING_OUTSIDE_TEMPERATURE_LIMIT_SETTING,
+  FREE_COOLING_MIN_ON_TIME_SECONDS_SETTING,
+  FREE_COOLING_DT_START_SETTING,
+  FREE_COOLING_DT_STOP_SETTING,
+];
+const DEICING_SETTING_KEYS = [
+  DEICING_ENABLED_SETTING,
+  DEICING_ROTOR_SPEED_SETTING,
+  DEICING_SUPPLY_FAN_SETTING,
+  DEICING_EXHAUST_FAN_SETTING,
+];
+const FREE_COOLING_DT_START_LABEL = 'free cooling start temperature difference';
+const FREE_COOLING_DT_STOP_LABEL = 'free cooling stop temperature difference';
+
+function validateFreeCoolingDt(requestedValue: number, label: string) {
+  if (requestedValue < MIN_FREE_COOLING_DT_K || requestedValue > MAX_FREE_COOLING_DT_K) {
+    throw new Error(
+      `${label} must be between ${MIN_FREE_COOLING_DT_K} and ${MAX_FREE_COOLING_DT_K} K.`,
+    );
+  }
+}
+
+function validateDeicingPercent(requestedValue: number, label: string) {
+  if (requestedValue < MIN_DEICING_PERCENT || requestedValue > MAX_DEICING_PERCENT) {
+    throw new Error(
+      `${label} must be between ${MIN_DEICING_PERCENT} and ${MAX_DEICING_PERCENT} percent.`,
+    );
+  }
+}
 
 interface SuppressedSetting {
   value: unknown;
@@ -186,16 +232,8 @@ export abstract class FlexitNordicBaseDevice extends Homey.Device {
       const awayTargetTemperatureChanged = effectiveChangedKeys.includes(
         TARGET_TEMPERATURE_AWAY_SETTING,
       );
-      const freeCoolingEnabledChanged = effectiveChangedKeys.includes(FREE_COOLING_ENABLED_SETTING);
-      const freeCoolingTemperatureSetpointChanged = effectiveChangedKeys.includes(
-        FREE_COOLING_TEMPERATURE_SETPOINT_SETTING,
-      );
-      const freeCoolingOutsideTemperatureLimitChanged = effectiveChangedKeys.includes(
-        FREE_COOLING_OUTSIDE_TEMPERATURE_LIMIT_SETTING,
-      );
-      const freeCoolingMinOnTimeSecondsChanged = effectiveChangedKeys.includes(
-        FREE_COOLING_MIN_ON_TIME_SECONDS_SETTING,
-      );
+      const freeCoolingChanged = FREE_COOLING_SETTING_KEYS.some((key) => effectiveChangedKeys.includes(key));
+      const deicingChanged = DEICING_SETTING_KEYS.some((key) => effectiveChangedKeys.includes(key));
       const fireplaceDurationChanged = effectiveChangedKeys.includes(FIREPLACE_DURATION_SETTING);
       const highDurationChanged = effectiveChangedKeys.includes(HIGH_DURATION_SETTING);
       const changedFanModes = this.getChangedFanModes(effectiveChangedKeys);
@@ -204,14 +242,15 @@ export abstract class FlexitNordicBaseDevice extends Homey.Device {
         && !legacyHoursChanged
         && !homeTargetTemperatureChanged
         && !awayTargetTemperatureChanged
-        && !freeCoolingEnabledChanged
-        && !freeCoolingTemperatureSetpointChanged
-        && !freeCoolingOutsideTemperatureLimitChanged
-        && !freeCoolingMinOnTimeSecondsChanged
+        && !freeCoolingChanged
+        && !deicingChanged
         && !fireplaceDurationChanged
         && !highDurationChanged
         && changedFanModes.length === 0
       ) return;
+
+      // Reject an invalid dT start/stop pair before anything is written to the unit.
+      this.validateFreeCoolingDtSettings(newSettings, effectiveChangedKeys);
 
       const { unitId } = this.getData();
       await this.maybeHandleFilterIntervalSetting(
@@ -223,32 +262,8 @@ export abstract class FlexitNordicBaseDevice extends Homey.Device {
       await this.maybeHandleTargetTemperatureSetting(
         unitId, 'away', newSettings, awayTargetTemperatureChanged,
       );
-      await this.maybeHandleFreeCoolingEnabledSetting(
-        unitId, newSettings, freeCoolingEnabledChanged,
-      );
-      await this.maybeHandleFreeCoolingTemperatureSetting(
-        unitId,
-        newSettings,
-        freeCoolingTemperatureSetpointChanged,
-        {
-          settingKey: FREE_COOLING_TEMPERATURE_SETPOINT_SETTING,
-          label: 'free cooling temperature setpoint',
-          update: (nextValue) => Registry.setFreeCoolingTemperatureSetpoint(unitId, nextValue),
-        },
-      );
-      await this.maybeHandleFreeCoolingTemperatureSetting(
-        unitId,
-        newSettings,
-        freeCoolingOutsideTemperatureLimitChanged,
-        {
-          settingKey: FREE_COOLING_OUTSIDE_TEMPERATURE_LIMIT_SETTING,
-          label: 'free cooling outside temperature limit',
-          update: (nextValue) => Registry.setFreeCoolingOutsideTemperatureLimit(unitId, nextValue),
-        },
-      );
-      await this.maybeHandleFreeCoolingMinOnTimeSetting(
-        unitId, newSettings, freeCoolingMinOnTimeSecondsChanged,
-      );
+      await this.maybeHandleFreeCoolingSettings(unitId, newSettings, effectiveChangedKeys);
+      await this.maybeHandleDeicingSettings(unitId, newSettings, effectiveChangedKeys);
       await this.maybeHandleFireplaceDurationSetting(
         unitId, newSettings, fireplaceDurationChanged,
       );
@@ -326,6 +341,196 @@ export abstract class FlexitNordicBaseDevice extends Homey.Device {
       changedFanModes.push(mode);
     }
     return changedFanModes;
+  }
+
+  private async maybeHandleFreeCoolingSettings(
+    unitId: string,
+    newSettings: Record<string, unknown>,
+    changedKeys: string[],
+  ) {
+    await this.maybeHandleFreeCoolingEnabledSetting(
+      unitId, newSettings, changedKeys.includes(FREE_COOLING_ENABLED_SETTING),
+    );
+    await this.maybeHandleFreeCoolingTemperatureSetting(
+      unitId,
+      newSettings,
+      changedKeys.includes(FREE_COOLING_TEMPERATURE_SETPOINT_SETTING),
+      {
+        settingKey: FREE_COOLING_TEMPERATURE_SETPOINT_SETTING,
+        label: 'free cooling temperature setpoint',
+        update: (nextValue) => Registry.setFreeCoolingTemperatureSetpoint(unitId, nextValue),
+      },
+    );
+    await this.maybeHandleFreeCoolingTemperatureSetting(
+      unitId,
+      newSettings,
+      changedKeys.includes(FREE_COOLING_OUTSIDE_TEMPERATURE_LIMIT_SETTING),
+      {
+        settingKey: FREE_COOLING_OUTSIDE_TEMPERATURE_LIMIT_SETTING,
+        label: 'free cooling outside temperature limit',
+        update: (nextValue) => Registry.setFreeCoolingOutsideTemperatureLimit(unitId, nextValue),
+      },
+    );
+    await this.maybeHandleFreeCoolingMinOnTimeSetting(
+      unitId, newSettings, changedKeys.includes(FREE_COOLING_MIN_ON_TIME_SECONDS_SETTING),
+    );
+    await this.maybeHandleFreeCoolingDtSettings(unitId, newSettings, changedKeys);
+  }
+
+  private validateFreeCoolingDtSettings(newSettings: Record<string, unknown>, changedKeys: string[]) {
+    const startChanged = changedKeys.includes(FREE_COOLING_DT_START_SETTING);
+    const stopChanged = changedKeys.includes(FREE_COOLING_DT_STOP_SETTING);
+    if (!startChanged && !stopChanged) return;
+
+    const start = this.resolveRequestedFreeCoolingDt(newSettings, {
+      settingKey: FREE_COOLING_DT_START_SETTING, label: FREE_COOLING_DT_START_LABEL, changed: startChanged,
+    });
+    const stop = this.resolveRequestedFreeCoolingDt(newSettings, {
+      settingKey: FREE_COOLING_DT_STOP_SETTING, label: FREE_COOLING_DT_STOP_LABEL, changed: stopChanged,
+    });
+    if (start === undefined || stop === undefined || stop < start) return;
+
+    throw new Error(
+      `The free cooling stop temperature difference (${stop} K) must be lower than`
+      + ` the start temperature difference (${start} K).`,
+    );
+  }
+
+  /** The new value when the setting changed, otherwise the current one; undefined if unknown. */
+  private resolveRequestedFreeCoolingDt(
+    newSettings: Record<string, unknown>,
+    config: { settingKey: string; label: string; changed: boolean },
+  ): number | undefined {
+    if (!config.changed) return this.getFiniteSetting(config.settingKey);
+
+    const requestedValue = Number(newSettings[config.settingKey]);
+    if (!Number.isFinite(requestedValue)) {
+      throw new Error(`${config.label} must be numeric.`);
+    }
+    validateFreeCoolingDt(requestedValue, config.label);
+    return normalizeFreeCoolingDt(requestedValue);
+  }
+
+  private async maybeHandleFreeCoolingDtSettings(
+    unitId: string,
+    newSettings: Record<string, unknown>,
+    changedKeys: string[],
+  ) {
+    const startChanged = changedKeys.includes(FREE_COOLING_DT_START_SETTING);
+    const stopChanged = changedKeys.includes(FREE_COOLING_DT_STOP_SETTING);
+    if (!startChanged && !stopChanged) return;
+
+    const writeStart = () => this.maybeHandleNumericSetting(unitId, newSettings, startChanged, {
+      settingKey: FREE_COOLING_DT_START_SETTING,
+      label: FREE_COOLING_DT_START_LABEL,
+      normalize: normalizeFreeCoolingDt,
+      validate: validateFreeCoolingDt,
+      update: (nextValue) => Registry.setFreeCoolingDtStart(unitId, nextValue),
+      formatValue: (nextValue) => `${nextValue} K`,
+    });
+    const writeStop = () => this.maybeHandleNumericSetting(unitId, newSettings, stopChanged, {
+      settingKey: FREE_COOLING_DT_STOP_SETTING,
+      label: FREE_COOLING_DT_STOP_LABEL,
+      normalize: normalizeFreeCoolingDt,
+      validate: validateFreeCoolingDt,
+      update: (nextValue) => Registry.setFreeCoolingDtStop(unitId, nextValue),
+      formatValue: (nextValue) => `${nextValue} K`,
+    });
+
+    // When both thresholds move, write them in the order that keeps stop below start on
+    // the unit between the two writes: lowering both means the stop value has to go first.
+    const currentStop = this.getFiniteSetting(FREE_COOLING_DT_STOP_SETTING);
+    const stopFirst = startChanged
+      && stopChanged
+      && currentStop !== undefined
+      && currentStop >= normalizeFreeCoolingDt(newSettings[FREE_COOLING_DT_START_SETTING]);
+    if (stopFirst) {
+      await writeStop();
+      await writeStart();
+      return;
+    }
+    await writeStart();
+    await writeStop();
+  }
+
+  private async maybeHandleDeicingSettings(
+    unitId: string,
+    newSettings: Record<string, unknown>,
+    changedKeys: string[],
+  ) {
+    await this.maybeHandleBooleanSetting(unitId, newSettings, changedKeys.includes(DEICING_ENABLED_SETTING), {
+      settingKey: DEICING_ENABLED_SETTING,
+      label: 'de-icing enabled',
+      update: (nextValue) => Registry.setDeicingEnabled(unitId, nextValue),
+    });
+
+    const percentSettings = [
+      {
+        settingKey: DEICING_ROTOR_SPEED_SETTING,
+        label: 'de-icing rotor speed',
+        update: (nextValue: number) => Registry.setDeicingRotorSpeedPercent(unitId, nextValue),
+      },
+      {
+        settingKey: DEICING_SUPPLY_FAN_SETTING,
+        label: 'de-icing supply fan speed',
+        update: (nextValue: number) => Registry.setDeicingSupplyFanPercent(unitId, nextValue),
+      },
+      {
+        settingKey: DEICING_EXHAUST_FAN_SETTING,
+        label: 'de-icing exhaust fan speed',
+        update: (nextValue: number) => Registry.setDeicingExhaustFanPercent(unitId, nextValue),
+      },
+    ];
+    for (const setting of percentSettings) {
+      await this.maybeHandleNumericSetting(unitId, newSettings, changedKeys.includes(setting.settingKey), {
+        ...setting,
+        normalize: normalizeDeicingPercent,
+        validate: validateDeicingPercent,
+        formatValue: (nextValue) => `${nextValue}%`,
+      });
+    }
+  }
+
+  private async maybeHandleBooleanSetting(
+    unitId: string,
+    newSettings: Record<string, unknown>,
+    changed: boolean,
+    config: {
+      settingKey: string;
+      label: string;
+      update: (value: boolean) => Promise<void>;
+    },
+  ) {
+    if (!changed) return;
+
+    const { settingKey, label, update } = config;
+    const requestedValue = Boolean(newSettings[settingKey]);
+    if (this.getSetting(settingKey) === requestedValue) return;
+
+    try {
+      this.getLogger().info('device.setting.boolean.write', 'Updating boolean device setting', {
+        unitId,
+        settingKey,
+        label,
+        requestedValue,
+      });
+      await update(requestedValue);
+    } catch (error) {
+      this.getLogger().error('device.setting.boolean.failed', 'Failed to update boolean device setting', error, {
+        unitId,
+        settingKey,
+        label,
+        requestedValue,
+      });
+      throw new Error(`Failed to update ${label} on the unit.`);
+    }
+  }
+
+  private getFiniteSetting(settingKey: string): number | undefined {
+    const value = this.getSetting(settingKey);
+    if (value === null || value === undefined || value === '') return undefined;
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : undefined;
   }
 
   private async maybeHandleFreeCoolingEnabledSetting(
