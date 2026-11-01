@@ -752,8 +752,8 @@ describe('UnitRegistry', () => {
       if (requestedObjects === '2:1836,2:1841') {
         cb(null, {
           values: [
-            makeReadObject(BACNET_ENUMS.ObjectType.ANALOG_VALUE, 1836, 70),
-            makeReadObject(BACNET_ENUMS.ObjectType.ANALOG_VALUE, 1841, 60),
+            makeReadObject(BACNET_ENUMS.ObjectType.ANALOG_VALUE, 1836, 40),
+            makeReadObject(BACNET_ENUMS.ObjectType.ANALOG_VALUE, 1841, 35),
           ],
         });
         return;
@@ -762,7 +762,7 @@ describe('UnitRegistry', () => {
     });
 
     registry.register('test_unit', mockDevice);
-    await registry.setFanProfileMode('test_unit', 'home', 70, 60);
+    await registry.setFanProfileMode('test_unit', 'home', 40, 35);
 
     const calls = mockClient.writeProperty.getCalls().map((call: any) => call.args);
     const callsByObject = new Map<string, any[]>(calls.map((args: any) => [JSON.stringify(args[1]), args]));
@@ -775,10 +775,10 @@ describe('UnitRegistry', () => {
     if (!homeSupply || !homeExhaust) throw new Error('Expected writes for home fan profile');
 
     expect(homeSupply[3][0].type).to.equal(BACNET_ENUMS.ApplicationTags.REAL);
-    expect(homeSupply[3][0].value).to.equal(70);
+    expect(homeSupply[3][0].value).to.equal(40);
     expect(homeSupply[4].priority).to.equal(16);
     expect(homeExhaust[3][0].type).to.equal(BACNET_ENUMS.ApplicationTags.REAL);
-    expect(homeExhaust[3][0].value).to.equal(60);
+    expect(homeExhaust[3][0].value).to.equal(35);
     expect(homeExhaust[4].priority).to.equal(16);
 
     const verificationRead = mockClient.readPropertyMultiple.getCalls().find((call: any) => {
@@ -792,25 +792,25 @@ describe('UnitRegistry', () => {
     expect(verificationRead).to.not.equal(undefined);
 
     const settingsUpdate = mockDevice.setSettings.getCalls().find((call: any) => (
-      call.args[0]?.fan_profile_home_supply === 70
-      && call.args[0]?.fan_profile_home_exhaust === 60
+      call.args[0]?.fan_profile_home_supply === 40
+      && call.args[0]?.fan_profile_home_exhaust === 35
     ));
     expect(settingsUpdate).to.not.equal(undefined);
   });
 
-  it('rejects fan profile values outside mode-specific ranges', async () => {
+  it('rejects fan profile values outside static percentage limits', async () => {
     const mockDevice = makeMockDevice();
     registry.register('test_unit', mockDevice);
 
     let thrown: Error | null = null;
     try {
-      await registry.setFanProfileMode('test_unit', 'high', 70, 90);
+      await registry.setFanProfileMode('test_unit', 'high', 29, 90);
     } catch (error) {
       thrown = error as Error;
     }
 
     expect(thrown).to.not.equal(null);
-    expect(thrown?.message).to.equal('high supply fan profile must be between 80 and 100 percent');
+    expect(thrown?.message).to.equal('high supply fan profile must be between 30 and 100 percent');
     expect(mockClient.writeProperty.called).to.equal(false);
   });
 

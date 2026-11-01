@@ -499,7 +499,7 @@ export const SUPPORTED_POINTS: SupportedPoint[] = [
     'observed',
     'Setpoint supply air HIGH',
     {
-      min: 80,
+      min: 30,
       max: 100,
       units: '%',
       requiresPriority13: true,
@@ -514,7 +514,7 @@ export const SUPPORTED_POINTS: SupportedPoint[] = [
     'observed',
     'Setpoint supply air HOME',
     {
-      min: 56,
+      min: 30,
       max: 100,
       units: '%',
       requiresPriority13: true,
@@ -530,7 +530,7 @@ export const SUPPORTED_POINTS: SupportedPoint[] = [
     'Setpoint supply air AWAY',
     {
       min: 30,
-      max: 80,
+      max: 100,
       units: '%',
       requiresPriority13: true,
     },
@@ -574,7 +574,7 @@ export const SUPPORTED_POINTS: SupportedPoint[] = [
     'observed',
     'Setpoint exhaust air HIGH',
     {
-      min: 79,
+      min: 30,
       max: 100,
       units: '%',
       requiresPriority13: true,
@@ -589,8 +589,8 @@ export const SUPPORTED_POINTS: SupportedPoint[] = [
     'observed',
     'Setpoint exhaust air HOME',
     {
-      min: 55,
-      max: 99,
+      min: 30,
+      max: 100,
       units: '%',
       requiresPriority13: true,
     },
@@ -605,7 +605,7 @@ export const SUPPORTED_POINTS: SupportedPoint[] = [
     'Setpoint exhaust air AWAY',
     {
       min: 30,
-      max: 79,
+      max: 100,
       units: '%',
       requiresPriority13: true,
     },

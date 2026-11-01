@@ -44,6 +44,7 @@ describe('Nordic device', () => {
       setTemperatureSetpoint: sinon.stub().resolves(),
       setFanMode: sinon.stub().resolves(),
       setFanProfileMode: sinon.stub().resolves(),
+      setFanProfileModes: sinon.stub().resolves(),
       resetFilterTimer: sinon.stub().resolves(),
       setFilterChangeInterval: sinon.stub().resolves(),
       setFireplaceVentilationDuration: sinon.stub().resolves(),
@@ -133,17 +134,8 @@ describe('Nordic device', () => {
       },
       normalizeFanProfilePercent: (value: number, mode: string, fan: string) => {
         const rounded = Math.round(value);
-        const ranges: Record<string, Record<string, { min: number; max: number }>> = {
-          high: { supply: { min: 80, max: 100 }, exhaust: { min: 79, max: 100 } },
-          home: { supply: { min: 56, max: 100 }, exhaust: { min: 55, max: 99 } },
-          away: { supply: { min: 30, max: 80 }, exhaust: { min: 30, max: 79 } },
-          fireplace: { supply: { min: 30, max: 100 }, exhaust: { min: 30, max: 100 } },
-          cooker: { supply: { min: 30, max: 100 }, exhaust: { min: 30, max: 100 } },
-        };
-        const range = ranges[mode]?.[fan];
-        if (!range) throw new Error(`Unsupported fan profile range ${mode}.${fan}`);
-        if (rounded < range.min || rounded > range.max) {
-          throw new Error(`${mode} ${fan} fan profile must be between ${range.min} and ${range.max} percent`);
+        if (rounded < 30 || rounded > 100) {
+          throw new Error(`${mode} ${fan} fan profile must be between 30 and 100 percent`);
         }
         return rounded;
       },
@@ -651,13 +643,41 @@ describe('Nordic device', () => {
 
     await device.onSettings({
       newSettings: {
-        fan_profile_home_supply: 70,
-        fan_profile_home_exhaust: 60,
+        fan_profile_home_supply: 40,
+        fan_profile_home_exhaust: 35,
       },
       changedKeys: ['fan_profile_home_supply'],
     });
 
-    expect(registryStub.setFanProfileMode.calledOnceWithExactly('test_unit', 'home', 70, 60)).toBe(true);
+    expect(registryStub.setFanProfileMode.calledOnceWithExactly('test_unit', 'home', 40, 35)).toBe(true);
+  });
+
+  it('submits Home and Away changes together in one settings save', async () => {
+    const device = new DeviceClass();
+    device.getSetting.withArgs('fan_profile_home_supply').returns(80);
+    device.getSetting.withArgs('fan_profile_home_exhaust').returns(79);
+    device.getSetting.withArgs('fan_profile_away_supply').returns(56);
+    device.getSetting.withArgs('fan_profile_away_exhaust').returns(55);
+    await device.onInit();
+
+    await device.onSettings({
+      newSettings: {
+        fan_profile_home_supply: 40,
+        fan_profile_home_exhaust: 44,
+        fan_profile_away_supply: 30,
+        fan_profile_away_exhaust: 35,
+      },
+      changedKeys: [
+        'fan_profile_home_supply', 'fan_profile_home_exhaust',
+        'fan_profile_away_supply', 'fan_profile_away_exhaust',
+      ],
+    });
+
+    expect(registryStub.setFanProfileModes.calledOnceWithExactly('test_unit', [
+      { mode: 'home', supply: 40, exhaust: 44 },
+      { mode: 'away', supply: 30, exhaust: 35 },
+    ])).toBe(true);
+    expect(registryStub.setFanProfileMode.called).toBe(false);
   });
 
   it('writes changed fireplace duration setting in minutes', async () => {
@@ -838,6 +858,19 @@ describe('Nordic device', () => {
     expect(registryStub.setFanProfileMode.called).toBe(false);
   });
 
+  it('shows the actionable fan profile error from the registry', async () => {
+    const { FanProfileError } = await import('../lib/FanProfileError');
+    const device = new DeviceClass();
+    await device.onInit();
+    const message = "Home fan speeds weren't fully saved. Allowed now: supply 56–100%.";
+    registryStub.setFanProfileMode.rejects(new FanProfileError(message));
+
+    await expect(device.onSettings({
+      newSettings: { fan_profile_home_supply: 44, fan_profile_home_exhaust: 40 },
+      changedKeys: ['fan_profile_home_supply', 'fan_profile_home_exhaust'],
+    })).rejects.toThrow(message);
+  });
+
   it('rejects out-of-range fan profile values', async () => {
     const device = new DeviceClass();
     device.hasCapability.withArgs(EXHAUST_TEMP_CAPABILITY).returns(true);
@@ -858,7 +891,7 @@ describe('Nordic device', () => {
     }
 
     expect(thrown).not.toBe(null);
-    expect(thrown?.message).toContain('between 56 and 100');
+    expect(thrown?.message).toContain('between 30 and 100');
     expect(registryStub.setFanProfileMode.called).toBe(false);
   });
 });
