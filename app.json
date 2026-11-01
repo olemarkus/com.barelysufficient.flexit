@@ -627,6 +627,7 @@
         "measure_humidity",
         "dehumidification_active",
         "free_cooling_active",
+        "measure_heat_exchanger_speed_percent",
         "measure_power",
         "fan_mode",
         "ventilation_stopped",
@@ -1227,6 +1228,7 @@
         "measure_humidity",
         "dehumidification_active",
         "free_cooling_active",
+        "measure_heat_exchanger_speed_percent",
         "measure_power",
         "fan_mode",
         "ventilation_stopped",
@@ -1894,6 +1896,23 @@
       "decimals": 0,
       "getable": true,
       "setable": false,
+      "insights": true
+    },
+    "measure_heat_exchanger_speed_percent": {
+      "type": "number",
+      "title": {
+        "en": "Heat exchanger speed"
+      },
+      "icon": "/assets/capabilities/measure_motor_rpm.svg",
+      "units": {
+        "en": "%"
+      },
+      "min": 0,
+      "max": 100,
+      "decimals": 0,
+      "getable": true,
+      "setable": false,
+      "uiComponent": "sensor",
       "insights": true
     },
     "measure_motor_rpm": {

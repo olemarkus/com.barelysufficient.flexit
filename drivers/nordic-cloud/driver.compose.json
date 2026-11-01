@@ -17,6 +17,7 @@
     "measure_humidity",
     "dehumidification_active",
     "free_cooling_active",
+    "measure_heat_exchanger_speed_percent",
     "measure_power",
     "fan_mode",
     "ventilation_stopped",
