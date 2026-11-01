@@ -528,6 +528,16 @@ export class FakeNordicUnitState {
     return { ok: true, value: null };
   }
 
+  /**
+   * The real unit raises its de-icing requests on its own when the exhaust air gets cold.
+   * The fake does not model that; it reports whatever requests a test or operator sets.
+   */
+  setDeicingRequests(requests: { rotor?: boolean; fan?: boolean }): BacnetResult<null> {
+    if (requests.rotor !== undefined) this.setByName('deicing_rotor_active', Number(requests.rotor));
+    if (requests.fan !== undefined) this.setByName('deicing_fan_active', Number(requests.fan));
+    return { ok: true, value: null };
+  }
+
   getFilterStatus() {
     const operatingHours = roundTo(this.getByName('filter_operating_time'), 3);
     const limitHours = roundTo(this.getByName('filter_exchange_limit'), 3);
