@@ -97,5 +97,8 @@
   },
   "1.13.0": {
     "en": "Add flow actions for turning free cooling on and off, for example to allow free cooling in summer only. The unit still decides when free cooling actually runs, based on the temperature settings on the device."
+  },
+  "1.14.0": {
+    "en": "Fan profiles now accept speeds down to 30%, where supported by the unit. Saving Away and Home together applies changes in the correct order, with clearer feedback when the unit rejects a value.\n\nAdded heat-exchanger rotor speed with Insights for local and cloud devices, and improved cloud polling when optional readings are unavailable."
   }
 }
