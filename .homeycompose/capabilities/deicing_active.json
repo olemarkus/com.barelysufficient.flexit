@@ -1,0 +1,16 @@
+{
+  "type": "boolean",
+  "title": {
+    "en": "De-icing active"
+  },
+  "getable": true,
+  "setable": false,
+  "uiComponent": "sensor",
+  "insights": true,
+  "insightsTitleTrue": {
+    "en": "De-icing started"
+  },
+  "insightsTitleFalse": {
+    "en": "De-icing stopped"
+  }
+}

@@ -53,6 +53,12 @@ describe('Nordic device', () => {
       setFreeCoolingTemperatureSetpoint: sinon.stub().resolves(),
       setFreeCoolingOutsideTemperatureLimit: sinon.stub().resolves(),
       setFreeCoolingMinOnTimeSeconds: sinon.stub().resolves(),
+      setFreeCoolingDtStart: sinon.stub().resolves(),
+      setFreeCoolingDtStop: sinon.stub().resolves(),
+      setDeicingEnabled: sinon.stub().resolves(),
+      setDeicingRotorSpeedPercent: sinon.stub().resolves(),
+      setDeicingSupplyFanPercent: sinon.stub().resolves(),
+      setDeicingExhaustFanPercent: sinon.stub().resolves(),
     };
 
     const unitRegistryModuleStub = {
@@ -73,6 +79,16 @@ describe('Nordic device', () => {
       MAX_FREE_COOLING_TEMPERATURE_C: 30,
       MIN_FREE_COOLING_MIN_ON_TIME_SECONDS: 0,
       MAX_FREE_COOLING_MIN_ON_TIME_SECONDS: 18000,
+      FREE_COOLING_DT_START_SETTING: 'free_cooling_dt_start_k',
+      FREE_COOLING_DT_STOP_SETTING: 'free_cooling_dt_stop_k',
+      MIN_FREE_COOLING_DT_K: 0,
+      MAX_FREE_COOLING_DT_K: 10,
+      DEICING_ENABLED_SETTING: 'deicing_enabled',
+      DEICING_ROTOR_SPEED_SETTING: 'deicing_rotor_speed_percent',
+      DEICING_SUPPLY_FAN_SETTING: 'deicing_supply_fan_percent',
+      DEICING_EXHAUST_FAN_SETTING: 'deicing_exhaust_fan_percent',
+      MIN_DEICING_PERCENT: 0,
+      MAX_DEICING_PERCENT: 100,
       FAN_PROFILE_MODES: ['home', 'away', 'high', 'fireplace', 'cooker'],
       FAN_PROFILE_SETTING_KEYS: {
         home: { supply: 'fan_profile_home_supply', exhaust: 'fan_profile_home_exhaust' },
@@ -129,6 +145,20 @@ describe('Nordic device', () => {
         const rounded = Math.round(numeric);
         if (rounded < 0 || rounded > 18000) {
           throw new Error('Free cooling minimum on-time must be between 0 and 18000 seconds');
+        }
+        return rounded;
+      },
+      normalizeFreeCoolingDt: (value: unknown) => {
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric) || numeric < 0 || numeric > 10) {
+          throw new Error('Free cooling temperature difference must be between 0 and 10 K');
+        }
+        return Number((Math.round(numeric * 2) / 2).toFixed(1));
+      },
+      normalizeDeicingPercent: (value: unknown) => {
+        const rounded = Math.round(Number(value));
+        if (!Number.isFinite(rounded) || rounded < 0 || rounded > 100) {
+          throw new Error('De-icing speed must be between 0 and 100 percent');
         }
         return rounded;
       },
@@ -191,6 +221,19 @@ describe('Nordic device', () => {
     await device.onInit();
 
     expect(device.addCapability.calledOnceWithExactly(DEHUMIDIFICATION_ACTIVE_CAPABILITY)).toBe(true);
+    expect(registryStub.register.calledOnceWithExactly('test_unit', device)).toBe(true);
+  });
+
+  it('adds supply air temperature and de-icing capabilities during onInit when missing', async () => {
+    const device = new DeviceClass();
+    device.hasCapability.withArgs('measure_temperature.supply').returns(false);
+    device.hasCapability.withArgs('deicing_active').returns(false);
+
+    await device.onInit();
+
+    expect(device.addCapability.calledWithExactly('measure_temperature.supply')).toBe(true);
+    expect(device.addCapability.calledWithExactly('deicing_active')).toBe(true);
+    expect(device.addCapability.callCount).toBe(2);
     expect(registryStub.register.calledOnceWithExactly('test_unit', device)).toBe(true);
   });
 
@@ -631,6 +674,132 @@ describe('Nordic device', () => {
     expect(thrownRuntime?.message).toContain('between 0 and 18000 seconds');
     expect(registryStub.setFreeCoolingTemperatureSetpoint.called).toBe(false);
     expect(registryStub.setFreeCoolingMinOnTimeSeconds.called).toBe(false);
+  });
+
+  it('writes free cooling dT and de-icing settings through the shared settings handler', async () => {
+    const device = new DeviceClass();
+    device.getSetting.withArgs('free_cooling_dt_start_k').returns(1.5);
+    device.getSetting.withArgs('free_cooling_dt_stop_k').returns(0.5);
+    device.getSetting.withArgs('deicing_enabled').returns(true);
+    device.getSetting.withArgs('deicing_rotor_speed_percent').returns(100);
+    device.getSetting.withArgs('deicing_supply_fan_percent').returns(15);
+    device.getSetting.withArgs('deicing_exhaust_fan_percent').returns(75);
+    await device.onInit();
+
+    await device.onSettings({
+      newSettings: {
+        free_cooling_dt_start_k: 3.2,
+        free_cooling_dt_stop_k: 1.26,
+        deicing_enabled: false,
+        deicing_rotor_speed_percent: 80.4,
+        deicing_supply_fan_percent: 20.6,
+        deicing_exhaust_fan_percent: 60,
+      },
+      changedKeys: [
+        'free_cooling_dt_start_k',
+        'free_cooling_dt_stop_k',
+        'deicing_enabled',
+        'deicing_rotor_speed_percent',
+        'deicing_supply_fan_percent',
+        'deicing_exhaust_fan_percent',
+      ],
+    });
+
+    expect(registryStub.setFreeCoolingDtStart.calledOnceWithExactly('test_unit', 3)).toBe(true);
+    expect(registryStub.setFreeCoolingDtStop.calledOnceWithExactly('test_unit', 1.5)).toBe(true);
+    expect(registryStub.setFreeCoolingDtStart.calledBefore(registryStub.setFreeCoolingDtStop)).toBe(true);
+    expect(registryStub.setDeicingEnabled.calledOnceWithExactly('test_unit', false)).toBe(true);
+    expect(registryStub.setDeicingRotorSpeedPercent.calledOnceWithExactly('test_unit', 80)).toBe(true);
+    expect(registryStub.setDeicingSupplyFanPercent.calledOnceWithExactly('test_unit', 21)).toBe(true);
+    expect(registryStub.setDeicingExhaustFanPercent.calledOnceWithExactly('test_unit', 60)).toBe(true);
+  });
+
+  it('writes the free cooling dT stop value first when both thresholds are lowered', async () => {
+    const device = new DeviceClass();
+    device.getSetting.withArgs('free_cooling_dt_start_k').returns(4);
+    device.getSetting.withArgs('free_cooling_dt_stop_k').returns(3);
+    await device.onInit();
+
+    await device.onSettings({
+      newSettings: { free_cooling_dt_start_k: 2, free_cooling_dt_stop_k: 1 },
+      changedKeys: ['free_cooling_dt_start_k', 'free_cooling_dt_stop_k'],
+    });
+
+    expect(registryStub.setFreeCoolingDtStop.calledOnceWithExactly('test_unit', 1)).toBe(true);
+    expect(registryStub.setFreeCoolingDtStart.calledOnceWithExactly('test_unit', 2)).toBe(true);
+    expect(registryStub.setFreeCoolingDtStop.calledBefore(registryStub.setFreeCoolingDtStart)).toBe(true);
+  });
+
+  it('rejects out-of-range free cooling dT and de-icing settings', async () => {
+    const device = new DeviceClass();
+    await device.onInit();
+
+    const settingsError = async (newSettings: Record<string, unknown>) => {
+      try {
+        await device.onSettings({ newSettings, changedKeys: Object.keys(newSettings) });
+      } catch (error) {
+        return error as Error;
+      }
+      return null;
+    };
+
+    expect((await settingsError({ free_cooling_dt_start_k: 10.5 }))?.message).toContain('between 0 and 10 K');
+    expect((await settingsError({ free_cooling_dt_stop_k: -1 }))?.message).toContain('between 0 and 10 K');
+    expect((await settingsError({ free_cooling_dt_start_k: 'warm' }))?.message).toContain('must be numeric');
+    expect((await settingsError({ deicing_rotor_speed_percent: 101 }))?.message)
+      .toContain('between 0 and 100 percent');
+    expect((await settingsError({ deicing_exhaust_fan_percent: -1 }))?.message)
+      .toContain('between 0 and 100 percent');
+    expect(registryStub.setFreeCoolingDtStart.called).toBe(false);
+    expect(registryStub.setFreeCoolingDtStop.called).toBe(false);
+    expect(registryStub.setDeicingRotorSpeedPercent.called).toBe(false);
+    expect(registryStub.setDeicingExhaustFanPercent.called).toBe(false);
+  });
+
+  it('rejects a free cooling dT stop value that is not below the start value before writing anything', async () => {
+    const device = new DeviceClass();
+    device.getSetting.withArgs('free_cooling_dt_start_k').returns(1.5);
+    device.getSetting.withArgs('free_cooling_dt_stop_k').returns(0.5);
+    await device.onInit();
+
+    const settingsError = async (newSettings: Record<string, unknown>) => {
+      try {
+        await device.onSettings({ newSettings, changedKeys: Object.keys(newSettings) });
+      } catch (error) {
+        return error as Error;
+      }
+      return null;
+    };
+
+    const stopAtStart = await settingsError({ free_cooling_dt_stop_k: 1.5, deicing_enabled: false });
+    const stopAboveNewStart = await settingsError({ free_cooling_dt_start_k: 2, free_cooling_dt_stop_k: 3 });
+    const startAtCurrentStop = await settingsError({ free_cooling_dt_start_k: 0.5 });
+
+    for (const error of [stopAtStart, stopAboveNewStart, startAtCurrentStop]) {
+      expect(error?.message).toContain('must be lower than the start temperature difference');
+    }
+    expect(stopAtStart?.message).toContain('(1.5 K)');
+    expect(registryStub.setFreeCoolingDtStart.called).toBe(false);
+    expect(registryStub.setFreeCoolingDtStop.called).toBe(false);
+    expect(registryStub.setDeicingEnabled.called).toBe(false);
+  });
+
+  it('ignores read-only label settings when settings change', async () => {
+    const device = new DeviceClass();
+    await device.onInit();
+
+    await device.onSettings({
+      newSettings: {
+        deicing_active_time: '420 s',
+        deicing_off_time_ramp_end_temperature: '-9 °C',
+      },
+      changedKeys: ['deicing_active_time', 'deicing_off_time_ramp_end_temperature'],
+    });
+
+    const calledRegistryMethods = Object.entries(registryStub)
+      .filter(([name, stub]) => name !== 'register' && (stub as sinon.SinonStub).called)
+      .map(([name]) => name);
+    expect(calledRegistryMethods).toEqual([]);
   });
 
   it('writes changed fan profile settings by mode', async () => {

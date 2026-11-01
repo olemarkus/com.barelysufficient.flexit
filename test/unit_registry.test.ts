@@ -1737,6 +1737,21 @@ describe('UnitRegistry', () => {
     expect(mockDevice.setCapabilityValue.calledWith('dehumidification_active', false)).to.equal(true);
   });
 
+  it('publishes supply air temperature as its own sensor alongside the thermostat value', () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    const unit = { unitId: 'test_unit', devices: new Set([mockDevice]) };
+    (registry as any).distributeData(unit, { measure_temperature: 19.5 });
+
+    expect(mockDevice.setCapabilityValue.calledWith('measure_temperature', 19.5)).to.equal(true);
+    expect(mockDevice.setCapabilityValue.calledWith('measure_temperature.supply', 19.5)).to.equal(true);
+
+    mockDevice.setCapabilityValue.resetHistory();
+    (registry as any).distributeData(unit, { measure_humidity: 34 });
+    expect(mockDevice.setCapabilityValue.calledWith('measure_temperature.supply', sinon.match.any)).to.equal(false);
+  });
+
   it('publishes free cooling capability from actual ventilation mode', () => {
     const mockDevice = makeMockDevice();
     registry.register('test_unit', mockDevice);
@@ -1779,6 +1794,155 @@ describe('UnitRegistry', () => {
     expect(syncedKeys.includes('free_cooling_extract_temp_setpoint')).to.equal(false);
     expect(syncedKeys.includes('free_cooling_outside_temp_limit')).to.equal(false);
     expect(syncedKeys.includes('free_cooling_min_on_time_seconds')).to.equal(false);
+  });
+
+  it('publishes de-icing active while either the rotor or the fan de-icing request is set', () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    const unit = { unitId: 'test_unit', devices: new Set([mockDevice]) };
+    (registry as any).distributeData(unit, { deicing_rotor_active: 1, deicing_fan_active: 0 });
+    expect(mockDevice.setCapabilityValue.calledWith('deicing_active', true)).to.equal(true);
+
+    mockDevice.setCapabilityValue.resetHistory();
+    (registry as any).distributeData(unit, { deicing_fan_active: 1 });
+    expect(mockDevice.setCapabilityValue.calledWith('deicing_active', true)).to.equal(true);
+
+    mockDevice.setCapabilityValue.resetHistory();
+    (registry as any).distributeData(unit, { deicing_rotor_active: 0, deicing_fan_active: 0 });
+    expect(mockDevice.setCapabilityValue.calledWith('deicing_active', false)).to.equal(true);
+
+    mockDevice.setCapabilityValue.resetHistory();
+    (registry as any).distributeData(unit, { measure_humidity: 34 });
+    expect(mockDevice.setCapabilityValue.calledWith('deicing_active', sinon.match.any)).to.equal(false);
+  });
+
+  it('ignores invalid polled free cooling dT and de-icing values during settings sync', () => {
+    const mockDevice = makeMockDevice({ settings: { deicing_enabled: true } });
+    registry.register('test_unit', mockDevice);
+
+    const unit = { unitId: 'test_unit', devices: new Set([mockDevice]) };
+    expect(() => {
+      (registry as any).distributeData(unit, {
+        free_cooling_dt_start_k: 12,
+        free_cooling_dt_stop_k: -1,
+        deicing_enabled: 0,
+        deicing_rotor_speed_percent: 150,
+        deicing_supply_fan_percent: -5,
+        deicing_exhaust_fan_percent: 60.4,
+      });
+    }).to.not.throw();
+
+    expect(mockDevice.setSettings.calledWithMatch({
+      deicing_enabled: false,
+      deicing_exhaust_fan_percent: 60,
+    })).to.equal(true);
+    const syncedKeys = mockDevice.setSettings.getCalls()
+      .flatMap((call) => Object.keys(call.args[0] ?? {}));
+    expect(syncedKeys.includes('free_cooling_dt_start_k')).to.equal(false);
+    expect(syncedKeys.includes('free_cooling_dt_stop_k')).to.equal(false);
+    expect(syncedKeys.includes('deicing_rotor_speed_percent')).to.equal(false);
+    expect(syncedKeys.includes('deicing_supply_fan_percent')).to.equal(false);
+  });
+
+  it('syncs read-only unit values into label settings only when the displayed text changes', () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    const unit = { unitId: 'test_unit', devices: new Set([mockDevice]) };
+    const polled = {
+      deicing_rotor_start_temperature: 0,
+      deicing_fan_start_temperature: -0.02,
+      deicing_active_time: 420,
+      deicing_max_off_time: 6900,
+      deicing_off_time_ramp_start_temperature: 0,
+      deicing_min_off_time: 1800,
+      deicing_off_time_ramp_end_temperature: -9.0000019,
+    };
+    (registry as any).distributeData(unit, polled);
+
+    expect(mockDevice.settings).to.include({
+      deicing_rotor_start_temperature: '0 °C',
+      deicing_fan_start_temperature: '0 °C',
+      deicing_active_time: '420 s',
+      deicing_max_off_time: '6900 s',
+      deicing_off_time_ramp_start_temperature: '0 °C',
+      deicing_min_off_time: '1800 s',
+      deicing_off_time_ramp_end_temperature: '-9 °C',
+    });
+
+    mockDevice.setSettings.resetHistory();
+    (registry as any).distributeData(unit, polled);
+    const repeatedLabelKeys = mockDevice.setSettings.getCalls()
+      .flatMap((call) => Object.keys(call.args[0] ?? {}))
+      .filter((key) => key in polled);
+    expect(repeatedLabelKeys).to.deep.equal([]);
+
+    (registry as any).distributeData(unit, { deicing_active_time: 480.4 });
+    expect(mockDevice.settings.deicing_active_time).to.equal('480 s');
+  });
+
+  it('skips free cooling dT and de-icing writes when the unit already reports the requested value', async () => {
+    const mockDevice = makeMockDevice();
+    registry.register('test_unit', mockDevice);
+
+    const unit = (registry as any).units.get('test_unit');
+    unit.probeValues.set(probeKey(BACNET_ENUMS.ObjectType.ANALOG_VALUE, 1936), 1.5);
+    unit.probeValues.set(probeKey(BACNET_ENUMS.ObjectType.ANALOG_VALUE, 1852), 100);
+    unit.probeValues.set(probeKey(BACNET_ENUMS.ObjectType.BINARY_VALUE, 406), 1);
+
+    await registry.setFreeCoolingDtStart('test_unit', 1.4);
+    await registry.setDeicingRotorSpeedPercent('test_unit', 100.2);
+    await registry.setDeicingEnabled('test_unit', true);
+
+    expect(mockClient.writeProperty.called).to.equal(false);
+  });
+
+  it('rejects free cooling dT and de-icing writes for unknown units', async () => {
+    const failures = await Promise.allSettled([
+      registry.setFreeCoolingDtStop('missing_unit', 1),
+      registry.setDeicingSupplyFanPercent('missing_unit', 20),
+      registry.setDeicingEnabled('missing_unit', false),
+    ]);
+
+    for (const failure of failures) {
+      expect(failure.status).to.equal('rejected');
+      expect((failure as PromiseRejectedResult).reason.message).to.equal('Unit not found');
+    }
+  });
+
+  it('writes de-icing enabled via BV:406 and speeds as REAL with priority 13', async () => {
+    const mockDevice = makeMockDevice();
+    mockClient.readPropertyMultiple.resetBehavior();
+    mockClient.readPropertyMultiple.callsFake((_ip: string, request: any[], cb: any) => {
+      const requestedObjects = request
+        .map((entry) => `${entry?.objectId?.type}:${entry?.objectId?.instance}`)
+        .sort()
+        .join(',');
+      if (requestedObjects === '5:406') {
+        cb(null, { values: [makeReadObject(BACNET_ENUMS.ObjectType.BINARY_VALUE, 406, 0)] });
+        return;
+      }
+      if (requestedObjects === '2:1958') {
+        cb(null, { values: [makeReadObject(BACNET_ENUMS.ObjectType.ANALOG_VALUE, 1958, 60)] });
+        return;
+      }
+      cb(null, { values: [] });
+    });
+
+    registry.register('test_unit', mockDevice);
+    await registry.setDeicingEnabled('test_unit', false);
+    await registry.setDeicingExhaustFanPercent('test_unit', 60);
+
+    const [enabledWrite, exhaustWrite] = mockClient.writeProperty.getCalls().map((call: any) => call.args);
+    expect(enabledWrite[1]).to.deep.equal({ type: 5, instance: 406 });
+    expect(enabledWrite[3][0]).to.deep.equal({ type: BACNET_ENUMS.ApplicationTags.ENUMERATED, value: 0 });
+    expect(enabledWrite[4].priority).to.equal(13);
+    expect(exhaustWrite[1]).to.deep.equal({ type: 2, instance: 1958 });
+    expect(exhaustWrite[3][0]).to.deep.equal({ type: BACNET_ENUMS.ApplicationTags.REAL, value: 60 });
+    expect(exhaustWrite[4].priority).to.equal(13);
+    expect(mockDevice.settings.deicing_enabled).to.equal(false);
+    expect(mockDevice.settings.deicing_exhaust_fan_percent).to.equal(60);
   });
 
   it('falls back to slope request when dehumidification fan control is unavailable', () => {

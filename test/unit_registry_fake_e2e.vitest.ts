@@ -954,6 +954,97 @@ describe('UnitRegistry fake-unit e2e', { timeout: 10000 }, () => {
     expect(device.getSetting('free_cooling_min_on_time_seconds')).toBe(1200);
   });
 
+  it('writes free cooling dT and de-icing settings with priority 13 and syncs settings', async () => {
+    const device = makeMockDevice(SERVER_BIND_ADDRESS, serverPort, 4380);
+    registry.register('test_unit', device);
+    await waitFor(() => device.setCapabilityValue.called);
+
+    await registry.setFreeCoolingDtStart('test_unit', 3);
+    await registry.setFreeCoolingDtStop('test_unit', 1);
+    await registry.setDeicingEnabled('test_unit', false);
+    await registry.setDeicingRotorSpeedPercent('test_unit', 80);
+    await registry.setDeicingSupplyFanPercent('test_unit', 20);
+    await registry.setDeicingExhaustFanPercent('test_unit', 60);
+
+    const expectedPoints: Array<{ type: number; instance: number; value: number }> = [
+      { type: OBJECT_TYPE.ANALOG_VALUE, instance: 1936, value: 3 },
+      { type: OBJECT_TYPE.ANALOG_VALUE, instance: 1937, value: 1 },
+      { type: OBJECT_TYPE.BINARY_VALUE, instance: 406, value: 0 },
+      { type: OBJECT_TYPE.ANALOG_VALUE, instance: 1852, value: 80 },
+      { type: OBJECT_TYPE.ANALOG_VALUE, instance: 1878, value: 20 },
+      { type: OBJECT_TYPE.ANALOG_VALUE, instance: 1958, value: 60 },
+    ];
+    for (const { type, instance, value } of expectedPoints) {
+      const current = state.readPresentValue(type, instance, PROPERTY_ID.PRESENT_VALUE);
+      expect(current.ok, `${type}:${instance} readable`).toBe(true);
+      expect(current.value.value).toBeCloseTo(value, 2);
+
+      const priority13Write = writePresentValueSpy.getCalls().find((call: any) => (
+        call.args[0] === type
+        && call.args[1] === instance
+        && call.args[2] === PROPERTY_ID.PRESENT_VALUE
+        && call.args[4] === 13
+      ));
+      expect(priority13Write, `${type}:${instance} written with priority 13`).not.toBe(undefined);
+    }
+
+    expect(device.getSetting('free_cooling_dt_start_k')).toBe(3);
+    expect(device.getSetting('free_cooling_dt_stop_k')).toBe(1);
+    expect(device.getSetting('deicing_enabled')).toBe(false);
+    expect(device.getSetting('deicing_rotor_speed_percent')).toBe(80);
+    expect(device.getSetting('deicing_supply_fan_percent')).toBe(20);
+    expect(device.getSetting('deicing_exhaust_fan_percent')).toBe(60);
+  });
+
+  it('syncs de-icing settings and read-only de-icing values from the unit', async () => {
+    const device = makeMockDevice(SERVER_BIND_ADDRESS, serverPort, 4380);
+    registry.register('test_unit', device);
+
+    await waitFor(() => {
+      (registry as any).pollUnit('test_unit');
+      return device.getSetting('deicing_off_time_ramp_end_temperature') === '-9 °C';
+    });
+
+    expect(device.getSetting('deicing_rotor_start_temperature')).toBe('0 °C');
+    expect(device.getSetting('deicing_fan_start_temperature')).toBe('0 °C');
+    expect(device.getSetting('deicing_active_time')).toBe('420 s');
+    expect(device.getSetting('deicing_max_off_time')).toBe('6900 s');
+    expect(device.getSetting('deicing_off_time_ramp_start_temperature')).toBe('0 °C');
+    expect(device.getSetting('deicing_min_off_time')).toBe('1800 s');
+    expect(device.getSetting('free_cooling_dt_start_k')).toBe(1.5);
+    expect(device.getSetting('free_cooling_dt_stop_k')).toBe(0.5);
+    expect(device.getSetting('deicing_enabled')).toBe(true);
+    expect(device.getSetting('deicing_rotor_speed_percent')).toBe(100);
+    expect(device.getSetting('deicing_supply_fan_percent')).toBe(15);
+    expect(device.getSetting('deicing_exhaust_fan_percent')).toBe(75);
+  });
+
+  it('publishes de-icing active while the unit de-ices the rotor or the fans', async () => {
+    const device = makeMockDevice(SERVER_BIND_ADDRESS, serverPort, 4380);
+    registry.register('test_unit', device);
+
+    // Alternating the expected value means only a poll made after each change can satisfy it.
+    const waitForDeicingActive = async (expected: boolean) => {
+      device.setCapabilityValue.resetHistory();
+      await waitFor(() => {
+        (registry as any).pollUnit('test_unit');
+        return device.setCapabilityValue.getCalls().some((call: any) => (
+          call.args[0] === 'deicing_active' && call.args[1] === expected
+        ));
+      });
+    };
+
+    await waitForDeicingActive(false);
+    state.setDeicingRequests({ rotor: true });
+    await waitForDeicingActive(true);
+    state.setDeicingRequests({ rotor: false });
+    await waitForDeicingActive(false);
+    state.setDeicingRequests({ fan: true });
+    await waitForDeicingActive(true);
+    state.setDeicingRequests({ fan: false });
+    await waitForDeicingActive(false);
+  });
+
   it('does not re-trigger fireplace when fireplace is already active', async () => {
     const device = makeMockDevice(SERVER_BIND_ADDRESS, serverPort, 4380);
     registry.register('test_unit', device);
