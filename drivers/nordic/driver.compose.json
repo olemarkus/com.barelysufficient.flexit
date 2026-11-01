@@ -131,7 +131,8 @@
       },
       "units": {
         "en": "%"
-      }
+      },
+      "insights": true
     },
     "button.reset_filter": {
       "maintenanceAction": true,
