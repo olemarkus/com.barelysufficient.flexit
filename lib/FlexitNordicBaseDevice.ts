@@ -1,4 +1,5 @@
 import Homey from 'homey';
+import { FanProfileError } from './FanProfileError';
 import { createRuntimeLogger, RuntimeLogger } from './logging';
 import {
   Registry,
@@ -14,6 +15,7 @@ import {
   FAN_PROFILE_MODES,
   FAN_PROFILE_SETTING_KEYS,
   FanProfileMode,
+  FanProfileUpdate,
   MIN_FILTER_CHANGE_INTERVAL_HOURS,
   MAX_FILTER_CHANGE_INTERVAL_HOURS,
   MIN_FILTER_CHANGE_INTERVAL_MONTHS,
@@ -255,9 +257,7 @@ export abstract class FlexitNordicBaseDevice extends Homey.Device {
       await this.maybeHandleHighDurationSetting(
         unitId, newSettings, highDurationChanged,
       );
-      for (const mode of changedFanModes) {
-        await this.maybeHandleFanProfileModeSetting(unitId, mode, newSettings);
-      }
+      await this.maybeHandleFanProfileSettings(unitId, changedFanModes, newSettings);
     } finally {
       this.settingsUpdateInProgress = false;
       this.scheduleDeferredRegistrySettingsFlush();
@@ -531,48 +531,41 @@ export abstract class FlexitNordicBaseDevice extends Homey.Device {
     }
   }
 
-  private async maybeHandleFanProfileModeSetting(
+  private async maybeHandleFanProfileSettings(
     unitId: string,
-    mode: FanProfileMode,
+    modes: FanProfileMode[],
     newSettings: Record<string, unknown>,
   ) {
-    const modeSettings = FAN_PROFILE_SETTING_KEYS[mode];
-    const requestedSupply = Number(
-      newSettings[modeSettings.supply] ?? this.getSetting(modeSettings.supply),
-    );
-    const requestedExhaust = Number(
-      newSettings[modeSettings.exhaust] ?? this.getSetting(modeSettings.exhaust),
-    );
-    if (!Number.isFinite(requestedSupply) || !Number.isFinite(requestedExhaust)) {
-      throw new Error(`Both supply and exhaust values are required for ${mode} fan settings.`);
+    const updates: FanProfileUpdate[] = [];
+    for (const mode of modes) {
+      const keys = FAN_PROFILE_SETTING_KEYS[mode];
+      const supply = normalizeFanProfilePercent(
+        newSettings[keys.supply] ?? this.getSetting(keys.supply), mode, 'supply',
+      );
+      const exhaust = normalizeFanProfilePercent(
+        newSettings[keys.exhaust] ?? this.getSetting(keys.exhaust), mode, 'exhaust',
+      );
+      if (
+        supply === Number(this.getSetting(keys.supply))
+        && exhaust === Number(this.getSetting(keys.exhaust))
+      ) continue;
+      updates.push({ mode, supply, exhaust });
     }
-    const normalizedSupply = normalizeFanProfilePercent(requestedSupply, mode, 'supply');
-    const normalizedExhaust = normalizeFanProfilePercent(requestedExhaust, mode, 'exhaust');
-
-    const currentSupply = Number(this.getSetting(modeSettings.supply));
-    const currentExhaust = Number(this.getSetting(modeSettings.exhaust));
-    const supplyInSync = Number.isFinite(currentSupply)
-      && Math.abs(currentSupply - normalizedSupply) < 0.5;
-    const exhaustInSync = Number.isFinite(currentExhaust)
-      && Math.abs(currentExhaust - normalizedExhaust) < 0.5;
-    if (supplyInSync && exhaustInSync) return;
-
+    if (updates.length === 0) return;
     try {
-      this.getLogger().info('device.setting.fan_profile.write', 'Updating fan profile setting', {
-        unitId,
-        mode,
-        supplyPercent: normalizedSupply,
-        exhaustPercent: normalizedExhaust,
-      });
-      await Registry.setFanProfileMode(unitId, mode, normalizedSupply, normalizedExhaust);
+      this.getLogger().info('device.setting.fan_profile.write', 'Updating fan profile settings', { unitId, modes });
+      if (updates.length === 1) {
+        const { mode, supply, exhaust } = updates[0];
+        await Registry.setFanProfileMode(unitId, mode, supply, exhaust);
+      } else {
+        await Registry.setFanProfileModes(unitId, updates);
+      }
     } catch (error) {
-      this.getLogger().error('device.setting.fan_profile.failed', 'Failed to update fan profile setting', error, {
-        unitId,
-        mode,
-        supplyPercent: normalizedSupply,
-        exhaustPercent: normalizedExhaust,
-      });
-      throw new Error(`Failed to update ${mode} fan profile on the unit.`);
+      this.getLogger().error(
+        'device.setting.fan_profile.failed', 'Failed to update fan profile settings', error, { unitId, modes },
+      );
+      if (error instanceof FanProfileError) throw error;
+      throw new Error('Failed to update fan profiles on the unit.');
     }
   }
 

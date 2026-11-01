@@ -781,14 +781,14 @@ describe('Cloud transport – UnitRegistry integration', () => {
     expect(value).toBe(0);
   });
 
-  it('sets fan profile mode via cloud', async () => {
+  it('sets Home below the captured limits and Away values via cloud', async () => {
     registry.registerCloud(UNIT_ID, mock.device, {
       plantId: PLANT_ID,
       client: mockClient,
     });
     await sleep(50);
 
-    await registry.setFanProfileMode(UNIT_ID, 'home', 70, 69);
+    await registry.setFanProfileMode(UNIT_ID, 'home', 40, 35);
 
     // Should have written supply and exhaust
     expect(mockClient.writeDatapoint.callCount).to.be.greaterThanOrEqual(2);
@@ -796,9 +796,107 @@ describe('Cloud transport – UnitRegistry integration', () => {
     const exhaustCall = mockClient.writeDatapoint.getCall(1);
     // home supply = AV:1836, home exhaust = AV:1841
     expect(supplyCall.args[1]).toBe(bacnetObjectToCloudPath(2, 1836));
-    expect(supplyCall.args[2]).toBe(70);
+    expect(supplyCall.args[2]).toBe(40);
     expect(exhaustCall.args[1]).toBe(bacnetObjectToCloudPath(2, 1841));
-    expect(exhaustCall.args[2]).toBe(69);
+    expect(exhaustCall.args[2]).toBe(35);
+  });
+
+  it('lowers Away before Home when both cloud fan profiles change together', async () => {
+    registry.registerCloud(UNIT_ID, mock.device, { plantId: PLANT_ID, client: mockClient });
+    await sleep(50);
+
+    await registry.setFanProfileModes(UNIT_ID, [
+      { mode: 'home', supply: 40, exhaust: 44 },
+      { mode: 'away', supply: 30, exhaust: 35 },
+    ]);
+
+    const writes = mockClient.writeDatapoint.getCalls().map((call) => [
+      cloudPathToBacnetObject(call.args[1]).instance, call.args[2],
+    ]);
+    expect(writes).toEqual([[1837, 30], [1842, 35], [1836, 40], [1841, 44]]);
+    expect(mock.getSetting('fan_profile_away_supply')).toBe(30);
+    expect(mock.getSetting('fan_profile_away_exhaust')).toBe(35);
+    expect(mock.getSetting('fan_profile_home_supply')).toBe(40);
+    expect(mock.getSetting('fan_profile_home_exhaust')).toBe(44);
+  });
+
+  it('raises Home before Away when both cloud fan profiles change together', async () => {
+    registry.registerCloud(UNIT_ID, mock.device, { plantId: PLANT_ID, client: mockClient });
+    await sleep(50);
+
+    await registry.setFanProfileModes(UNIT_ID, [
+      { mode: 'away', supply: 85, exhaust: 90 },
+      { mode: 'home', supply: 90, exhaust: 95 },
+    ]);
+
+    const writes = mockClient.writeDatapoint.getCalls().map((call) => [
+      cloudPathToBacnetObject(call.args[1]).instance, call.args[2],
+    ]);
+    expect(writes).toEqual([[1836, 90], [1841, 95], [1837, 85], [1842, 90]]);
+    expect(mock.getSetting('fan_profile_home_supply')).toBe(90);
+    expect(mock.getSetting('fan_profile_home_exhaust')).toBe(95);
+    expect(mock.getSetting('fan_profile_away_supply')).toBe(85);
+    expect(mock.getSetting('fan_profile_away_exhaust')).toBe(90);
+  });
+
+  it('reports the cloud rejection and stops after the first forbidden fan profile write', async () => {
+    mockClient.writeDatapoint.rejects(new HttpError(403, 'Forbidden'));
+    registry.registerCloud(UNIT_ID, mock.device, { plantId: PLANT_ID, client: mockClient });
+    await sleep(50);
+
+    await expect(registry.setFanProfileMode(UNIT_ID, 'home', 44, 40)).rejects.toThrow(
+      'Flexit cloud rejected the Home fan settings (HTTP 403: Forbidden).',
+    );
+    expect(mockClient.writeDatapoint.callCount).toBe(1);
+    expect(mock.getSetting('fan_profile_home_supply')).toBe(80);
+    expect(mock.getSetting('fan_profile_home_exhaust')).toBe(79);
+  });
+
+  it('distinguishes a failed confirmation read from a rejected cloud fan profile write', async () => {
+    mockClient.writeDatapoint.resolves(true);
+    const values = buildCloudSensorResponse(PLANT_ID, defaultSensorValues());
+    mockClient.readDatapoints.callsFake(async () => {
+      if (mockClient.writeDatapoint.callCount >= 2) throw new HttpError(403, 'Forbidden');
+      return values;
+    });
+    registry.registerCloud(UNIT_ID, mock.device, { plantId: PLANT_ID, client: mockClient });
+    await sleep(50);
+    const unit = (registry as any).units.get(UNIT_ID);
+    // Matching pre-write cache must not substitute for a fresh confirmation.
+    unit.probeValues.set('2:1836', 44);
+    unit.probeValues.set('2:1841', 40);
+
+    await expect(registry.setFanProfileMode(UNIT_ID, 'home', 44, 40)).rejects.toThrow(
+      'The Home fan settings were sent, but could not be confirmed (HTTP 403: Forbidden).',
+    );
+    expect(mockClient.writeDatapoint.callCount).toBe(2);
+    expect(mock.getSetting('fan_profile_home_supply')).toBe(80);
+    expect(mock.getSetting('fan_profile_home_exhaust')).toBe(79);
+  });
+
+  it('does not report success when cloud acknowledges a fan profile without applying it', async () => {
+    mockClient.writeDatapoint.resolves(true);
+    registry.registerCloud(UNIT_ID, mock.device, { plantId: PLANT_ID, client: mockClient });
+    await sleep(50);
+
+    await expect(registry.setFanProfileMode(UNIT_ID, 'home', 44, 40)).rejects.toThrow(
+      'Current: supply 80%; exhaust 79%.',
+    );
+    expect(mock.getSetting('fan_profile_home_supply')).toBe(80);
+    expect(mock.getSetting('fan_profile_home_exhaust')).toBe(79);
+  });
+
+  it('syncs lower Home setpoints observed through cloud polling', async () => {
+    const sensorValues = defaultSensorValues();
+    sensorValues.find((entry) => entry.type === OBJ.ANALOG_VALUE && entry.instance === 1836)!.value = 40;
+    sensorValues.find((entry) => entry.type === OBJ.ANALOG_VALUE && entry.instance === 1841)!.value = 35;
+    mockClient = makeMockCloudClient({ sensorValues });
+    registry.registerCloud(UNIT_ID, mock.device, { plantId: PLANT_ID, client: mockClient });
+    await sleep(50);
+
+    expect(mock.getSetting('fan_profile_home_supply')).toBe(40);
+    expect(mock.getSetting('fan_profile_home_exhaust')).toBe(35);
+    expect(mock.capabilityValues.measure_fan_setpoint_percent).toBe(40);
   });
 
   it('sets heating coil via cloud', async () => {

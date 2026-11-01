@@ -1,6 +1,7 @@
 /* eslint-disable max-lines */
 import { getBacnetClient, BacnetEnums, setBacnetLogger } from './bacnetClient';
 import { discoverFlexitUnits } from './flexitDiscovery';
+import { FanProfileError } from './FanProfileError';
 import {
   FlexitCloudClient,
   bacnetObjectToCloudPath,
@@ -40,6 +41,8 @@ const OBJECT_TYPE = BacnetEnums.ObjectType;
 const DEFAULT_FIREPLACE_VENTILATION_MINUTES = 10;
 const DEFAULT_WRITE_PRIORITY = 13;
 const FLEXIT_GO_WRITE_PRIORITY = 16;
+const FAN_PROFILE_RANGE_MIN_PROPERTY = 5036;
+const FAN_PROFILE_RANGE_MAX_PROPERTY = 5037;
 export const MIN_TARGET_TEMPERATURE_C = 10;
 export const MAX_TARGET_TEMPERATURE_C = 30;
 const TARGET_TEMPERATURE_STEP_C = 0.5;
@@ -68,33 +71,19 @@ export const FILTER_CHANGE_INTERVAL_HOURS_LEGACY_SETTING = 'filter_change_interv
 export const FAN_PROFILE_MODES = ['home', 'away', 'high', 'fireplace', 'cooker'] as const;
 export type FanProfileMode = (typeof FAN_PROFILE_MODES)[number];
 export type FanProfileFan = 'supply' | 'exhaust';
+export interface FanProfileUpdate {
+  mode: FanProfileMode;
+  supply: number;
+  exhaust: number;
+}
+// Sequence linked profiles without imposing additional value restrictions.
+const FAN_PROFILE_SAVE_ORDER: readonly FanProfileMode[] = ['away', 'home', 'high', 'fireplace', 'cooker'];
 const CURRENT_FAN_SETPOINT_CAPABILITIES: Record<FanProfileFan, string> = {
   supply: 'measure_fan_setpoint_percent',
   exhaust: 'measure_fan_setpoint_percent.extract',
 };
-// Observed Flexit GO range hints (AV 1835..1844 proprietary 5036/5037, also probed as LOW/HIGH_LIMIT).
-export const FAN_PROFILE_PERCENT_RANGES: Record<FanProfileMode, Record<FanProfileFan, { min: number; max: number }>> = {
-  high: {
-    supply: { min: 80, max: 100 },
-    exhaust: { min: 79, max: 100 },
-  },
-  home: {
-    supply: { min: 56, max: 100 },
-    exhaust: { min: 55, max: 99 },
-  },
-  away: {
-    supply: { min: 30, max: 80 },
-    exhaust: { min: 30, max: 79 },
-  },
-  fireplace: {
-    supply: { min: 30, max: 100 },
-    exhaust: { min: 30, max: 100 },
-  },
-  cooker: {
-    supply: { min: 30, max: 100 },
-    exhaust: { min: 30, max: 100 },
-  },
-};
+// Homey settings use static bounds. Configuration-specific Flexit GO range hints
+// must not become universal limits for every unit or mode.
 export const MIN_FAN_PROFILE_PERCENT = 30;
 export const MAX_FAN_PROFILE_PERCENT = 100;
 export const FAN_PROFILE_SETTING_KEYS: Record<FanProfileMode, Record<FanProfileFan, string>> = {
@@ -589,8 +578,11 @@ export function isFanProfileMode(value: unknown): value is FanProfileMode {
   return typeof value === 'string' && (FAN_PROFILE_MODES as readonly string[]).includes(value);
 }
 
-export function fanProfilePercentRange(mode: FanProfileMode, fan: FanProfileFan): { min: number; max: number } {
-  return FAN_PROFILE_PERCENT_RANGES[mode][fan];
+function readFanProfilePercent(value: unknown, mode: FanProfileMode, fan: FanProfileFan): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new FanProfileError(`Cannot read the ${FAN_MODE_LABELS[mode]} ${fan} setting. Try again.`);
+  }
+  return value;
 }
 
 export function normalizeFanProfilePercent(
@@ -604,11 +596,10 @@ export function normalizeFanProfilePercent(
   }
 
   const rounded = Math.round(numeric);
-  const range = fanProfilePercentRange(mode, fan);
-  if (rounded < range.min || rounded > range.max) {
+  if (rounded < MIN_FAN_PROFILE_PERCENT || rounded > MAX_FAN_PROFILE_PERCENT) {
     throw new Error(
-      `${mode} ${fan} fan profile must be between ${range.min}`
-      + ` and ${range.max} percent`,
+      `${mode} ${fan} fan profile must be between ${MIN_FAN_PROFILE_PERCENT}`
+      + ` and ${MAX_FAN_PROFILE_PERCENT} percent`,
     );
   }
 
@@ -2284,12 +2275,15 @@ export class UnitRegistry {
         normalize: (value: unknown) => number;
         expectedValue: number;
         label: string;
+        requireFreshRead?: boolean;
       },
     ): Promise<number | undefined> {
       const {
         objectId, normalize, expectedValue, label,
       } = config;
-      let cachedValue = unit.probeValues.get(objectKey(objectId.type, objectId.instance));
+      let cachedValue = config.requireFreshRead
+        ? undefined
+        : unit.probeValues.get(objectKey(objectId.type, objectId.instance));
       let normalizedVerifiedValue = (
         cachedValue === undefined || !Number.isFinite(cachedValue)
           ? undefined
@@ -2579,6 +2573,65 @@ export class UnitRegistry {
       return rapidActive || operationMode === OPERATION_MODE_VALUES.TEMPORARY_HIGH;
     }
 
+    async setFanProfileModes(unitId: string, updates: FanProfileUpdate[]) {
+      const unit = this.units.get(unitId);
+      if (!unit) throw new FanProfileError('The ventilation unit is unavailable. Please try again.');
+      const requested = updates.map(({ mode, supply, exhaust }) => ({
+        mode,
+        supply: normalizeFanProfilePercent(supply, mode, 'supply'),
+        exhaust: normalizeFanProfilePercent(exhaust, mode, 'exhaust'),
+      }));
+      if (requested.length === 0) return;
+      const values = await this.readFanProfilePresentValues(unit, requested.map(({ mode }) => mode));
+      const pending = requested.map((target) => {
+        const read = (fan: FanProfileFan) => {
+          const object = FAN_PROFILE_OBJECTS[target.mode][fan];
+          const value = values.get(objectKey(object.type, object.instance));
+          if (value === undefined || !Number.isFinite(value)) {
+            throw new FanProfileError(`Cannot read the ${FAN_MODE_LABELS[target.mode]} ${fan} setting. Try again.`);
+          }
+          return value;
+        };
+        return { target, current: { supply: read('supply'), exhaust: read('exhaust') } };
+      });
+      for (const decrease of [true, false]) {
+        const order = decrease ? FAN_PROFILE_SAVE_ORDER : [...FAN_PROFILE_SAVE_ORDER].reverse();
+        pending.sort((a, b) => order.indexOf(a.target.mode) - order.indexOf(b.target.mode));
+        for (const change of pending) {
+          const { target, current } = change;
+          const next = decrease ? {
+            supply: Math.min(current.supply, target.supply),
+            exhaust: Math.min(current.exhaust, target.exhaust),
+          } : target;
+          if (valuesMatch(current.supply, next.supply) && valuesMatch(current.exhaust, next.exhaust)) continue;
+          await this.writeFanProfileMode(unit, {
+            mode: target.mode, supply: next.supply, exhaust: next.exhaust,
+          });
+          change.current = { supply: next.supply, exhaust: next.exhaust };
+        }
+      }
+    }
+
+    private async readFanProfilePresentValues(unit: UnitState, modes: FanProfileMode[]) {
+      const objects = modes.flatMap((mode) => Object.values(FAN_PROFILE_OBJECTS[mode]));
+      if (unit.transport !== 'cloud') {
+        return this.readPresentValues(this.dependencies.getBacnetClient(unit.bacnetPort), unit, objects);
+      }
+      if (!unit.cloud) throw new FanProfileError('The Flexit cloud connection is unavailable. Please try again.');
+      const { client, plantId } = unit.cloud;
+      const paths = objects.map(({ type, instance }) => bacnetObjectToCloudPath(type, instance));
+      const response = await client.readDatapoints(plantId, paths);
+      const values = new Map<string, number>();
+      objects.forEach((object, index) => {
+        const path = paths[index];
+        const value = (response[`${plantId}${path}`] ?? response[path])?.value?.value;
+        if (typeof value === 'number' && Number.isFinite(value)) {
+          values.set(objectKey(object.type, object.instance), value);
+        }
+      });
+      return values;
+    }
+
     async setFanProfileMode(
       unitId: string,
       mode: FanProfileMode,
@@ -2586,19 +2639,26 @@ export class UnitRegistry {
       requestedExhaustPercent: number,
     ) {
       if (!isFanProfileMode(mode)) throw new Error(`Unsupported fan profile mode '${mode}'`);
-      this.log(
-        `[UnitRegistry] Setting ${mode} fan profile`
-        + ` supply=${requestedSupplyPercent}% exhaust=${requestedExhaustPercent}% for ${unitId}`,
-      );
-
       const unit = this.units.get(unitId);
       if (!unit) throw new Error('Unit not found');
+      return this.writeFanProfileMode(unit, {
+        mode,
+        supply: normalizeFanProfilePercent(requestedSupplyPercent, mode, 'supply'),
+        exhaust: normalizeFanProfilePercent(requestedExhaustPercent, mode, 'exhaust'),
+      });
+    }
+
+    private async writeFanProfileMode(unit: UnitState, profile: FanProfileUpdate) {
+      const { mode, supply: supplyPercent, exhaust: exhaustPercent } = profile;
+      const { unitId } = unit;
+      this.log(
+        `[UnitRegistry] Setting ${mode} fan profile`
+        + ` supply=${supplyPercent}% exhaust=${exhaustPercent}% for ${unitId}`,
+      );
       if (unit.transport === 'cloud') {
-        return this.cloudSetFanProfileMode(unit, mode, requestedSupplyPercent, requestedExhaustPercent);
+        return this.cloudSetFanProfileMode(unit, mode, supplyPercent, exhaustPercent);
       }
 
-      const supplyPercent = normalizeFanProfilePercent(requestedSupplyPercent, mode, 'supply');
-      const exhaustPercent = normalizeFanProfilePercent(requestedExhaustPercent, mode, 'exhaust');
       const writeOptions: WriteOptions = {
         maxSegments: BacnetEnums.MaxSegmentsAccepted.SEGMENTS_0,
         maxApdu: BacnetEnums.MaxApduLengthAccepted.OCTETS_1476,
@@ -2637,32 +2697,111 @@ export class UnitRegistry {
           unit,
           [objects.supply, objects.exhaust],
         );
-        const verifiedSupply = normalizeFanProfilePercent(
+        const verifiedSupply = readFanProfilePercent(
           verifiedValues.get(objectKey(objects.supply.type, objects.supply.instance)),
           mode,
           'supply',
         );
-        const verifiedExhaust = normalizeFanProfilePercent(
+        const verifiedExhaust = readFanProfilePercent(
           verifiedValues.get(objectKey(objects.exhaust.type, objects.exhaust.instance)),
           mode,
           'exhaust',
         );
+        await this.assertFanProfileApplied(unit, mode, {
+          supply: supplyPercent, exhaust: exhaustPercent,
+        }, {
+          supply: verifiedSupply, exhaust: verifiedExhaust,
+        });
         this.log(
           `[UnitRegistry] Verified ${mode} fan profile`
           + ` supply=${verifiedSupply}% exhaust=${verifiedExhaust}% for ${unitId}`,
         );
 
-        const settingsForMode = FAN_PROFILE_SETTING_KEYS[mode];
-        for (const device of unit.devices) {
-          this.updateDeviceSettings(device, {
-            [settingsForMode.supply]: verifiedSupply,
-            [settingsForMode.exhaust]: verifiedExhaust,
-          }).catch((err) => {
-            this.log(`[UnitRegistry] Failed to sync ${mode} fan settings for ${unitId}:`, err);
-          });
-        }
+        await this.syncFanProfileSettingsAfterWrite(unit, mode, { supply: verifiedSupply, exhaust: verifiedExhaust });
 
         this.pollUnit(unitId);
+      });
+    }
+
+    private async syncFanProfileSettingsAfterWrite(
+      unit: UnitState,
+      mode: FanProfileMode,
+      actual: Record<FanProfileFan, number>,
+    ) {
+      const settings: Record<string, number> = {};
+      for (const fan of ['supply', 'exhaust'] as const) {
+        const value = actual[fan];
+        if (value >= MIN_FAN_PROFILE_PERCENT && value <= MAX_FAN_PROFILE_PERCENT) {
+          settings[FAN_PROFILE_SETTING_KEYS[mode][fan]] = Math.round(value);
+        }
+      }
+      if (Object.keys(settings).length === 0) return;
+      for (const device of unit.devices) {
+        await this.updateDeviceSettings(device, settings).catch((error) => {
+          this.log(`[UnitRegistry] Failed to sync ${mode} fan settings for ${unit.unitId}:`, error);
+        });
+      }
+    }
+
+    private async assertFanProfileApplied(
+      unit: UnitState,
+      mode: FanProfileMode,
+      requested: Record<FanProfileFan, number>,
+      actual: Record<FanProfileFan, number>,
+    ) {
+      if (valuesMatch(requested.supply, actual.supply) && valuesMatch(requested.exhaust, actual.exhaust)) return;
+      this.pollUnit(unit.unitId);
+      const ranges = await Promise.all((['supply', 'exhaust'] as const).map((fan) => (
+        this.describeFanProfileRange(unit, mode, fan)
+      )));
+      const limits = ranges.filter(Boolean).join('; ');
+      const belowAway = mode === 'home' && (['supply', 'exhaust'] as const).some((fan) => {
+        const away = FAN_PROFILE_OBJECTS.away[fan];
+        const value = unit.probeValues.get(objectKey(away.type, away.instance));
+        return typeof value === 'number' && requested[fan] < value;
+      });
+      const hint = belowAway
+        ? 'To lower Home further, try lowering Away first.'
+        : 'Check the mode settings in Flexit GO before retrying.';
+      throw new FanProfileError(
+        `${FAN_MODE_LABELS[mode]} fan speeds weren't fully saved.`
+        + (limits ? ` Allowed now: ${limits}.` : '')
+        + ` Current: supply ${actual.supply}%; exhaust ${actual.exhaust}%. ${hint}`,
+      );
+    }
+
+    private async describeFanProfileRange(unit: UnitState, mode: FanProfileMode, fan: FanProfileFan): Promise<string> {
+      if (unit.transport === 'cloud') return '';
+      const objectId = FAN_PROFILE_OBJECTS[mode][fan];
+      const client = this.dependencies.getBacnetClient(unit.bacnetPort);
+      return new Promise<string>((resolve) => {
+        const timeout = setTimeout(() => resolve(''), this.getWriteTimeoutMs());
+        const finish = (description: string) => {
+          clearTimeout(timeout);
+          resolve(description);
+        };
+        try {
+          client.readPropertyMultiple(unit.ip, [{
+            objectId,
+            properties: [{ id: FAN_PROFILE_RANGE_MIN_PROPERTY }, { id: FAN_PROFILE_RANGE_MAX_PROPERTY }],
+          }], (error: unknown, response: any) => {
+            if (error) return finish('');
+            const objects = Array.isArray(response) ? response : response?.values;
+            const object = Array.isArray(objects) ? objects.find((entry: any) => (
+              entry?.objectId?.type === objectId.type && entry?.objectId?.instance === objectId.instance
+            )) : undefined;
+            const properties = Array.isArray(object?.values) ? object.values : [];
+            const minProperty = properties.find((entry: any) => entry?.id === FAN_PROFILE_RANGE_MIN_PROPERTY);
+            const maxProperty = properties.find((entry: any) => entry?.id === FAN_PROFILE_RANGE_MAX_PROPERTY);
+            const min = minProperty?.value?.[0]?.value;
+            const max = maxProperty?.value?.[0]?.value;
+            if (typeof min !== 'number' || typeof max !== 'number' || !Number.isFinite(min)
+              || !Number.isFinite(max) || min > max) return finish('');
+            finish(`${fan} ${min}–${max}%`);
+          });
+        } catch {
+          finish('');
+        }
       });
     }
 
@@ -3331,8 +3470,7 @@ export class UnitRegistry {
           if (nextValue === undefined || !Number.isFinite(nextValue)) continue;
 
           const normalized = Math.round(nextValue);
-          const range = fanProfilePercentRange(mode, fan);
-          if (normalized < range.min || normalized > range.max) {
+          if (normalized < MIN_FAN_PROFILE_PERCENT || normalized > MAX_FAN_PROFILE_PERCENT) {
             this.log(
               `[UnitRegistry] Ignoring out-of-range ${mode} ${fan} fan profile value`
               + ` ${nextValue} from ${device.getData().unitId}`,
@@ -4798,30 +4936,65 @@ export class UnitRegistry {
       requestedSupplyPercent: number,
       requestedExhaustPercent: number,
     ) {
-      const supplyPercent = normalizeFanProfilePercent(requestedSupplyPercent, mode, 'supply');
-      const exhaustPercent = normalizeFanProfilePercent(requestedExhaustPercent, mode, 'exhaust');
+      const supplyPercent = requestedSupplyPercent;
+      const exhaustPercent = requestedExhaustPercent;
+      if (!unit.cloud) throw new FanProfileError('The Flexit cloud connection is unavailable. Please try again.');
+      const { client, plantId } = unit.cloud;
       const objects = FAN_PROFILE_OBJECTS[mode];
-
-      this.log(
-        `[UnitRegistry] Cloud: updating ${mode} fan profile to`
-        + ` supply=${supplyPercent}% exhaust=${exhaustPercent}% for ${unit.unitId}`,
-      );
-
-      const supplyOk = await this.cloudWriteDatapoint(unit, objects.supply, supplyPercent);
-      const exhaustOk = await this.cloudWriteDatapoint(unit, objects.exhaust, exhaustPercent);
-      if (!supplyOk || !exhaustOk) throw new Error(`Failed to write ${mode} fan profile via cloud`);
-
-      const settingsForMode = FAN_PROFILE_SETTING_KEYS[mode];
-      for (const device of unit.devices) {
-        this.updateDeviceSettings(device, {
-          [settingsForMode.supply]: supplyPercent,
-          [settingsForMode.exhaust]: exhaustPercent,
-        }).catch((err) => {
-          this.log(`[UnitRegistry] Failed to sync ${mode} fan settings for ${unit.unitId}:`, err);
-        });
+      const requested = { supply: supplyPercent, exhaust: exhaustPercent };
+      const write = async (fan: FanProfileFan) => {
+        const objectId = objects[fan];
+        try {
+          const ok = await client.writeDatapoint(
+            plantId, bacnetObjectToCloudPath(objectId.type, objectId.instance), requested[fan],
+          );
+          if (!ok) {
+            throw new FanProfileError(`Flexit cloud did not accept the ${FAN_MODE_LABELS[mode]} ${fan} setting.`);
+          }
+        } catch (error) {
+          if (error instanceof HttpError) {
+            throw new FanProfileError(
+              `Flexit cloud rejected the ${FAN_MODE_LABELS[mode]} fan settings`
+              + ` (HTTP ${error.status}: ${error.statusText}).`
+              + ' Check the allowed fan-profile values and account access in Flexit GO.',
+            );
+          }
+          throw error;
+        }
+      };
+      try {
+        await write('supply');
+        await write('exhaust');
+        await this.cloudPollUnit(unit);
+        const [supply, exhaust] = await Promise.all((['supply', 'exhaust'] as const).map(async (fan) => {
+          const value = await this.cloudReadNumericWithRetry(unit, {
+            objectId: objects[fan],
+            normalize: (raw) => readFanProfilePercent(raw, mode, fan),
+            expectedValue: requested[fan],
+            label: `${mode} ${fan} fan profile`,
+            requireFreshRead: true,
+          });
+          if (value === undefined) {
+            throw new FanProfileError(
+              `Could not confirm the ${FAN_MODE_LABELS[mode]} ${fan} setting from Flexit cloud.`,
+            );
+          }
+          return value;
+        }));
+        const actual = { supply, exhaust };
+        await this.assertFanProfileApplied(unit, mode, requested, actual);
+        await this.syncFanProfileSettingsAfterWrite(unit, mode, actual);
+      } catch (error) {
+        this.pollUnit(unit.unitId);
+        if (error instanceof HttpError) {
+          throw new FanProfileError(
+            `The ${FAN_MODE_LABELS[mode]} fan settings were sent, but could not be confirmed`
+            + ` (HTTP ${error.status}: ${error.statusText}).`
+            + ' Check the saved fan-profile values in Flexit GO before retrying.',
+          );
+        }
+        throw error;
       }
-
-      await this.cloudPollUnit(unit);
     }
 
     private async cloudWriteFireplaceMode(unit: UnitState, temporaryRapidActive: boolean) {

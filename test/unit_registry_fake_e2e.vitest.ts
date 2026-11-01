@@ -17,6 +17,7 @@ import {
   VENTILATION_MODE_VALUES,
   DEFAULT_VENDOR_ID,
   DEFAULT_VENDOR_NAME,
+  pointKey,
 } from '../scripts/fake-unit/manifest.ts';
 
 const CLIENT_BIND_ADDRESS = '127.0.0.1';
@@ -717,18 +718,18 @@ describe('UnitRegistry fake-unit e2e', { timeout: 10000 }, () => {
     expect(inactive).toBe(false);
   });
 
-  it('writes home fan profile using AV 1836/1841 with priority 16', async () => {
+  it('writes Home below the captured limits and Away values using priority 16', async () => {
     const device = makeMockDevice(SERVER_BIND_ADDRESS, serverPort, 4380);
     registry.register('test_unit', device);
 
-    await registry.setFanProfileMode('test_unit', 'home', 70, 60);
+    await registry.setFanProfileMode('test_unit', 'home', 40, 35);
     await waitFor(() => {
       const supply = state.readPresentValue(OBJECT_TYPE.ANALOG_VALUE, 1836, PROPERTY_ID.PRESENT_VALUE);
       const exhaust = state.readPresentValue(OBJECT_TYPE.ANALOG_VALUE, 1841, PROPERTY_ID.PRESENT_VALUE);
       return supply.ok
         && exhaust.ok
-        && Math.abs(supply.value.value - 70) < 0.1
-        && Math.abs(exhaust.value.value - 60) < 0.1;
+        && Math.abs(supply.value.value - 40) < 0.1
+        && Math.abs(exhaust.value.value - 35) < 0.1;
     });
 
     const writes = writePresentValueSpy.getCalls().filter((call: any) => (
@@ -738,8 +739,129 @@ describe('UnitRegistry fake-unit e2e', { timeout: 10000 }, () => {
       && (call.args[1] === 1836 || call.args[1] === 1841)
     ));
     expect(writes.length).toBe(2);
+    expect(device.getSetting('fan_profile_home_supply')).toBe(40);
+    expect(device.getSetting('fan_profile_home_exhaust')).toBe(35);
+    expect(device.getSetting('fan_profile_away_supply')).toBe(56);
+    expect(device.getSetting('fan_profile_away_exhaust')).toBe(55);
+  });
+
+  it('saves linked fan profiles together while each intermediate write respects the unit limits', async () => {
+    writePresentValueSpy.restore();
+    const originalWrite = state.writePresentValue.bind(state);
+    const chains = [[1837, 1836, 1835], [1842, 1841, 1840]];
+    writePresentValueSpy = sinon.stub(state, 'writePresentValue').callsFake((...args) => {
+      const [type, instance, property, value] = args;
+      const chain = chains.find((entries) => entries.includes(instance));
+      if (type === OBJECT_TYPE.ANALOG_VALUE && property === PROPERTY_ID.PRESENT_VALUE
+        && chain && typeof value === 'number') {
+        const index = chain.indexOf(instance);
+        const adjacentValue = (other: number) => {
+          const read = state.readPresentValue(type, other, property);
+          if (!read.ok) throw new Error('Missing simulated fan profile');
+          return read.value.value;
+        };
+        const below = index > 0 && value < adjacentValue(chain[index - 1]);
+        const above = index < chain.length - 1 && value > adjacentValue(chain[index + 1]);
+        if (below || above) return {
+          ok: false,
+          errorClass: Bacnet.enum.ErrorClass.PROPERTY,
+          errorCode: Bacnet.enum.ErrorCode.VALUE_OUT_OF_RANGE,
+          message: 'Rejected by the unit range',
+        };
+      }
+      if (type === OBJECT_TYPE.ANALOG_VALUE && instance === 1837 && value === 15) {
+        return { ok: true, value: null };
+      }
+      return originalWrite(...args);
+    });
+    const device = makeMockDevice(SERVER_BIND_ADDRESS, serverPort, 4380);
+    registry.register('test_unit', device);
+
+    await registry.setFanProfileModes('test_unit', [
+      { mode: 'home', supply: 40, exhaust: 44 },
+      { mode: 'away', supply: 30, exhaust: 35 },
+      { mode: 'high', supply: 60, exhaust: 65 },
+    ]);
+    expect(device.getSetting('fan_profile_home_supply')).toBe(40);
+    expect(device.getSetting('fan_profile_away_supply')).toBe(30);
+    expect(device.getSetting('fan_profile_high_supply')).toBe(60);
+
+    await registry.setFanProfileModes('test_unit', [
+      { mode: 'away', supply: 85, exhaust: 90 },
+      { mode: 'home', supply: 90, exhaust: 95 },
+      { mode: 'high', supply: 100, exhaust: 99 },
+    ]);
+    expect(device.getSetting('fan_profile_home_supply')).toBe(90);
+    expect(device.getSetting('fan_profile_away_supply')).toBe(85);
+
+    await registry.setFanProfileModes('test_unit', [
+      { mode: 'home', supply: 60, exhaust: 96 },
+      { mode: 'away', supply: 50, exhaust: 92 },
+    ]);
+    expect(device.getSetting('fan_profile_home_supply')).toBe(60);
+    expect(device.getSetting('fan_profile_home_exhaust')).toBe(96);
+    expect(device.getSetting('fan_profile_away_supply')).toBe(50);
+    expect(device.getSetting('fan_profile_away_exhaust')).toBe(92);
+
+    // Older units can already contain observations below Homey's input floor.
+    (state as any).values.set(pointKey(OBJECT_TYPE.ANALOG_VALUE, 1837), 15);
+    (state as any).setSimulatedPoint('fan_profile_extract_away', 50);
+    (state as any).setSimulatedPoint('fan_profile_supply_home', 80);
+    (state as any).setSimulatedPoint('fan_profile_extract_home', 79);
+    const legacy = state.readPresentValue(OBJECT_TYPE.ANALOG_VALUE, 1837, PROPERTY_ID.PRESENT_VALUE);
+    expect(legacy.ok && legacy.value.value).toBe(15);
+    await registry.setFanProfileModes('test_unit', [
+      { mode: 'away', supply: 30, exhaust: 35 },
+      { mode: 'home', supply: 70, exhaust: 60 },
+    ]);
+    expect(device.getSetting('fan_profile_away_supply')).toBe(30);
+    expect(device.getSetting('fan_profile_away_exhaust')).toBe(35);
     expect(device.getSetting('fan_profile_home_supply')).toBe(70);
     expect(device.getSetting('fan_profile_home_exhaust')).toBe(60);
+  });
+
+  it.each([
+    { response: 'rejected', supply: 44, exhaust: 40, hint: 'To lower Home further, try lowering Away first.' },
+    { response: 'ignored', supply: 44, exhaust: 40, hint: 'To lower Home further, try lowering Away first.' },
+    { response: 'ignored', supply: 70, exhaust: 69, hint: 'Check the mode settings in Flexit GO before retrying.' },
+  ])('explains a $response Home profile at $supply/$exhaust with a relevant next step', async (scenario) => {
+    const { response, supply, exhaust, hint } = scenario;
+    writePresentValueSpy.restore();
+    const originalWrite = state.writePresentValue.bind(state);
+    writePresentValueSpy = sinon.stub(state, 'writePresentValue').callsFake((...args) => {
+      const [type, instance] = args;
+      if (type === OBJECT_TYPE.ANALOG_VALUE && (instance === 1836 || instance === 1841)) {
+        return response === 'ignored' ? { ok: true, value: null } : {
+          ok: false,
+          errorClass: Bacnet.enum.ErrorClass.PROPERTY,
+          errorCode: Bacnet.enum.ErrorCode.VALUE_OUT_OF_RANGE,
+          message: 'Rejected by the unit',
+        };
+      }
+      return originalWrite(...args);
+    });
+    const device = makeMockDevice(SERVER_BIND_ADDRESS, serverPort, 4380);
+    registry.register('test_unit', device);
+
+    await expect(registry.setFanProfileMode('test_unit', 'home', supply, exhaust)).rejects.toThrow(
+      "Home fan speeds weren't fully saved. Allowed now: supply 56–100%; exhaust 55–99%."
+      + ` Current: supply 80%; exhaust 79%. ${hint}`,
+    );
+    expect(device.getSetting('fan_profile_home_supply')).toBe(80);
+    expect(device.getSetting('fan_profile_home_exhaust')).toBe(79);
+  });
+
+  it('syncs Home setpoints below the old fixed minimum from a BACnet poll', async () => {
+    state.setSimulatedPoint('fan_profile_supply_home', 40);
+    state.setSimulatedPoint('fan_profile_extract_home', 35);
+    const device = makeMockDevice(SERVER_BIND_ADDRESS, serverPort, 4380);
+    registry.register('test_unit', device);
+
+    await waitFor(() => device.getSetting('fan_profile_home_supply') === 40);
+    expect(device.getSetting('fan_profile_home_exhaust')).toBe(35);
+    expect(device.setCapabilityValue.getCalls().some((call: any) => (
+      call.args[0] === 'measure_fan_setpoint_percent' && call.args[1] === 40
+    ))).toBe(true);
   });
 
   it('writes fireplace duration to PIV:270 with priority 13 and syncs setting', async () => {

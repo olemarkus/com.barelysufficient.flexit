@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import sinon from 'sinon';
 import { createFlexitAppClass } from '../lib/createAppClass';
+import { normalizeFanProfilePercent } from '../lib/UnitRegistry';
 import { findStructuredLog } from './logging_test_utils';
 
 class MockHomeyApp {
@@ -441,18 +442,10 @@ describe('App flow registration', () => {
     expect(registryStub.setHeatingCoilEnabled.called).toBe(false);
   });
 
-  it('rejects out-of-range values for selected mode', async () => {
+  it('rejects fan Flow values outside the static range', async () => {
     const registryStub = createRegistryStub();
     const cards = createCards();
-    const AppClass = createAppClass(
-      registryStub,
-      (value: number, mode: string, fan: string) => {
-        if (mode === 'high' && fan === 'supply' && value < 80) {
-          throw new Error('high supply fan profile must be between 80 and 100 percent');
-        }
-        return Math.round(value);
-      },
-    );
+    const AppClass = createAppClass(registryStub, normalizeFanProfilePercent);
     const app = new AppClass();
     wireCards(app, cards);
     await app.onInit();
@@ -464,7 +457,7 @@ describe('App flow registration', () => {
       await listener({
         device: { getData: () => ({ unitId: 'unit-1' }) },
         mode: 'high',
-        supply_percent: 70,
+        supply_percent: 29,
         exhaust_percent: 90,
       });
     } catch (error) {
@@ -472,8 +465,26 @@ describe('App flow registration', () => {
     }
 
     expect(thrown).not.toBe(null);
-    expect(thrown?.message).toContain('between 80 and 100');
+    expect(thrown?.message).toContain('between 30 and 100');
     expect(registryStub.setFanProfileMode.called).toBe(false);
+  });
+
+  it('passes a 30 percent Home profile from a Flow to the registry', async () => {
+    const registryStub = createRegistryStub();
+    const cards = createCards();
+    const AppClass = createAppClass(registryStub, normalizeFanProfilePercent);
+    const app = new AppClass();
+    wireCards(app, cards);
+    await app.onInit();
+
+    const listener = cards.action.setFanProfileMode.registerRunListener.firstCall.args[0];
+    await listener({
+      device: { getData: () => ({ unitId: 'unit-1' }) },
+      mode: 'home',
+      supply_percent: 30,
+      exhaust_percent: 35,
+    });
+    expect(registryStub.setFanProfileMode.calledOnceWithExactly('unit-1', 'home', 30, 35)).toBe(true);
   });
 
   it('rejects missing mode and non-numeric fan percentages', async () => {
