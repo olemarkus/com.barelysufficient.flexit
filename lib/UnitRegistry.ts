@@ -201,6 +201,7 @@ const COOKER_HOOD_ON = 1;
 const FREE_COOLING_ACTIVE_MODE_VALUE = 10;
 
 const BACNET_OBJECTS = {
+  heatExchangerSpeed: { type: OBJECT_TYPE.ANALOG_OUTPUT, instance: 0 },
   comfortButton: { type: OBJECT_TYPE.BINARY_VALUE, instance: 50 },
   comfortButtonDelay: { type: OBJECT_TYPE.POSITIVE_INTEGER_VALUE, instance: 318 },
   ventilationMode: { type: OBJECT_TYPE.MULTI_STATE_VALUE, instance: 42 },
@@ -348,6 +349,7 @@ const CAPABILITY_MAPPINGS = [
   { dataKey: 'measure_temperature.outdoor', capability: 'measure_temperature.outdoor' },
   { dataKey: 'measure_temperature.exhaust', capability: 'measure_temperature.exhaust' },
   { dataKey: 'measure_temperature.extract', capability: 'measure_temperature.extract' },
+  { dataKey: 'measure_heat_exchanger_speed_percent', capability: 'measure_heat_exchanger_speed_percent' },
   { dataKey: 'measure_power', capability: 'measure_power' },
   { dataKey: 'measure_humidity', capability: 'measure_humidity' },
   { dataKey: 'measure_motor_rpm', capability: 'measure_motor_rpm' },
@@ -856,6 +858,7 @@ function buildPollRequest() {
     presentValueRequest({ type: OBJECT_TYPE.ANALOG_INPUT, instance: 96 }), // Humidity
     presentValueRequest({ type: OBJECT_TYPE.ANALOG_VALUE, instance: 194 }), // Heater Power
     presentValueRequest(BACNET_OBJECTS.heatingCoilEnable), // Heating coil enable
+    presentValueRequest(BACNET_OBJECTS.heatExchangerSpeed), // Rotor speed %
 
     // Fan capabilities
     presentValueRequest({ type: OBJECT_TYPE.ANALOG_INPUT, instance: 5 }), // Fan RPM Supply
@@ -902,6 +905,10 @@ function buildPollRequest() {
 }
 
 const POLL_VALUE_MAPPINGS: Record<string, (value: number, target: PollParseTarget) => void> = {
+  [objectKey(
+    BACNET_OBJECTS.heatExchangerSpeed.type,
+    BACNET_OBJECTS.heatExchangerSpeed.instance,
+  )]: mapPollValue('measure_heat_exchanger_speed_percent'),
   [objectKey(
     TARGET_TEMPERATURE_OBJECTS.home.type,
     TARGET_TEMPERATURE_OBJECTS.home.instance,
@@ -4702,13 +4709,7 @@ export class UnitRegistry {
           paths.slice(midpoint),
           depth + 1,
         );
-        const datapoints = { ...firstHalf, ...secondHalf };
-        if (Object.keys(datapoints).length === 0) {
-          throw new Error(
-            `[UnitRegistry] Cloud poll for ${unit.unitId} (plant ${plantId}) returned no datapoints`,
-          );
-        }
-        return datapoints;
+        return { ...firstHalf, ...secondHalf };
       }
     }
 

@@ -181,6 +181,18 @@ describe('Nordic device', () => {
     expect(registryStub.register.calledOnceWithExactly('test_unit', device)).toBe(true);
   });
 
+  it('adds the heat exchanger sensor to an existing paired device', async () => {
+    const device = new DeviceClass();
+    device.hasCapability.withArgs('measure_heat_exchanger_speed_percent').returns(false);
+
+    await device.onInit();
+
+    expect(device.addCapability.calledOnceWithExactly('measure_heat_exchanger_speed_percent')).toBe(true);
+    expect(device.registerCapabilityListener.getCalls().some((call: any) => (
+      call.args[0] === 'measure_heat_exchanger_speed_percent'
+    ))).toBe(false);
+  });
+
   it('adds dehumidification capability during onInit when missing', async () => {
     const device = new DeviceClass();
     device.hasCapability.withArgs(EXHAUST_TEMP_CAPABILITY).returns(true);

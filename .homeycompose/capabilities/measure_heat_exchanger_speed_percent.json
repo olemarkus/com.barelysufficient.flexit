@@ -1,0 +1,17 @@
+{
+  "type": "number",
+  "title": {
+    "en": "Heat exchanger speed"
+  },
+  "icon": "/assets/capabilities/measure_motor_rpm.svg",
+  "units": {
+    "en": "%"
+  },
+  "min": 0,
+  "max": 100,
+  "decimals": 0,
+  "getable": true,
+  "setable": false,
+  "uiComponent": "sensor",
+  "insights": true
+}

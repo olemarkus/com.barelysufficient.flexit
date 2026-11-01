@@ -90,6 +90,9 @@ function defaultSensorValues(): Array<{ type: number; instance: number; value: n
     { type: OBJ.ANALOG_VALUE, instance: 194, value: 0.5 }, // heater power (kW)
     { type: OBJ.BINARY_VALUE, instance: 445, value: 1 }, // heating coil on
 
+    // Rotor speed percentage is separate from heater power and efficiency.
+    { type: OBJ.ANALOG_OUTPUT, instance: 0, value: 6.25 },
+
     // Fan
     { type: OBJ.ANALOG_INPUT, instance: 5, value: 1200 }, // supply RPM
     { type: OBJ.ANALOG_INPUT, instance: 12, value: 1180 }, // extract RPM
@@ -411,6 +414,7 @@ describe('Cloud transport – UnitRegistry integration', () => {
     expect(mock.capabilityValues['measure_temperature.exhaust']).toBe(22.0);
     expect(mock.capabilityValues['measure_temperature.extract']).toBe(23.1);
     expect(mock.capabilityValues['measure_humidity']).toBe(45);
+    expect(mock.capabilityValues['measure_heat_exchanger_speed_percent']).toBe(6.25);
     expect(mock.capabilityValues['measure_motor_rpm']).toBe(1200);
     expect(mock.capabilityValues['measure_motor_rpm.extract']).toBe(1180);
     expect(mock.capabilityValues['measure_fan_speed_percent']).toBe(75);
@@ -420,6 +424,40 @@ describe('Cloud transport – UnitRegistry integration', () => {
     expect(mock.capabilityValues['free_cooling_active']).toBe(false);
     // heater power is value * 1000 (kW -> W)
     expect(mock.capabilityValues['measure_power']).toBe(500);
+  });
+
+  it.each([0, 6.25, 100])('reports heat exchanger speed %s as a percentage via cloud', async (speed) => {
+    const sensorValues = defaultSensorValues();
+    sensorValues.find((entry) => entry.type === OBJ.ANALOG_OUTPUT && entry.instance === 0)!.value = speed;
+    mockClient = makeMockCloudClient({ sensorValues });
+    registry.registerCloud(UNIT_ID, mock.device, { plantId: PLANT_ID, client: mockClient });
+    await sleep(50);
+
+    expect(mock.capabilityValues['measure_heat_exchanger_speed_percent']).toBe(speed);
+    const paths = mockClient.readDatapoints.getCalls().flatMap((call) => call.args[1]);
+    expect(paths).toContain(bacnetObjectToCloudPath(OBJ.ANALOG_OUTPUT, 0));
+    expect(mockClient.writeDatapoint.called).toBe(false);
+  });
+
+  it.each([
+    { paths: [bacnetObjectToCloudPath(OBJ.ANALOG_OUTPUT, 0)] },
+    { paths: [bacnetObjectToCloudPath(OBJ.ANALOG_OUTPUT, 0), bacnetObjectToCloudPath(OBJ.ANALOG_INPUT, 5)] },
+  ])('continues cloud polling without inventing rotor speed with unsupported paths $paths', async ({ paths }) => {
+    mockClient = makeMockCloudClient({
+      sensorValues: defaultSensorValues().filter((entry) => (
+        entry.type !== OBJ.ANALOG_OUTPUT || entry.instance !== 0
+      )),
+      unsupportedReadPaths: paths,
+    });
+    registry.registerCloud(UNIT_ID, mock.device, { plantId: PLANT_ID, client: mockClient });
+    await sleep(100);
+
+    const unit = (registry as any).units.get(UNIT_ID);
+    expect(paths.every((path) => unit.unsupportedCloudPollPaths.has(path))).toBe(true);
+    expect(unit.consecutiveFailures).toBe(0);
+    expect(mock.capabilityValues['measure_heat_exchanger_speed_percent']).toBe(undefined);
+    expect(mock.capabilityValues.measure_temperature).toBe(21.5);
+    expect(mock.device.setUnavailable.called).toBe(false);
   });
 
   it('writes temperature setpoint via cloud', async () => {

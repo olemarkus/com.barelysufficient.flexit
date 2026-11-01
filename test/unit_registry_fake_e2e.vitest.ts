@@ -437,6 +437,21 @@ describe('UnitRegistry fake-unit e2e', { timeout: 10000 }, () => {
     expect(device.setUnavailable.notCalled).toBe(true);
   });
 
+  it('polls heat exchanger speed over BACnet and reports zero when ventilation stops', async () => {
+    const device = makeMockDevice(SERVER_BIND_ADDRESS, serverPort, 4380);
+    registry.register('test_unit', device);
+    const hasSpeed = (speed: number) => device.setCapabilityValue.getCalls().some((call: any) => (
+      call.args[0] === 'measure_heat_exchanger_speed_percent' && call.args[1] === speed
+    ));
+
+    await waitFor(() => hasSpeed(65));
+    const observed = state.readPresentValue(OBJECT_TYPE.ANALOG_OUTPUT, 0, PROPERTY_ID.PRESENT_VALUE);
+    expect(observed.ok && observed.value.value).toBe(65);
+
+    await registry.stopVentilation('test_unit');
+    await waitFor(() => hasSpeed(0));
+  });
+
   it('writes filter change interval to the unit and verifies it', async () => {
     const device = makeMockDevice(SERVER_BIND_ADDRESS, serverPort, 4380);
     state.setFilterLimitHours(4380);

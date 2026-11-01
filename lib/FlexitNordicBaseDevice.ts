@@ -49,6 +49,7 @@ const REQUIRED_CAPABILITIES = [
   RESET_FILTER_CAPABILITY,
   'measure_fan_setpoint_percent',
   'measure_fan_setpoint_percent.extract',
+  'measure_heat_exchanger_speed_percent',
 ] as const;
 
 interface SuppressedSetting {
