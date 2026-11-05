@@ -1,8 +1,8 @@
-import Homey from 'homey';
+import HomeySDK from 'homey';
 import { discoverFlexitUnits } from '../../lib/flexitDiscovery';
 import { createRuntimeLogger, RuntimeLogger, runWithLogContext } from '../../lib/logging';
 
-export = class FlexitNordicDriver extends Homey.Driver {
+export = class FlexitNordicDriver extends HomeySDK.Driver {
   private runtimeLogger?: RuntimeLogger;
 
   private getLogger() {

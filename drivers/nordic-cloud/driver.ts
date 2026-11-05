@@ -1,9 +1,9 @@
-import Homey from 'homey';
+import HomeySDK from 'homey';
 import { FlexitCloudClient, CloudToken } from '../../lib/flexitCloudClient';
 import { Registry } from '../../lib/UnitRegistry';
 import { createRuntimeLogger, RuntimeLogger, runWithLogContext } from '../../lib/logging';
 
-export = class FlexitNordicCloudDriver extends Homey.Driver {
+export = class FlexitNordicCloudDriver extends HomeySDK.Driver {
   private runtimeLogger?: RuntimeLogger;
 
   private getLogger() {
