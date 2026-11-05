@@ -100,5 +100,8 @@
   },
   "1.14.0": {
     "en": "Fan profiles now accept speeds down to 30%, where supported by the unit. Saving Away and Home together applies changes in the correct order, with clearer feedback when the unit rejects a value.\n\nAdded heat-exchanger rotor speed with Insights for local and cloud devices, and improved cloud polling when optional readings are unavailable."
+  },
+  "1.14.1": {
+    "en": "Updated dependencies and added a PayPal donation link."
   }
 }
