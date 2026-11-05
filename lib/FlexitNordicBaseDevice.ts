@@ -1,4 +1,4 @@
-import Homey from 'homey';
+import HomeySDK from 'homey';
 import { FanProfileError } from './FanProfileError';
 import { createRuntimeLogger, RuntimeLogger } from './logging';
 import {
@@ -62,7 +62,7 @@ interface SuppressedSetting {
  * Contains all settings handling, capability registration, and suppression logic.
  * Subclasses implement onInit() with transport-specific registration.
  */
-export abstract class FlexitNordicBaseDevice extends Homey.Device {
+export abstract class FlexitNordicBaseDevice extends HomeySDK.Device {
   private suppressedRegistrySettings = new Map<string, SuppressedSetting>();
   private settingsUpdateInProgress = false;
   private deferredRegistrySettings: Record<string, unknown> = {};
