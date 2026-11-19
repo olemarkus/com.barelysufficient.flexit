@@ -7,7 +7,7 @@ describe('flexitReplyParser (vitest)', () => {
     const parsed = parseFlexitReply(payload, '192.0.2.1');
     expect(parsed).not.toBe(null);
     if (!parsed) return;
-    expect(parsed.serialNormalized.startsWith('8001')).toBe(true);
+    expect(parsed.serialNormalized).toBe('800131000001');
     expect(parsed.ip).toBe('192.0.2.10');
     expect(parsed.bacnetPort).toBe(47808);
     expect(parsed.model).toBe('S4 REL');
@@ -43,6 +43,27 @@ describe('flexitReplyParser (vitest)', () => {
     expect(parsed.name).toBe('Flexit Unit');
     expect(parsed.mac).toBe('02:00:00:00:00:01');
     expect(parsed.fw).toBe(undefined);
+  });
+
+  it('keeps hexadecimal controller identities stable across letter case', () => {
+    for (const suffix of ['010203abcd', '010203ABCD']) {
+      const serial = `116400-${suffix}`;
+      const parsed = parseFlexitReply(Buffer.from(`HvacFnct21y_A ${serial}`), '192.0.2.1');
+      expect(parsed).toMatchObject({ serial, serialNormalized: '116400010203ABCD', name: 'HvacFnct21y_A' });
+      expect(parsed?.model).toBeUndefined();
+    }
+  });
+
+  it('prefers the unit identity when a reply also contains a controller serial', () => {
+    const reply = Buffer.from('116400-010203abcd 800131-000001');
+    expect(parseFlexitReply(reply, '192.0.2.1')?.serialNormalized).toBe('800131000001');
+  });
+
+  it.each([
+    '116400-010203abc', '116400-010203abcde', '116400-010203abcg',
+    '116400010203abcd', '0116400-010203abcd', '116401-010203abcd',
+  ])('rejects unsupported controller serial %s', (serial) => {
+    expect(parseFlexitReply(Buffer.from(serial), '192.0.2.1')).toBeNull();
   });
 
   it('rejects non-Nordic serials', () => {
