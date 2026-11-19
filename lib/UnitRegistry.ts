@@ -173,6 +173,8 @@ const MAX_CLOUD_CONSECUTIVE_FAILURES = 3;
 const DEFAULT_WRITE_TIMEOUT_MS = 5_000;
 const CLOUD_VERIFY_RETRY_DELAY_MS = 750;
 const CLOUD_VERIFY_MAX_ATTEMPTS = 3;
+const FIREPLACE_TRIGGER_RECHECK_INTERVAL_MS = 750;
+const FIREPLACE_TRIGGER_RECHECKS = 3;
 const EXTRACT_AIR_TEMPERATURE_PRIMARY_INSTANCE = 59;
 const EXTRACT_AIR_TEMPERATURE_ALT_INSTANCE = 95;
 
@@ -194,6 +196,7 @@ const OPERATION_MODE_VALUES = {
 };
 
 const TRIGGER_VALUE = 2;
+const FIREPLACE_TRIGGER_IDLE = 1;
 const STOP_WRITE_TAG = 'stop';
 const HEATING_COIL_OFF = 0;
 const HEATING_COIL_ON = 1;
@@ -217,6 +220,7 @@ const BACNET_OBJECTS = {
   rapidVentilationTrigger: { type: OBJECT_TYPE.MULTI_STATE_VALUE, instance: 357 },
   rapidVentilationRuntime: { type: OBJECT_TYPE.POSITIVE_INTEGER_VALUE, instance: 293 },
   rapidVentilationRemaining: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 2031 },
+  rapidVentilationState: { type: OBJECT_TYPE.BINARY_VALUE, instance: 15 },
   fireplaceVentilationTrigger: { type: OBJECT_TYPE.MULTI_STATE_VALUE, instance: 360 },
   fireplaceVentilationRuntime: { type: OBJECT_TYPE.POSITIVE_INTEGER_VALUE, instance: 270 },
   fireplaceVentilationRemaining: { type: OBJECT_TYPE.ANALOG_VALUE, instance: 2038 },
@@ -264,11 +268,24 @@ const HEATING_COIL_ENABLE_KEY = objectKey(
   BACNET_OBJECTS.heatingCoilEnable.type,
   BACNET_OBJECTS.heatingCoilEnable.instance,
 );
-const RAPID_ACTIVE_KEY = objectKey(OBJECT_TYPE.BINARY_VALUE, 15);
+const RAPID_ACTIVE_KEY = objectKey(
+  BACNET_OBJECTS.rapidVentilationState.type,
+  BACNET_OBJECTS.rapidVentilationState.instance,
+);
 const FIREPLACE_ACTIVE_KEY = objectKey(
   BACNET_OBJECTS.fireplaceState.type,
   BACNET_OBJECTS.fireplaceState.instance,
 );
+const FIREPLACE_TRIGGER_KEY = objectKey(
+  BACNET_OBJECTS.fireplaceVentilationTrigger.type,
+  BACNET_OBJECTS.fireplaceVentilationTrigger.instance,
+);
+const TEMPORARY_VENTILATION_POINTS = [
+  BACNET_OBJECTS.fireplaceVentilationTrigger,
+  BACNET_OBJECTS.fireplaceState,
+  BACNET_OBJECTS.operationMode,
+  BACNET_OBJECTS.rapidVentilationState,
+];
 const COOKER_HOOD_KEY = objectKey(
   BACNET_OBJECTS.cookerHood.type,
   BACNET_OBJECTS.cookerHood.instance,
@@ -755,13 +772,6 @@ interface WriteUpdate {
   priority?: number | null;
 }
 
-interface TemporaryModeState {
-  temporaryRapidActive: boolean;
-  fireplaceAlreadyActive: boolean;
-  cookerAlreadyActive: boolean;
-  fireplaceRuntime: number;
-}
-
 interface FanModeWriteContext {
   unit: UnitState;
   mode: string;
@@ -894,7 +904,7 @@ function buildPollRequest() {
     presentValueRequest(BACNET_OBJECTS.rapidVentilationRuntime),
     presentValueRequest(BACNET_OBJECTS.fireplaceVentilationTrigger),
     presentValueRequest(BACNET_OBJECTS.fireplaceVentilationRuntime),
-    presentValueRequest({ type: OBJECT_TYPE.BINARY_VALUE, instance: 15 }), // Rapid ventilation active
+    presentValueRequest(BACNET_OBJECTS.rapidVentilationState),
     presentValueRequest(BACNET_OBJECTS.fireplaceState),
     presentValueRequest(BACNET_OBJECTS.rapidVentilationRemaining),
     presentValueRequest(BACNET_OBJECTS.fireplaceVentilationRemaining),
@@ -2438,7 +2448,9 @@ export class UnitRegistry {
       this.log(`[UnitRegistry] Setting fireplace duration to ${requestedMinutes} min for ${unitId}`);
       const unit = this.units.get(unitId);
       if (!unit) throw new Error('Unit not found');
-      if (unit.transport === 'cloud') return this.cloudSetFireplaceVentilationDuration(unit, requestedMinutes);
+      if (unit.transport === 'cloud') {
+        return this.enqueueWrite(unit, () => this.cloudSetFireplaceVentilationDuration(unit, requestedMinutes));
+      }
 
       const durationMinutes = normalizeFireplaceDurationMinutes(requestedMinutes);
       const writeOptions: WriteOptions = {
@@ -2540,7 +2552,7 @@ export class UnitRegistry {
       this.log(`[UnitRegistry] Activating temporary high for ${unitId}`);
       const unit = this.units.get(unitId);
       if (!unit) throw new Error('Unit not found');
-      if (unit.transport === 'cloud') return this.cloudActivateTemporaryHigh(unit);
+      if (unit.transport === 'cloud') return this.enqueueWrite(unit, () => this.cloudActivateTemporaryHigh(unit));
 
       const writeOptions: WriteOptions = {
         maxSegments: BacnetEnums.MaxSegmentsAccepted.SEGMENTS_0,
@@ -2625,12 +2637,28 @@ export class UnitRegistry {
         return this.readPresentValues(this.dependencies.getBacnetClient(unit.bacnetPort), unit, objects);
       }
       if (!unit.cloud) throw new FanProfileError('The Flexit cloud connection is unavailable. Please try again.');
+      return this.readCloudPresentValues(unit, objects);
+    }
+
+    private async readCloudPresentValues(
+      unit: UnitState,
+      objects: Array<{ type: number; instance: number }>,
+      allowUnsupported = false,
+    ) {
+      if (!unit.cloud) return new Map<string, number>();
       const { client, plantId } = unit.cloud;
       const paths = objects.map(({ type, instance }) => bacnetObjectToCloudPath(type, instance));
-      const response = await client.readDatapoints(plantId, paths);
       const values = new Map<string, number>();
+      const supportedPaths = allowUnsupported
+        ? paths.filter((path) => !unit.unsupportedCloudPollPaths.has(path))
+        : paths;
+      if (supportedPaths.length === 0) return values;
+      const response = allowUnsupported
+        ? await this.readCloudPollDatapoints(unit, plantId, supportedPaths)
+        : await client.readDatapoints(plantId, supportedPaths);
       objects.forEach((object, index) => {
         const path = paths[index];
+        if (allowUnsupported && unit.unsupportedCloudPollPaths.has(path)) return;
         const value = (response[`${plantId}${path}`] ?? response[path])?.value?.value;
         if (typeof value === 'number' && Number.isFinite(value)) {
           values.set(objectKey(object.type, object.instance), value);
@@ -3984,7 +4012,7 @@ export class UnitRegistry {
       this.log(`[UnitRegistry] Setting fan mode to '${mode}' for ${unitId}`);
       const unit = this.units.get(unitId);
       if (!unit) throw new Error('Unit not found');
-      if (unit.transport === 'cloud') return this.cloudSetFanMode(unit, mode);
+      if (unit.transport === 'cloud') return this.enqueueWrite(unit, () => this.cloudSetFanMode(unit, mode));
       const writeOptions: WriteOptions = {
         maxSegments: BacnetEnums.MaxSegmentsAccepted.SEGMENTS_0,
         maxApdu: BacnetEnums.MaxApduLengthAccepted.OCTETS_1476,
@@ -3998,7 +4026,7 @@ export class UnitRegistry {
       this.log(`[UnitRegistry] Stopping ventilation for ${unitId}`);
       const unit = this.units.get(unitId);
       if (!unit) throw new Error('Unit not found');
-      if (unit.transport === 'cloud') return this.cloudStopVentilation(unit);
+      if (unit.transport === 'cloud') return this.enqueueWrite(unit, () => this.cloudStopVentilation(unit));
       const writeOptions: WriteOptions = {
         maxSegments: BacnetEnums.MaxSegmentsAccepted.SEGMENTS_0,
         maxApdu: BacnetEnums.MaxApduLengthAccepted.OCTETS_1476,
@@ -4014,7 +4042,6 @@ export class UnitRegistry {
       }
 
       const context = this.buildFanModeWriteContext(unit, STOP_WRITE_TAG, writeOptions);
-      const temporaryModeState = this.readTemporaryModeState(unit);
 
       unit.deferredMode = undefined;
       unit.deferredSince = undefined;
@@ -4025,7 +4052,10 @@ export class UnitRegistry {
       unit.expectedModeAt = undefined;
       unit.lastMismatchKey = undefined;
 
-      await this.exitTemporaryModes(context, temporaryModeState, STOP_WRITE_TAG);
+      const { rapidActive } = await this.prepareFireplaceTransition(
+        unit, STOP_WRITE_TAG, (value) => this.writeFireplaceTrigger(context, value),
+      );
+      await this.exitLocalTemporaryModes(context, rapidActive, this.isCookerModeActive(unit));
 
       if (unit.blockedWrites.has(context.ventilationModeKey)) {
         throw new Error('Ventilation mode write blocked; cannot stop ventilation.');
@@ -4082,38 +4112,136 @@ export class UnitRegistry {
       };
     }
 
-    private readTemporaryModeState(unit: UnitState): TemporaryModeState {
-      const operationMode = Math.round(unit.probeValues.get(OPERATION_MODE_KEY) ?? NaN);
-      const fireplaceActive = (unit.probeValues.get(FIREPLACE_ACTIVE_KEY) ?? 0) === 1;
-      const fireplaceModeReported = operationMode === OPERATION_MODE_VALUES.FIREPLACE;
-      const cookerModeReported = operationMode === OPERATION_MODE_VALUES.COOKER_HOOD;
-      const cookerRequested = this.hasPendingWriteValue(unit, COOKER_HOOD_KEY, 1);
-      return {
-        temporaryRapidActive: this.isTemporaryRapidActive(unit),
-        fireplaceAlreadyActive: fireplaceActive || fireplaceModeReported,
-        cookerAlreadyActive: cookerModeReported || cookerRequested,
-        fireplaceRuntime: clamp(
-          Math.round(
-            unit.probeValues.get(FIREPLACE_RUNTIME_KEY) ?? DEFAULT_FIREPLACE_VENTILATION_MINUTES,
-          ),
-          1,
-          360,
-        ),
-      };
+    private readFireplaceRuntime(unit: UnitState) {
+      return clamp(
+        Math.round(unit.probeValues.get(FIREPLACE_RUNTIME_KEY) ?? DEFAULT_FIREPLACE_VENTILATION_MINUTES),
+        1,
+        360,
+      );
     }
 
-    private async exitTemporaryModes(
-      context: FanModeWriteContext,
-      state: TemporaryModeState,
-      targetMode: string,
-    ) {
-      if (targetMode !== 'fireplace' && state.fireplaceAlreadyActive) {
-        await this.writeFireplaceTrigger(context, TRIGGER_VALUE);
+    private isCookerModeActive(unit: UnitState) {
+      return Math.round(unit.probeValues.get(OPERATION_MODE_KEY) ?? NaN) === OPERATION_MODE_VALUES.COOKER_HOOD
+        || this.hasPendingWriteValue(unit, COOKER_HOOD_KEY, COOKER_HOOD_ON);
+    }
+
+    private async readTemporaryVentilationPoints(unit: UnitState): Promise<Map<string, number>> {
+      try {
+        if (unit.transport === 'cloud') {
+          return await this.readCloudPresentValues(unit, TEMPORARY_VENTILATION_POINTS, true);
+        }
+        const client = this.dependencies.getBacnetClient(unit.bacnetPort);
+        try {
+          return await this.readPresentValues(client, unit, TEMPORARY_VENTILATION_POINTS, false);
+        } catch (error) {
+          // A BACnet service error can reject the entire batch on some controllers.
+          if (!/Class:\d+/.test(formatErrorMessage(error))) throw error;
+          const reads = await Promise.allSettled(TEMPORARY_VENTILATION_POINTS.map(
+            (object) => this.readPresentValue(client, unit, object),
+          ));
+          const values = new Map<string, number>();
+          reads.forEach((read, index) => {
+            if (read.status !== 'fulfilled') return;
+            const { type, instance } = TEMPORARY_VENTILATION_POINTS[index];
+            values.set(objectKey(type, instance), read.value);
+          });
+          return values;
+        }
+      } catch (error) {
+        if (error instanceof AuthenticationError) throw error;
+        this.log(`[UnitRegistry] Failed to read temporary ventilation state for ${unit.unitId}:`, error);
+        return new Map();
       }
-      if (targetMode !== 'fireplace' && targetMode !== 'high' && state.temporaryRapidActive) {
+    }
+
+    private async readSettledTemporaryVentilationPoints(
+      unit: UnitState,
+      recheckRapid: boolean,
+      triggerPending = false,
+    ) {
+      let values = await this.readTemporaryVentilationPoints(unit);
+      for (let recheck = 0; ; recheck++) {
+        const trigger = values.get(FIREPLACE_TRIGGER_KEY);
+        // Keep waiting if a read omits a trigger that was awaiting processing.
+        if (trigger === TRIGGER_VALUE) triggerPending = true;
+        if (trigger === FIREPLACE_TRIGGER_IDLE) triggerPending = false;
+        const rapidActive = this.readTemporaryVentilationActive(
+          values, RAPID_ACTIVE_KEY, OPERATION_MODE_VALUES.TEMPORARY_HIGH,
+        );
+        const rapidUnconfirmed = recheckRapid && rapidActive === undefined;
+        if (recheck === FIREPLACE_TRIGGER_RECHECKS || (!triggerPending && !rapidUnconfirmed)) {
+          return { values, triggerPending, rapidActive };
+        }
+        await new Promise((resolve) => setTimeout(resolve, FIREPLACE_TRIGGER_RECHECK_INTERVAL_MS));
+        values = await this.readTemporaryVentilationPoints(unit);
+      }
+    }
+
+    private readTemporaryVentilationActive(values: Map<string, number>, key: string, activeMode: number) {
+      const active = values.get(key);
+      if (active === 0 || active === 1) return active === 1;
+      const operationMode = values.get(OPERATION_MODE_KEY);
+      if (operationMode === undefined || !Number.isInteger(operationMode) || operationMode < 1) return undefined;
+      return operationMode === activeMode;
+    }
+
+    private async prepareFireplaceTransition(
+      unit: UnitState,
+      targetMode: string,
+      writeTrigger: (value: number) => Promise<boolean>,
+    ) {
+      const wantsFireplace = targetMode === 'fireplace';
+      const recheckRapid = targetMode !== 'high' && this.isTemporaryRapidActive(unit);
+      let state = await this.readSettledTemporaryVentilationPoints(unit, recheckRapid);
+      let trigger = state.values.get(FIREPLACE_TRIGGER_KEY);
+      let active = this.readTemporaryVentilationActive(
+        state.values, FIREPLACE_ACTIVE_KEY, OPERATION_MODE_VALUES.FIREPLACE,
+      );
+      if (wantsFireplace && active === true) return { applyMode: false, rapidActive: false };
+      if (wantsFireplace && recheckRapid && state.rapidActive === undefined) {
+        throw new Error('Could not confirm temporary High state. Try again.');
+      }
+
+      const needsReset = state.triggerPending;
+      if (needsReset) {
+        if (await writeTrigger(FIREPLACE_TRIGGER_IDLE)) {
+          state = await this.readSettledTemporaryVentilationPoints(unit, recheckRapid, true);
+          trigger = state.values.get(FIREPLACE_TRIGGER_KEY);
+          active = this.readTemporaryVentilationActive(
+            state.values, FIREPLACE_ACTIVE_KEY, OPERATION_MODE_VALUES.FIREPLACE,
+          );
+        }
+        if (trigger !== FIREPLACE_TRIGGER_IDLE) {
+          if (wantsFireplace) throw new Error('Could not clear the fireplace trigger. Try again.');
+          this.log(`[UnitRegistry] Could not clear the fireplace trigger for ${unit.unitId}.`);
+        }
+      }
+
+      const canToggle = trigger === FIREPLACE_TRIGGER_IDLE || (!needsReset && trigger === undefined);
+      if (wantsFireplace) {
+        if (active === true) return { applyMode: false, rapidActive: false };
+        if (active !== false || !canToggle) throw new Error('Could not confirm fireplace state. Try again.');
+      } else if (active === true && canToggle) {
+        await writeTrigger(TRIGGER_VALUE);
+      }
+
+      if (recheckRapid && state.rapidActive === undefined) {
+        if (wantsFireplace) throw new Error('Could not confirm temporary High state. Try again.');
+        this.log(`[UnitRegistry] Could not confirm temporary High cancellation for ${unit.unitId}.`);
+      }
+
+      return { applyMode: true, rapidActive: state.rapidActive === true };
+    }
+
+    private async exitLocalTemporaryModes(
+      context: FanModeWriteContext,
+      rapidActive: boolean,
+      cookerActive: boolean,
+    ) {
+      if (context.mode !== 'fireplace' && context.mode !== 'high' && rapidActive) {
         await this.writeRapidTrigger(context, TRIGGER_VALUE);
       }
-      if (targetMode !== 'cooker' && state.cookerAlreadyActive) {
+      if (context.mode !== 'cooker' && cookerActive) {
         await this.relinquishCookerHood(context);
       }
     }
@@ -4135,31 +4263,22 @@ export class UnitRegistry {
       }
 
       const context = this.buildFanModeWriteContext(unit, mode, writeOptions);
-      const {
-        temporaryRapidActive,
-        fireplaceAlreadyActive,
-        cookerAlreadyActive,
-        fireplaceRuntime,
-      } = this.readTemporaryModeState(unit);
-
       if (mode !== 'fireplace') {
         unit.deferredMode = undefined;
         unit.deferredSince = undefined;
       }
-      if (mode === 'fireplace' && fireplaceAlreadyActive) {
-        this.log(`[UnitRegistry] Fireplace already active for ${unit.unitId}, skipping trigger.`);
-        return;
-      }
+
+      const { applyMode, rapidActive } = await this.prepareFireplaceTransition(
+        unit, mode, (value) => this.writeFireplaceTrigger(context, value),
+      );
+      if (!applyMode) return;
+      const cookerAlreadyActive = this.isCookerModeActive(unit);
 
       unit.expectedMode = mode;
       unit.expectedModeAt = Date.now();
       unit.lastMismatchKey = undefined;
 
-      await this.exitTemporaryModes(
-        context,
-        { temporaryRapidActive, fireplaceAlreadyActive, cookerAlreadyActive, fireplaceRuntime },
-        mode,
-      );
+      await this.exitLocalTemporaryModes(context, rapidActive, cookerAlreadyActive);
 
       // Away, cooker and fireplace never write the ventilation mode themselves, so a unit
       // sitting in STOP would keep both fans off while reporting the requested mode.
@@ -4185,7 +4304,7 @@ export class UnitRegistry {
           await this.applyCookerMode(context, cookerAlreadyActive);
           return;
         case 'fireplace':
-          await this.applyFireplaceMode(context, fireplaceRuntime, temporaryRapidActive);
+          await this.applyFireplaceMode(context, this.readFireplaceRuntime(unit), rapidActive);
           return;
         default:
           this.log(`[UnitRegistry] Unsupported fan mode '${mode}' for ${unit.unitId}`);
@@ -4384,7 +4503,7 @@ export class UnitRegistry {
         objectId: BACNET_OBJECTS.fireplaceVentilationTrigger,
         tag: BacnetEnums.ApplicationTags.UNSIGNED_INTEGER,
         value,
-        priority: DEFAULT_WRITE_PRIORITY,
+        priority: value === FIREPLACE_TRIGGER_IDLE ? BacnetEnums.ASN1_NO_PRIORITY : DEFAULT_WRITE_PRIORITY,
       });
     }
 
@@ -4479,6 +4598,7 @@ export class UnitRegistry {
       client: any,
       unit: UnitState,
       objectIds: Array<{ type: number; instance: number }>,
+      requireAll = true,
     ): Promise<Map<string, number>> {
       return new Promise<Map<string, number>>((resolve, reject) => {
         let handled = false;
@@ -4520,12 +4640,12 @@ export class UnitRegistry {
               }
             }
 
-            for (const objectId of objectIds) {
-              const key = objectKey(objectId.type, objectId.instance);
-              if (!extracted.has(key)) {
-                reject(new Error(`Missing present value for ${objectId.type}:${objectId.instance}`));
-                return;
-              }
+            const missing = requireAll && objectIds.find(({ type, instance }) => (
+              !extracted.has(objectKey(type, instance))
+            ));
+            if (missing) {
+              reject(new Error(`Missing present value for ${missing.type}:${missing.instance}`));
+              return;
             }
             resolve(extracted);
           });
@@ -5003,15 +5123,8 @@ export class UnitRegistry {
       if (comfortState !== 1) {
         await this.cloudWriteDatapoint(unit, BACNET_OBJECTS.comfortButton, 1);
       }
-      const runtime = clamp(
-        Math.round(
-          unit.probeValues.get(FIREPLACE_RUNTIME_KEY)
-          ?? DEFAULT_FIREPLACE_VENTILATION_MINUTES,
-        ),
-        1, 360,
-      );
       await this.cloudWriteDatapoint(
-        unit, BACNET_OBJECTS.fireplaceVentilationRuntime, runtime,
+        unit, BACNET_OBJECTS.fireplaceVentilationRuntime, this.readFireplaceRuntime(unit),
       );
       if (temporaryRapidActive) {
         await this.cloudWriteDatapoint(
@@ -5041,33 +5154,21 @@ export class UnitRegistry {
         return;
       }
 
-      const fireplaceActive = (unit.probeValues.get(FIREPLACE_ACTIVE_KEY) ?? 0) === 1;
-      const operationMode = Math.round(unit.probeValues.get(OPERATION_MODE_KEY) ?? NaN);
-      const fireplaceAlreadyActive = fireplaceActive
-        || operationMode === OPERATION_MODE_VALUES.FIREPLACE;
-      const temporaryRapidActive = this.isTemporaryRapidActive(unit);
-
       if (mode !== 'fireplace') {
         unit.deferredMode = undefined;
         unit.deferredSince = undefined;
       }
-      if (mode === 'fireplace' && fireplaceAlreadyActive) {
-        this.log(
-          `[UnitRegistry] Cloud: fireplace already active for ${unit.unitId}, skipping.`,
-        );
-        return;
-      }
+
+      const { applyMode, rapidActive } = await this.prepareFireplaceTransition(
+        unit, mode, (value) => this.cloudWriteDatapoint(unit, BACNET_OBJECTS.fireplaceVentilationTrigger, value),
+      );
+      if (!applyMode) return;
 
       unit.expectedMode = mode;
       unit.expectedModeAt = Date.now();
       unit.lastMismatchKey = undefined;
 
-      if (mode !== 'fireplace' && fireplaceAlreadyActive) {
-        await this.cloudWriteDatapoint(
-          unit, BACNET_OBJECTS.fireplaceVentilationTrigger, TRIGGER_VALUE,
-        );
-      }
-      if (mode !== 'fireplace' && mode !== 'high' && temporaryRapidActive) {
+      if (mode !== 'fireplace' && mode !== 'high' && rapidActive) {
         await this.cloudWriteDatapoint(
           unit, BACNET_OBJECTS.rapidVentilationTrigger, TRIGGER_VALUE,
         );
@@ -5101,7 +5202,7 @@ export class UnitRegistry {
           );
           break;
         case 'fireplace':
-          await this.cloudWriteFireplaceMode(unit, temporaryRapidActive);
+          await this.cloudWriteFireplaceMode(unit, rapidActive);
           break;
         default:
           this.log(
@@ -5116,20 +5217,17 @@ export class UnitRegistry {
     private async cloudStopVentilation(unit: UnitState) {
       this.log(`[UnitRegistry] Cloud: stopping ventilation for ${unit.unitId}`);
 
-      const { temporaryRapidActive, fireplaceAlreadyActive } = this.readTemporaryModeState(unit);
-
       unit.deferredMode = undefined;
       unit.deferredSince = undefined;
       unit.expectedMode = undefined;
       unit.expectedModeAt = undefined;
       unit.lastMismatchKey = undefined;
 
-      if (fireplaceAlreadyActive) {
-        await this.cloudWriteDatapoint(
-          unit, BACNET_OBJECTS.fireplaceVentilationTrigger, TRIGGER_VALUE,
-        );
-      }
-      if (temporaryRapidActive) {
+      const { rapidActive } = await this.prepareFireplaceTransition(
+        unit, STOP_WRITE_TAG,
+        (value) => this.cloudWriteDatapoint(unit, BACNET_OBJECTS.fireplaceVentilationTrigger, value),
+      );
+      if (rapidActive) {
         await this.cloudWriteDatapoint(
           unit, BACNET_OBJECTS.rapidVentilationTrigger, TRIGGER_VALUE,
         );

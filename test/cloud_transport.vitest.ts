@@ -133,6 +133,7 @@ function defaultSensorValues(): Array<{ type: number; instance: number; value: n
     { type: OBJ.POSITIVE_INTEGER_VALUE, instance: 270, value: 10 }, // fireplace runtime
     { type: OBJ.POSITIVE_INTEGER_VALUE, instance: 293, value: 10 }, // rapid/high runtime
     { type: OBJ.BINARY_VALUE, instance: 15, value: 0 }, // rapid active
+    { type: OBJ.MULTI_STATE_VALUE, instance: 360, value: 1 }, // fireplace trigger
     { type: OBJ.BINARY_VALUE, instance: 400, value: 0 }, // fireplace state
     { type: OBJ.ANALOG_VALUE, instance: 2005, value: 0 }, // remaining temp vent
     { type: OBJ.ANALOG_VALUE, instance: 2031, value: 0 }, // rapid remaining
@@ -683,7 +684,184 @@ describe('Cloud transport – UnitRegistry integration', () => {
     expect(resetTempVentCall).toBe(undefined);
   });
 
-  it('cancels temporary high before writing home mode via cloud', async () => {
+  it('sets High without toggling Fireplace after it has already ended', async () => {
+    const sensorValues = defaultSensorValues();
+    const active = sensorValues.find(({ type, instance }) => type === OBJ.BINARY_VALUE && instance === 400)!;
+    const mode = sensorValues.find(({ type, instance }) => type === OBJ.MULTI_STATE_VALUE && instance === 361)!;
+    active.value = 1;
+    mode.value = 6;
+    mockClient = makeMockCloudClient({ sensorValues });
+    registry.registerCloud(UNIT_ID, mock.device, { plantId: PLANT_ID, client: mockClient });
+    await sleep(50);
+
+    active.value = 0;
+    // The operation mode can still say Fireplace briefly after the active flag clears.
+    await registry.setFanMode(UNIT_ID, 'high');
+
+    expect(mockClient.writeDatapoint.calledWith(PLANT_ID, bacnetObjectToCloudPath(19, 360))).toBe(false);
+    expect(mockClient.writeDatapoint.calledWith(PLANT_ID, bacnetObjectToCloudPath(19, 42), 4)).toBe(true);
+  });
+
+  it.each([
+    ['trigger', OBJ.MULTI_STATE_VALUE, 360],
+    ['active flag', OBJ.BINARY_VALUE, 400],
+  ])('cancels active Fireplace when the cloud omits the %s', async (_point, type, instance) => {
+    const sensorValues = defaultSensorValues();
+    const active = sensorValues.find((entry) => entry.type === OBJ.BINARY_VALUE && entry.instance === 400)!;
+    const mode = sensorValues.find((entry) => entry.type === OBJ.MULTI_STATE_VALUE && entry.instance === 361)!;
+    active.value = 1;
+    mode.value = 6;
+    mockClient = makeMockCloudClient({
+      sensorValues,
+      unsupportedReadPaths: [bacnetObjectToCloudPath(type, instance)],
+    });
+    registry.registerCloud(UNIT_ID, mock.device, { plantId: PLANT_ID, client: mockClient });
+
+    await registry.setFanMode(UNIT_ID, 'home');
+
+    const triggerPath = bacnetObjectToCloudPath(19, 360);
+    const triggerWrites = mockClient.writeDatapoint.getCalls().filter(({ args }) => args[1] === triggerPath);
+    expect(triggerWrites.map(({ args }) => args[2])).toEqual([2]);
+    expect(mockClient.writeDatapoint.calledWith(PLANT_ID, bacnetObjectToCloudPath(19, 42), 3)).toBe(true);
+  });
+
+  it('keeps High and Stop available when fireplace activity cannot be read', async () => {
+    const triggerPath = bacnetObjectToCloudPath(19, 360);
+    mockClient = makeMockCloudClient({
+      unsupportedReadPaths: [
+        triggerPath,
+        bacnetObjectToCloudPath(5, 400),
+        bacnetObjectToCloudPath(19, 361),
+      ],
+    });
+    registry.registerCloud(UNIT_ID, mock.device, { plantId: PLANT_ID, client: mockClient });
+
+    await registry.setFanMode(UNIT_ID, 'high');
+    await registry.stopVentilation(UNIT_ID);
+    await expect(registry.setFanMode(UNIT_ID, 'fireplace')).rejects.toThrow('Could not confirm fireplace state');
+
+    const ventModePath = bacnetObjectToCloudPath(19, 42);
+    expect(mockClient.writeDatapoint.calledWith(PLANT_ID, ventModePath, 4)).toBe(true);
+    expect(mockClient.writeDatapoint.calledWith(PLANT_ID, ventModePath, 1)).toBe(true);
+    expect(mockClient.writeDatapoint.calledWith(PLANT_ID, triggerPath)).toBe(false);
+  });
+
+  it('waits for a pending Fireplace trigger before handling an overlapping cloud request', async () => {
+    const sensorValues = defaultSensorValues();
+    const trigger = sensorValues.find(({ type, instance }) => type === OBJ.MULTI_STATE_VALUE && instance === 360)!;
+    const active = sensorValues.find(({ type, instance }) => type === OBJ.BINARY_VALUE && instance === 400)!;
+    const mode = sensorValues.find(({ type, instance }) => type === OBJ.MULTI_STATE_VALUE && instance === 361)!;
+    const triggerPath = bacnetObjectToCloudPath(19, 360);
+    mockClient = makeMockCloudClient({ sensorValues });
+    mockClient.readDatapoints.callsFake(async (plantId: string, paths: string[]) => {
+      const response = buildCloudSensorResponse(plantId, sensorValues);
+      if (trigger.value === 2 && paths.length === 4 && paths.includes(triggerPath)) {
+        // The first command has returned, but the controller is still processing the trigger.
+        // The next read observes the completed transition.
+        trigger.value = 1;
+        active.value = 1;
+        mode.value = 6;
+      }
+      return response;
+    });
+    registry.registerCloud(UNIT_ID, mock.device, { plantId: PLANT_ID, client: mockClient });
+    await sleep(50);
+
+    await Promise.all([
+      registry.setFanMode(UNIT_ID, 'fireplace'),
+      registry.setFanMode(UNIT_ID, 'fireplace'),
+    ]);
+
+    const triggerWrites = mockClient.writeDatapoint.getCalls().filter(({ args }) => args[1] === triggerPath);
+    expect(triggerWrites.map(({ args }) => args[2])).toEqual([2]);
+    expect(active.value).toBe(1);
+  });
+
+  it('rechecks an omitted cloud trigger before cancelling Fireplace', async () => {
+    const sensorValues = defaultSensorValues();
+    const trigger = sensorValues.find(({ type, instance }) => type === OBJ.MULTI_STATE_VALUE && instance === 360)!;
+    sensorValues.find(({ type, instance }) => type === OBJ.BINARY_VALUE && instance === 400)!.value = 1;
+    trigger.value = 2;
+    const triggerPath = bacnetObjectToCloudPath(19, 360);
+    let triggerReads = 0;
+    mockClient = makeMockCloudClient({ sensorValues });
+    mockClient.readDatapoints.callsFake(async (plantId: string, paths: string[]) => {
+      const response = buildCloudSensorResponse(plantId, sensorValues);
+      if (paths.length === 4 && paths.includes(triggerPath) && ++triggerReads === 2) {
+        delete response[`${plantId}${triggerPath}`];
+        trigger.value = 1;
+      }
+      return response;
+    });
+    registry.registerCloud(UNIT_ID, mock.device, { plantId: PLANT_ID, client: mockClient });
+
+    await registry.setFanMode(UNIT_ID, 'home');
+
+    expect(triggerReads).toBe(3);
+    const triggerWrites = mockClient.writeDatapoint.getCalls().filter(({ args }) => args[1] === triggerPath);
+    expect(triggerWrites.map(({ args }) => args[2])).toEqual([2]);
+  });
+
+  it.each(['home', 'fireplace'])('only resets a pending trigger when its read-back is missing for %s', async (mode) => {
+    const sensorValues = defaultSensorValues();
+    sensorValues.find(({ type, instance }) => type === OBJ.MULTI_STATE_VALUE && instance === 360)!.value = 2;
+    const triggerPath = bacnetObjectToCloudPath(19, 360);
+    let triggerReads = 0;
+    mockClient = makeMockCloudClient({ sensorValues });
+    mockClient.readDatapoints.callsFake(async (plantId: string, paths: string[]) => {
+      const response = buildCloudSensorResponse(plantId, sensorValues);
+      if (paths.length === 4 && paths.includes(triggerPath) && ++triggerReads > 1) {
+        delete response[`${plantId}${triggerPath}`];
+      }
+      return response;
+    });
+    registry.registerCloud(UNIT_ID, mock.device, { plantId: PLANT_ID, client: mockClient });
+
+    const result = registry.setFanMode(UNIT_ID, mode);
+    if (mode === 'fireplace') {
+      await expect(result).rejects.toThrow('Could not clear the fireplace trigger');
+    } else {
+      await result;
+      expect(mockClient.writeDatapoint.calledWith(PLANT_ID, bacnetObjectToCloudPath(19, 42), 3)).toBe(true);
+    }
+    const triggerWrites = mockClient.writeDatapoint.getCalls().filter(({ args }) => args[1] === triggerPath);
+    expect(triggerWrites.map(({ args }) => args[2])).toEqual([1]);
+  }, 10000);
+
+  it('clears a stuck cloud trigger before writing the Fireplace runtime and starting it', async () => {
+    const sensorValues = defaultSensorValues();
+    sensorValues.find(({ type, instance }) => type === OBJ.MULTI_STATE_VALUE && instance === 360)!.value = 2;
+    mockClient = makeMockCloudClient({ sensorValues });
+    registry.registerCloud(UNIT_ID, mock.device, { plantId: PLANT_ID, client: mockClient });
+
+    await registry.setFanMode(UNIT_ID, 'fireplace');
+
+    const triggerPath = bacnetObjectToCloudPath(19, 360);
+    const runtimePath = bacnetObjectToCloudPath(48, 270);
+    const writes = mockClient.writeDatapoint.getCalls()
+      .filter(({ args }) => args[1] === triggerPath || args[1] === runtimePath);
+    expect(writes.map(({ args }) => args.slice(1))).toEqual([
+      [triggerPath, 1],
+      [runtimePath, 10],
+      [triggerPath, 2],
+    ]);
+  });
+
+  it('requires read-back of a cleared cloud trigger before starting Fireplace', async () => {
+    const sensorValues = defaultSensorValues();
+    const trigger = sensorValues.find(({ type, instance }) => type === OBJ.MULTI_STATE_VALUE && instance === 360)!;
+    const triggerPath = bacnetObjectToCloudPath(19, 360);
+    trigger.value = 2;
+    mockClient = makeMockCloudClient({ sensorValues });
+    mockClient.writeDatapoint.withArgs(PLANT_ID, triggerPath, 1).resolves(true);
+    registry.registerCloud(UNIT_ID, mock.device, { plantId: PLANT_ID, client: mockClient });
+
+    await expect(registry.setFanMode(UNIT_ID, 'fireplace')).rejects.toThrow('Could not clear the fireplace trigger');
+
+    expect(mockClient.writeDatapoint.getCalls().map(({ args }) => args.slice(1))).toEqual([[triggerPath, 1]]);
+  }, 10000);
+
+  it('cancels temporary high before writing home mode after a transient cloud read failure', async () => {
     const sensorValues = defaultSensorValues().map((entry) => ({ ...entry }));
     const ventilationMode = sensorValues.find((entry) => entry.type === OBJ.MULTI_STATE_VALUE && entry.instance === 42);
     const operationMode = sensorValues.find((entry) => entry.type === OBJ.MULTI_STATE_VALUE && entry.instance === 361);
@@ -705,6 +883,10 @@ describe('Cloud transport – UnitRegistry integration', () => {
     });
     await sleep(50);
 
+    const triggerPath = bacnetObjectToCloudPath(19, 360);
+    mockClient.readDatapoints.withArgs(PLANT_ID, sinon.match(
+      (paths: string[]) => paths.length === 4 && paths.includes(triggerPath),
+    )).onFirstCall().rejects(new Error('Temporary network error'));
     await registry.setFanMode(UNIT_ID, 'home');
 
     const calls = mockClient.writeDatapoint.getCalls();
@@ -725,6 +907,22 @@ describe('Cloud transport – UnitRegistry integration', () => {
     expect(rapidTriggerCall).not.toBe(undefined);
     expect(fireplaceTriggerCall).toBe(undefined);
     expect(resetTempVentCall).toBe(undefined);
+  });
+
+  it('does not start Fireplace when a previously active temporary High cannot be checked', async () => {
+    const sensorValues = defaultSensorValues();
+    sensorValues.find(({ type, instance }) => type === OBJ.BINARY_VALUE && instance === 15)!.value = 1;
+    mockClient = makeMockCloudClient({ sensorValues });
+    registry.registerCloud(UNIT_ID, mock.device, { plantId: PLANT_ID, client: mockClient });
+    await sleep(50);
+
+    const response = buildCloudSensorResponse(PLANT_ID, sensorValues);
+    delete response[`${PLANT_ID}${bacnetObjectToCloudPath(5, 15)}`];
+    delete response[`${PLANT_ID}${bacnetObjectToCloudPath(19, 361)}`];
+    mockClient.readDatapoints.resolves(response);
+    await expect(registry.setFanMode(UNIT_ID, 'fireplace')).rejects.toThrow('Could not confirm temporary High state');
+
+    expect(mockClient.writeDatapoint.called).toBe(false);
   });
 
   it('writes fan mode fireplace via cloud', async () => {

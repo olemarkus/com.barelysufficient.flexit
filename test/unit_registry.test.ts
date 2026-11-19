@@ -111,6 +111,18 @@ describe('UnitRegistry', () => {
   let getBacnetClientStub: sinon.SinonStub;
   let discoverStub: sinon.SinonStub;
 
+  function stubTemporaryVentilation(mode: 'home' | 'fireplace' | 'temporaryHigh') {
+    const operationMode = { home: 3, fireplace: 6, temporaryHigh: 7 }[mode];
+    mockClient.readPropertyMultiple.yields(null, {
+      values: [
+        makeReadObject(19, 360, 1),
+        makeReadObject(19, 361, operationMode),
+        makeReadObject(5, 400, Number(mode === 'fireplace')),
+        makeReadObject(5, 15, Number(mode === 'temporaryHigh')),
+      ],
+    });
+  }
+
   beforeEach(async () => {
     vi.resetModules();
     unitRegistryMocks.setBacnetLogger.mockReset();
@@ -1258,9 +1270,7 @@ describe('UnitRegistry', () => {
     const unit = (registry as any).units.get('test_unit');
     unit.probeValues.set('5:50', 1); // comfort_button home
     unit.probeValues.set('19:42', 4); // ventilation_mode high
-    unit.probeValues.set('19:361', 6); // operation_mode fireplace
-    unit.probeValues.set('5:400', 1); // fireplace_active
-    unit.probeValues.set('2:2005', 8); // remaining_temp_vent_op
+    stubTemporaryVentilation('fireplace');
 
     await registry.setFanMode('test_unit', 'home');
 
@@ -1294,9 +1304,7 @@ describe('UnitRegistry', () => {
     const unit = (registry as any).units.get('test_unit');
     unit.probeValues.set('5:50', 1); // comfort_button home
     unit.probeValues.set('19:42', 4); // ventilation_mode high
-    unit.probeValues.set('19:361', 7); // operation_mode temporary high
-    unit.probeValues.set('5:15', 1); // rapid_active
-    unit.probeValues.set('2:2005', 8); // remaining_temp_vent_op
+    stubTemporaryVentilation('temporaryHigh');
 
     await registry.setFanMode('test_unit', 'home');
 
@@ -1329,6 +1337,7 @@ describe('UnitRegistry', () => {
       registry.register('test_unit', mockDevice);
       const unit = (registry as any).units.get('test_unit');
       unit.probeValues.set('48:270', 10);
+      stubTemporaryVentilation('home');
 
       await registry.setFanMode('test_unit', 'fireplace');
 
@@ -1367,8 +1376,7 @@ describe('UnitRegistry', () => {
     registry.register('test_unit', mockDevice);
 
     const unit = (registry as any).units.get('test_unit');
-    unit.probeValues.set('5:400', 1); // fireplace_active
-    unit.probeValues.set('19:361', 6); // operation_mode fireplace
+    stubTemporaryVentilation('fireplace');
     unit.expectedMode = 'away';
     unit.expectedModeAt = 1234;
     unit.lastMismatchKey = 'away->home';
@@ -1391,9 +1399,8 @@ describe('UnitRegistry', () => {
     registry.register('test_unit', mockDevice);
 
     const unit = (registry as any).units.get('test_unit');
-    unit.probeValues.set('5:400', 1); // fireplace_active
-    unit.probeValues.set('19:361', 6); // operation_mode fireplace
     unit.probeValues.set('2:2005', 9); // remaining_temp_vent_op
+    stubTemporaryVentilation('fireplace');
 
     await registry.setFanMode('test_unit', 'fireplace');
 
@@ -1454,9 +1461,7 @@ describe('UnitRegistry', () => {
     registry.register('test_unit', mockDevice);
 
     const unit = (registry as any).units.get('test_unit');
-    unit.probeValues.set('19:361', 7); // operation_mode temporary high
-    unit.probeValues.set('5:15', 1); // rapid_active
-    unit.probeValues.set('2:2005', 9); // remaining_temp_vent_op
+    stubTemporaryVentilation('temporaryHigh');
 
     await registry.setFanMode('test_unit', 'fireplace');
 
@@ -1476,10 +1481,7 @@ describe('UnitRegistry', () => {
     const mockDevice = makeMockDevice();
     registry.register('test_unit', mockDevice);
 
-    const unit = (registry as any).units.get('test_unit');
-    unit.probeValues.set('5:400', 1); // fireplace_active
-    unit.probeValues.set('19:361', 6); // operation_mode fireplace
-    unit.probeValues.set('2:2005', 8); // remaining_temp_vent_op
+    stubTemporaryVentilation('fireplace');
 
     await registry.setFanMode('test_unit', 'away');
 
