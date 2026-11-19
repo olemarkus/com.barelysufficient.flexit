@@ -138,6 +138,8 @@ export class FakeNordicUnitState {
 
   private fireplaceVentilationActive = false;
 
+  private fireplaceTriggerStuck = false;
+
   private awayDelayRemainingMinutes = 0;
 
   private mode: FanMode = 'home';
@@ -528,6 +530,12 @@ export class FakeNordicUnitState {
     return { ok: true, value: null };
   }
 
+  stickFireplaceTrigger() {
+    this.fireplaceVentilationActive = false;
+    this.fireplaceTriggerStuck = true;
+    this.tick();
+  }
+
   getFilterStatus() {
     const operatingHours = roundTo(this.getByName('filter_operating_time'), 3);
     const limitHours = roundTo(this.getByName('filter_exchange_limit'), 3);
@@ -649,7 +657,7 @@ export class FakeNordicUnitState {
     this.setByName('remaining_rapid', roundTo(reportedRapidRemaining, 3));
     this.setByName('remaining_fireplace', roundTo(reportedFireplaceRemaining, 3));
     this.setByName('trigger_rapid', 1);
-    this.setByName('trigger_fireplace', 1);
+    this.setByName('trigger_fireplace', this.fireplaceTriggerStuck ? 2 : 1);
   }
 
   /**
@@ -679,7 +687,7 @@ export class FakeNordicUnitState {
   }
 
   private targetFanPercent(mode: FanMode, cookerHoodActive: boolean): { supply: number; extract: number } {
-    if (this.fireplaceVentilationActive || mode === 'fireplace') {
+    if (this.fireplaceVentilationActive || this.fireplaceTriggerStuck || mode === 'fireplace') {
       return {
         supply: this.getByName('fan_profile_supply_fireplace'),
         extract: this.getByName('fan_profile_extract_fireplace'),
@@ -730,6 +738,11 @@ export class FakeNordicUnitState {
       }
       this.rapidRemainingMinutes = clamp(this.getByName('runtime_rapid'), 1, 360);
       this.setByName('trigger_rapid', 1);
+      return;
+    }
+
+    if (point.name === 'trigger_fireplace' && this.fireplaceTriggerStuck) {
+      if (asInteger(value) === 1) this.fireplaceTriggerStuck = false;
       return;
     }
 

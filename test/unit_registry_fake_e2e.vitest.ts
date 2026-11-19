@@ -1017,6 +1017,31 @@ describe('UnitRegistry fake-unit e2e', { timeout: 10000 }, () => {
     expect(operationMode.value.value).toBe(OPERATION_MODE_VALUES.FIREPLACE);
   });
 
+  it('clears a stuck fireplace trigger and restores Home airflow over BACnet', async () => {
+    const device = makeMockDevice(SERVER_BIND_ADDRESS, serverPort, 4380);
+    registry.register('test_unit', device);
+    await registry.setFanMode('test_unit', 'home');
+    const homeSupply = state.readPresentValue(OBJECT_TYPE.ANALOG_OUTPUT, 3, PROPERTY_ID.PRESENT_VALUE).value.value;
+    state.stickFireplaceTrigger();
+    expect(state.readPresentValue(OBJECT_TYPE.ANALOG_OUTPUT, 3, PROPERTY_ID.PRESENT_VALUE).value.value)
+      .toBeGreaterThan(homeSupply);
+    expect(state.readPresentValue(OBJECT_TYPE.MULTI_STATE_VALUE, 361, PROPERTY_ID.PRESENT_VALUE).value.value)
+      .toBe(OPERATION_MODE_VALUES.HOME);
+    const writePropertySpy = sinon.spy(client, 'writeProperty');
+
+    await registry.setFanMode('test_unit', 'home');
+
+    const triggerWrites = writePropertySpy.getCalls().filter(({ args }) => (
+      args[1].type === OBJECT_TYPE.MULTI_STATE_VALUE && args[1].instance === 360
+    ));
+    expect(triggerWrites.map(({ args }) => [args[3][0].value, args[4].priority]))
+      .toEqual([[1, Bacnet.enum.ASN1_NO_PRIORITY]]);
+    const trigger = state.readPresentValue(OBJECT_TYPE.MULTI_STATE_VALUE, 360, PROPERTY_ID.PRESENT_VALUE);
+    expect(trigger.value.value).toBe(1);
+    expect(state.readPresentValue(OBJECT_TYPE.ANALOG_OUTPUT, 3, PROPERTY_ID.PRESENT_VALUE).value.value)
+      .toBe(homeSupply);
+  });
+
   it('returns to home from fireplace without re-triggering high ventilation', async () => {
     const device = makeMockDevice(SERVER_BIND_ADDRESS, serverPort, 4380);
     registry.register('test_unit', device);
