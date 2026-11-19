@@ -1,0 +1,28 @@
+{
+  "title": {
+    "en": "Set free cooling extract air setpoint"
+  },
+  "titleFormatted": {
+    "en": "Set free cooling extract air setpoint to [[temperature]] °C"
+  },
+  "hint": {
+    "en": "Updates the extract air temperature that free cooling works towards. Free cooling can start when the extract air is warmer than this, and stops when it drops below it."
+  },
+  "args": [
+    {
+      "type": "device",
+      "name": "device",
+      "filter": "driver_id=nordic|nordic-cloud"
+    },
+    {
+      "name": "temperature",
+      "type": "number",
+      "title": {
+        "en": "Temperature"
+      },
+      "min": 10,
+      "max": 30,
+      "step": 0.5
+    }
+  ]
+}

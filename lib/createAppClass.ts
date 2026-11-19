@@ -450,6 +450,22 @@ export function createFlexitAppClass({
         await registry.setFreeCoolingEnabled(unitId, false);
         return true;
       });
+
+      // The registry setters normalize to 0.5 degC, reject values outside 10-30 degC,
+      // and skip the write when the unit already holds the value.
+      const setFreeCoolingSetpointCard = this.homey.flow.getActionCard('set_free_cooling_setpoint');
+      setFreeCoolingSetpointCard.registerRunListener(async (args: any) => {
+        const unitId = this.resolveUnitId(args?.device);
+        await registry.setFreeCoolingTemperatureSetpoint(unitId, Number(args?.temperature));
+        return true;
+      });
+
+      const setFreeCoolingOutsideLimitCard = this.homey.flow.getActionCard('set_free_cooling_outside_limit');
+      setFreeCoolingOutsideLimitCard.registerRunListener(async (args: any) => {
+        const unitId = this.resolveUnitId(args?.device);
+        await registry.setFreeCoolingOutsideTemperatureLimit(unitId, Number(args?.temperature));
+        return true;
+      });
     }
 
     private registerHeatingCoilConditionCard() {

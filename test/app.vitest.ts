@@ -59,6 +59,8 @@ function createRegistryStub(overrides: Record<string, any> = {}) {
     toggleHeatingCoilEnabled: sinon.stub().resolves(true),
     getHeatingCoilEnabled: sinon.stub().resolves(true),
     setFreeCoolingEnabled: sinon.stub().resolves(),
+    setFreeCoolingTemperatureSetpoint: sinon.stub().resolves(),
+    setFreeCoolingOutsideTemperatureLimit: sinon.stub().resolves(),
     ...overrides,
   };
 }
@@ -108,6 +110,8 @@ function createCards() {
       toggleHeatingCoilOnOff: { registerRunListener: sinon.stub() },
       turnFreeCoolingOn: { registerRunListener: sinon.stub() },
       turnFreeCoolingOff: { registerRunListener: sinon.stub() },
+      setFreeCoolingSetpoint: { registerRunListener: sinon.stub() },
+      setFreeCoolingOutsideLimit: { registerRunListener: sinon.stub() },
     },
     condition: {
       dehumidificationIsActive: { registerRunListener: sinon.stub() },
@@ -141,6 +145,9 @@ function wireCards(app: any, cards: ReturnType<typeof createCards>) {
   app.homey.flow.getActionCard.withArgs('toggle_heating_coil_onoff').returns(cards.action.toggleHeatingCoilOnOff);
   app.homey.flow.getActionCard.withArgs('turn_free_cooling_on').returns(cards.action.turnFreeCoolingOn);
   app.homey.flow.getActionCard.withArgs('turn_free_cooling_off').returns(cards.action.turnFreeCoolingOff);
+  app.homey.flow.getActionCard.withArgs('set_free_cooling_setpoint').returns(cards.action.setFreeCoolingSetpoint);
+  app.homey.flow.getActionCard.withArgs('set_free_cooling_outside_limit')
+    .returns(cards.action.setFreeCoolingOutsideLimit);
 
   app.homey.flow.getConditionCard.withArgs('dehumidification_is_active')
     .returns(cards.condition.dehumidificationIsActive);
@@ -277,6 +284,49 @@ describe('App flow registration (vitest)', () => {
     const onListener = cards.action.turnFreeCoolingOn.registerRunListener.firstCall.args[0];
     await expect(onListener({ device: { getData: () => ({}) } })).rejects.toThrow('Device unitId is missing.');
     expect(registryStub.setFreeCoolingEnabled.called).toBe(false);
+  });
+
+  it('forwards the free cooling setpoint and outdoor limit flow cards to the registry', async () => {
+    const registryStub = createRegistryStub();
+    const cards = createCards();
+    const AppClass = createAppClass(registryStub);
+    const app = new AppClass();
+    wireCards(app, cards);
+
+    await app.onInit();
+
+    expect(app.homey.flow.getActionCard.calledWithExactly('set_free_cooling_setpoint')).toBe(true);
+    expect(app.homey.flow.getActionCard.calledWithExactly('set_free_cooling_outside_limit')).toBe(true);
+
+    const device = { getData: () => ({ unitId: 'unit-1' }) };
+    const setpointListener = cards.action.setFreeCoolingSetpoint.registerRunListener.firstCall.args[0];
+    const outsideLimitListener = cards.action.setFreeCoolingOutsideLimit.registerRunListener.firstCall.args[0];
+
+    expect(await setpointListener({ device, temperature: 21 })).toBe(true);
+    expect(registryStub.setFreeCoolingTemperatureSetpoint.calledOnceWithExactly('unit-1', 21)).toBe(true);
+
+    expect(await outsideLimitListener({ device, temperature: 12.5 })).toBe(true);
+    expect(registryStub.setFreeCoolingOutsideTemperatureLimit.calledOnceWithExactly('unit-1', 12.5)).toBe(true);
+  });
+
+  it('propagates registry errors from the free cooling setpoint flow card', async () => {
+    const registryStub = createRegistryStub({
+      setFreeCoolingTemperatureSetpoint: sinon.stub().rejects(
+        new Error('Free cooling temperature must be between 10 and 30 degC'),
+      ),
+    });
+    const cards = createCards();
+    const AppClass = createAppClass(registryStub);
+    const app = new AppClass();
+    wireCards(app, cards);
+
+    await app.onInit();
+
+    const setpointListener = cards.action.setFreeCoolingSetpoint.registerRunListener.firstCall.args[0];
+    await expect(setpointListener({
+      device: { getData: () => ({ unitId: 'unit-1' }) },
+      temperature: 35,
+    })).rejects.toThrow('between 10 and 30');
   });
 
   it('returns ventilation mode widget status for the selected Homey device', () => {

@@ -8,4 +8,4 @@ Both drivers provide the same capabilities: set supply air target temperature, c
 
 Flows can also stop the unit entirely with the "Stop ventilation" action, and react to the unit being stopped. Stopping is not a fire safety function: to shut ventilation down on a smoke alarm, connect the alarm to the unit's own smoke detector input instead.
 
-Free cooling can be turned on or off from flows with the "Turn free cooling on" and "Turn free cooling off" actions, for example to allow it in summer only. The unit still decides when free cooling actually runs, based on its extract temperature setpoint and outdoor temperature limit in the device settings.
+Free cooling can be turned on or off from flows with the "Turn free cooling on" and "Turn free cooling off" actions, for example to allow it in summer only. The unit still decides when free cooling actually runs, based on its extract temperature setpoint and outdoor temperature limit in the device settings. Both of those can also be changed from flows with the "Set free cooling extract air setpoint" and "Set free cooling outdoor temperature limit" actions.
