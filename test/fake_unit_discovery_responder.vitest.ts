@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { sleep } from './test_utils.ts';
 import { DiscoveryResponder } from '../scripts/fake-unit/discoveryResponder.ts';
+import * as discovery from '../lib/flexitDiscovery.ts';
 
 async function bindSocket(socket: dgram.Socket): Promise<void> {
   await new Promise<void>((resolve, reject) => {
@@ -25,6 +26,16 @@ async function receiveMessage(socket: dgram.Socket, timeoutMs: number): Promise<
     });
   });
 }
+
+vi.mock('homey', () => ({
+  default: {
+    Driver: class {
+      log = vi.fn();
+      error = vi.fn();
+      getDevices = () => [];
+    },
+  },
+}));
 
 describe('fake-unit discovery responder (vitest)', () => {
   afterEach(() => {
@@ -64,6 +75,50 @@ describe('fake-unit discovery responder (vitest)', () => {
       responder.stop();
     }
   });
+
+  it('pairs a controller identity advertised by the fake Nordic unit', async () => {
+    const responder = new DiscoveryResponder({
+      bindAddress: '127.0.0.1',
+      advertiseAddress: '127.0.0.1',
+      bacnetPort: 47888,
+      serial: '116400-010203abcd',
+      deviceName: 'HvacFnct21y_A',
+      firmware: '03.39.03.38',
+      mac: '00:05:19:22:27:43',
+      logTraffic: false,
+    });
+
+    // Keep the real discovery exchange on loopback. The responder sends a copy
+    // of each reply back to the request's source port.
+    const receiver = dgram.createSocket('udp4');
+    const sender = dgram.createSocket('udp4');
+    const bindReceiver = receiver.bind.bind(receiver);
+    sinon.stub(receiver, 'bind').callsFake((_port, callback) => bindReceiver(0, '127.0.0.1', callback));
+    const bindSender = sender.bind.bind(sender);
+    sinon.stub(sender, 'bind').callsFake((_port, callback) => bindSender(0, '127.0.0.1', callback));
+    sinon.stub(sender, 'send').callsFake((packet, port) => receiver.send(packet, port, '127.0.0.1'));
+    discovery.setFlexitDiscoveryDependenciesForTests({
+      createSocket: sinon.stub().onFirstCall().returns(receiver).onSecondCall().returns(sender),
+      networkInterfaces: () => ({
+        lo: [{ family: 'IPv4', address: '127.0.0.1', internal: false, cidr: '127.0.0.1/8',
+          netmask: '255.0.0.0', mac: '00:00:00:00:00:00' }],
+      }),
+    });
+
+    try {
+      await responder.start();
+      const { default: Driver } = await import('../drivers/nordic/driver.ts');
+      const driver = new Driver();
+      expect(await driver.onPairListDevices()).toEqual([{
+        name: 'HvacFnct21y_A',
+        data: { id: '116400010203ABCD', unitId: '116400010203ABCD' },
+        settings: { ip: '127.0.0.1', bacnetPort: '47888', serial: '116400-010203abcd', mac: '00:05:19:22:27:43' },
+      }]);
+    } finally {
+      discovery.resetFlexitDiscoveryDependenciesForTests();
+      responder.stop();
+    }
+  }, 10000);
 
   it('logs unique external replies and skips self-originated replies', () => {
     const logStub = sinon.stub(console, 'log');

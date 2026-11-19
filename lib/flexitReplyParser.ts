@@ -11,19 +11,10 @@ export interface DiscoveredFlexitUnit {
   fw?: string;
 }
 
-const NORDIC_SERIAL_PREFIXES = ['8001', '8002', '8003'];
+const NORDIC_UNIT_SERIAL = /\b800[123]\d{2}-\d{6}\b/;
+const NORDIC_CONTROLLER_SERIAL = /\b116400-[0-9a-f]{10}\b/i;
 
-function isNordicSerial(serialNormalized: string) {
-  return NORDIC_SERIAL_PREFIXES.some((prefix) => serialNormalized.startsWith(prefix));
-}
-
-/**
- * Best-effort parsing from the proprietary multicast reply payload.
- * We primarily need serial + BACnet endpoint.
- *
- * Serial regex per your prompt: \b\d{6}-\d{6}\b
- * Endpoint regex per your prompt: \b(\d{1,3}(?:\.\d{1,3}){3}):(\d{2,5})\b
- */
+/** Extract the unit identity and BACnet endpoint from a multicast discovery reply. */
 export function parseFlexitReply(payload: Buffer, rinfoAddress: string): DiscoveredFlexitUnit | null {
   // Replace non-printable bytes with spaces so regex works reliably.
   const ascii = payload
@@ -31,11 +22,11 @@ export function parseFlexitReply(payload: Buffer, rinfoAddress: string): Discove
     .replace(/[^\x20-\x7E]+/g, ' ')
     .trim();
 
-  const serialMatch = ascii.match(/\b\d{6}-\d{6}\b/);
+  // Prefer the unit serial when a controller also advertises its own identity.
+  const serialMatch = ascii.match(NORDIC_UNIT_SERIAL) ?? ascii.match(NORDIC_CONTROLLER_SERIAL);
   if (!serialMatch) return null;
   const serial = serialMatch[0];
-  const serialNormalized = serial.replace(/[^0-9]/g, '');
-  if (!isNordicSerial(serialNormalized)) return null;
+  const serialNormalized = serial.replace('-', '').toUpperCase();
   const model = getNordicModelFromSerial(serialNormalized);
 
   const endpointMatch = ascii.match(/\b(\d{1,3}(?:\.\d{1,3}){3}):(\d{2,5})\b/);
