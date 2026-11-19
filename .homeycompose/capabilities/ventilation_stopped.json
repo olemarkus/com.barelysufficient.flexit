@@ -6,5 +6,12 @@
   "icon": "/assets/capabilities/ventilation_stopped.svg",
   "getable": true,
   "setable": false,
-  "uiComponent": "sensor"
+  "uiComponent": "sensor",
+  "insights": true,
+  "insightsTitleTrue": {
+    "en": "Ventilation stopped"
+  },
+  "insightsTitleFalse": {
+    "en": "Ventilation resumed"
+  }
 }
