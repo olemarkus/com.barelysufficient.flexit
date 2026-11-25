@@ -103,5 +103,8 @@
   },
   "1.14.1": {
     "en": "Updated dependencies and added a PayPal donation link."
+  },
+  "1.14.2": {
+    "en": "Fixed local pairing for Nordic units that advertise a controller serial. Fireplace ventilation now recovers when the unit's trigger is stuck, and cloud devices no longer send overlapping mode changes."
   }
 }
